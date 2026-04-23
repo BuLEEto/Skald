@@ -1,0 +1,38 @@
+# Build artifacts
+/build/
+/build/*
+*.o
+*.obj
+
+# Odin compiled binaries at the repo root (shouldn't happen but stray
+# `odin build` invocations without -out: land them here).
+/[0-9][0-9]_*
+/limn
+
+# Same pattern inside an example's own directory — happens if a dev
+# runs `odin build .` from `examples/NN_foo/` instead of using build.sh.
+examples/*/[0-9][0-9]_*
+
+# IDE / editor scratch
+.vscode/
+.idea/
+*.swp
+*~
+*.bak
+
+# AI-assistant / agent local state (per-machine config, not code).
+# CLAUDE.md is deliberately NOT ignored — if you add a project-wide
+# CLAUDE.md with shared guidance, that should be committed. Only the
+# per-user settings and local history are excluded here.
+.claude/
+.cursor/
+.aider*
+.continue/
+
+# macOS
+.DS_Store
+._*
+
+# Windows
+Thumbs.db
+Desktop.ini
