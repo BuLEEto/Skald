@@ -92,12 +92,23 @@ the collection name, so `import "gui:skald"` means "find the
 collection called `gui`, then look for the `skald/` package under
 it."
 
-Your `main.odin`:
+Your `main.odin` — a complete, runnable "Hello, Skald!" you can
+paste verbatim:
 
 ```odin
 package my_app
 
 import "gui:skald"
+
+State :: struct {}
+Msg   :: struct {}
+
+init   :: proc() -> State { return {} }
+update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) { return s, {} }
+view   :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
+    th := ctx.theme
+    return skald.text("Hello, Skald!", th.color.fg, th.font.size_lg)
+}
 
 main :: proc() {
     skald.run(skald.App(State, Msg){
@@ -110,6 +121,11 @@ main :: proc() {
     })
 }
 ```
+
+The stubs (`State`/`Msg`/`init`/`update`/`view`) are empty on purpose —
+this program does nothing, which is exactly the point for confirming
+your build is set up. [`guide.md`](guide.md) walks through filling
+them in to build a real to-do app.
 
 Your build command tells Odin what `gui` points to:
 
