@@ -4,6 +4,13 @@
 performance.** Pure-functional state, rebuild-every-frame rendering, and
 a modern dark/light aesthetic out of the box.
 
+<p align="center">
+  <img src="screenshots/Gallery_Dark.png"  alt="Skald gallery — dark theme"  width="49%"/>
+  <img src="screenshots/Gallery_Light.png" alt="Skald gallery — light theme" width="49%"/>
+</p>
+
+<p align="center"><sub><code>examples/00_gallery</code> — the shipped widget set in both themes.</sub></p>
+
 Skald reads like iced or Elm at the API level, and its rebuild-every-frame
 model puts it in the immediate-mode performance tier rather than the
 retained-tree one. See [`docs/benchmarks.md`](docs/benchmarks.md) for
