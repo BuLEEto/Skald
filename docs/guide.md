@@ -48,6 +48,13 @@ yet, but the loop is running — Skald is calling `view` sixty times a
 second and drawing what comes back. `ctx.theme` is the colours,
 fonts, and spacing for the active theme. You'll keep reaching for it.
 
+> Following along in your own project rather than this repo? Compile
+> with `odin build . -collection:gui=/path/to/skald-parent`, where
+> `skald-parent` is the directory that *contains* the `skald/` folder
+> (the root of a Skald clone, say). See
+> [Building your own app](getting_started.md#building-your-own-app)
+> for the full recipe plus a `build.sh` / `build.bat` template.
+
 ## Collect some text
 
 Put a draft on state:
