@@ -1,6 +1,7 @@
 package skald
 
 import "core:time"
+import "vendor:sdl3"
 
 // Command describes a side effect that `update` asks the framework to
 // perform — scheduling a timer, dispatching a follow-up message, or
@@ -30,6 +31,11 @@ Command :: struct($Msg: typeid) {
 	// by the constructor and consumed by `process_async` on the same
 	// frame, so the pointer's short lifetime is fine.
 	async:    ^Async_Op(Msg),
+	// window_op carries the per-op descriptor for `.Open_Window` /
+	// `.Close_Window` commands. Same lifetime contract as `async` —
+	// temp-allocated by the constructor, picked up by process_command
+	// on the same frame.
+	window_op: ^Window_Op(Msg),
 }
 
 // Command_Kind discriminates a `Command`. `.None` is the zero value so
@@ -41,6 +47,104 @@ Command_Kind :: enum u8 {
 	Delay,
 	Batch,
 	Async,
+	Open_Window,
+	Close_Window,
+}
+
+// Window_Desc describes a window to be opened by `cmd_open_window`. Mirrors
+// the shape of `App`'s window-related fields — title, size, initial state,
+// SDL flags, and the native-tweak hook — so apps can spawn secondary
+// windows with the same ergonomics as the main window at startup.
+Window_Desc :: struct {
+	title:         string,
+	size:          Size,
+	initial_state: Window_State,
+	flags:         sdl3.WindowFlags,
+	// on_open fires once after the new window is created and its Vulkan
+	// surface+swapchain are live, giving this specific window the same
+	// pre-render tweak hook `App.on_window_open` gives the primary. Ideal
+	// spot for X11 `_NET_WM_WINDOW_TYPE_DOCK` hinting per popover.
+	on_open:       proc(w: ^Window),
+}
+
+// Window_Op_Kind discriminates between open + close requests on the
+// shared `Window_Op` payload.
+Window_Op_Kind :: enum u8 {
+	Open,
+	Close,
+}
+
+// Window_Op is the payload carried by `.Open_Window` and `.Close_Window`
+// commands. Heap-allocated into the frame arena by the constructors
+// (`cmd_open_window` / `cmd_close_window`); consumed during command
+// processing, which hands the op to the run loop via a pending list.
+Window_Op :: struct($Msg: typeid) {
+	kind:      Window_Op_Kind,
+	desc:      Window_Desc,                // valid when kind == .Open
+	on_result: proc(id: Window_Id) -> Msg, // fires after Open completes with the new window's id
+	on_close:  proc(id: Window_Id) -> Msg, // fires when this window tears down — either via cmd_close_window OR the user hitting its X
+	id:        Window_Id,                  // valid when kind == .Close
+}
+
+// Window_Close_Reg is the per-window close-callback registration. The
+// run loop keeps a list of these, one per open secondary, and consults
+// it whenever a target is torn down (programmatic close or X-button).
+// Applied in-place so the Msg-parameterised proc pointer stays typed
+// end-to-end without going through any rawptr shenanigans.
+Window_Close_Reg :: struct($Msg: typeid) {
+	id:       Window_Id,
+	on_close: proc(id: Window_Id) -> Msg,
+}
+
+// cmd_open_window asks the runtime to create a secondary window. The new
+// window shares the app's Vulkan device, pipeline, fonts and image
+// cache with the main window — only the swapchain + per-frame sync are
+// allocated fresh. Once the window is up, `on_result` fires with the
+// new `Window_Id`; apps typically store that id on their State so their
+// `view` proc can switch on `ctx.window` to render the right tree.
+//
+//     Msg :: union { ... Popover_Opened, Popover_Closed }
+//
+//     on_popover_opened :: proc(id: skald.Window_Id) -> Msg {
+//         return Popover_Opened{id = id}
+//     }
+//
+//     return state, skald.cmd_open_window(
+//         {title = "Calendar", size = {240, 200}, flags = {.BORDERLESS, .ALWAYS_ON_TOP}},
+//         on_popover_opened,
+//     )
+// `on_close` is optional — leave nil if the app doesn't need to hear
+// about the window closing. Fires whenever the target tears down,
+// whether that was a `cmd_close_window` dispatched by the app itself
+// or the user clicking the window's native X button. The msg gives
+// the app a chance to clear any `Window_Id` it has stashed in state.
+cmd_open_window :: proc(
+	desc: Window_Desc,
+	on_result: proc(id: Window_Id) -> $Msg,
+	on_close: proc(id: Window_Id) -> Msg = nil,
+) -> Command(Msg) {
+	op := new(Window_Op(Msg), context.temp_allocator)
+	op^ = Window_Op(Msg){
+		kind      = .Open,
+		desc      = desc,
+		on_result = on_result,
+		on_close  = on_close,
+	}
+	return Command(Msg){kind = .Open_Window, window_op = op}
+}
+
+// cmd_close_window tears down a secondary window opened by
+// `cmd_open_window`. Closing the primary (main) window is a no-op —
+// use the window's close button or set `should_close` for that.
+//
+// `$Msg` must be passed explicitly because `cmd_close_window` has
+// nothing else that carries the type (no payload, no callback). Apps
+// write `skald.cmd_close_window(Msg, id)` — Msg is the app's top-level
+// message type, already in scope at the call site.
+cmd_close_window :: proc($Msg: typeid, id: Window_Id) -> Command(Msg) {
+	op := new(Window_Op(Msg), context.temp_allocator)
+	op^ = Window_Op(Msg){kind = .Close, id = id}
+	return Command(Msg){kind = .Close_Window, window_op = op}
 }
 
 // cmd_now schedules `msg` to be delivered back to `update` on the same
@@ -107,13 +211,17 @@ Pending_Delay :: struct($Msg: typeid) {
 // get scheduled for a future frame; `.Batch` recurses into children;
 // `.Async` hands the op off to nbio via `process_async`, which registers
 // a pending slot that `drain_io` will convert back into a Msg once the
-// underlying operation completes.
+// underlying operation completes. `.Open_Window` / `.Close_Window`
+// enqueue onto `windows_pending` — the run loop drains that list
+// between the msg pass and the next frame, doing the actual SDL +
+// Vulkan work where it has access to the renderer.
 @(private)
 process_command :: proc(
-	cmd:     Command($Msg),
-	msgs:    ^[dynamic]Msg,
-	pending: ^[dynamic]Pending_Delay(Msg),
-	io:      ^Io_State(Msg),
+	cmd:              Command($Msg),
+	msgs:             ^[dynamic]Msg,
+	pending:          ^[dynamic]Pending_Delay(Msg),
+	io:               ^Io_State(Msg),
+	windows_pending:  ^[dynamic]Window_Op(Msg),
 ) {
 	switch cmd.kind {
 	case .None:
@@ -125,10 +233,14 @@ process_command :: proc(
 		append(pending, Pending_Delay(Msg){fire_at_ns = fire, msg = cmd.msg})
 	case .Batch:
 		for child in cmd.children {
-			process_command(child, msgs, pending, io)
+			process_command(child, msgs, pending, io, windows_pending)
 		}
 	case .Async:
 		process_async(cmd.async, io)
+	case .Open_Window, .Close_Window:
+		if cmd.window_op != nil {
+			append(windows_pending, cmd.window_op^)
+		}
 	}
 }
 

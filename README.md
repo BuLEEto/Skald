@@ -45,6 +45,13 @@ actual numbers.
   (JSON on disk, embedded in a `settings.db`, wherever) — Skald just
   reports the current geometry as a plain struct. Cookbook has the
   pattern.
+- **Multi-window** — `cmd_open_window` / `cmd_close_window` spawn
+  and tear down extra OS windows (popovers, notification bubbles,
+  panels, HUDs). Each gets its own Vulkan swapchain, input, and
+  widget store; the app's `view` is called per window with
+  `ctx.window` set so one proc can render all of them. Device,
+  pipeline, fonts, and images stay shared — only the swapchain and
+  per-frame plumbing are per-window.
 - **Keyboard-first** — Tab ring, shift-Tab, focus trap inside modals,
   focus restoration on dialog/palette close, `widget_tab_index` for
   explicit ordering, global `shortcut()` registration.

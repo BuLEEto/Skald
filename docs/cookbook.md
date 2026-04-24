@@ -23,6 +23,7 @@ they fit.
 - [Input and forms](#input-and-forms)
 - [Lists and tables](#lists-and-tables)
 - [Overlays](#overlays)
+- [Multi-window](#multi-window)
 - [Fonts](#fonts)
 - [Localization](#localization)
 - [Theming](#theming)
@@ -419,6 +420,112 @@ skald.tooltip(ctx, skald.button(ctx, "Save", Save_Clicked{}), "Ctrl+S")
 ```
 
 400 ms hover delay. Multi-line tooltips: put `\n` in the text.
+
+---
+
+## Multi-window
+
+### Open a popover window
+
+One `view` proc renders every open window. Switch on `ctx.window` to
+pick which tree belongs to which.
+
+```odin
+State :: struct {
+    popover_id: skald.Window_Id,   // zero-value = not open
+}
+
+Msg :: union {
+    Open_Popover,
+    Popover_Opened,
+    Popover_Closed,
+    Close_Popover,
+}
+
+update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
+    out := s
+    switch v in m {
+    case Open_Popover:
+        if out.popover_id != {} { return out, {} } // already open
+        return out, skald.cmd_open_window(
+            {title = "Calendar", size = {240, 200}},
+            on_popover_opened,
+            on_close = on_popover_closed,
+        )
+
+    case Popover_Opened: out.popover_id = v.id
+    case Popover_Closed:
+        // Fires for BOTH paths: cmd_close_window AND the user's X-click.
+        // One handler covers both so state always tracks reality.
+        if v.id == out.popover_id { out.popover_id = {} }
+
+    case Close_Popover:
+        if out.popover_id == {} { return out, {} }
+        return out, skald.cmd_close_window(Msg, out.popover_id)
+    }
+    return out, {}
+}
+
+view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
+    if s.popover_id != {} && ctx.window == s.popover_id {
+        return popover_view(s, ctx)
+    }
+    return main_view(s, ctx)
+}
+
+on_popover_opened :: proc(id: skald.Window_Id) -> Msg { return Popover_Opened{id = id} }
+on_popover_closed :: proc(id: skald.Window_Id) -> Msg { return Popover_Closed{id = id} }
+```
+
+Each window gets its own `Widget_Store` — focus, modal rects, and
+overlays are scoped per window. Input events only reach the window
+they were targeted at. Device, pipeline, and fonts stay shared.
+
+### Dock-style window (borderless, always on top)
+
+Pass SDL flags at `App` construction time:
+
+```odin
+app.window_flags = {.BORDERLESS, .ALWAYS_ON_TOP}
+```
+
+`.VULKAN` and `.HIGH_PIXEL_DENSITY` are added by Skald automatically —
+set `window_flags` to override everything else the OS would otherwise
+enable (like `.RESIZABLE`, which the default includes).
+
+For X11-specific hints — `_NET_WM_WINDOW_TYPE_DOCK`, struts, etc. —
+use `App.on_window_open` to reach the native handle:
+
+```odin
+app.on_window_open = proc(w: ^skald.Window) {
+    props := sdl3.GetWindowProperties(w.handle)
+    display    := sdl3.GetPointerProperty(props, sdl3.PROP_WINDOW_X11_DISPLAY_POINTER, nil)
+    x11_window := sdl3.GetNumberProperty(props, sdl3.PROP_WINDOW_X11_WINDOW_NUMBER, 0)
+    // XChangeProperty(..., _NET_WM_WINDOW_TYPE, DOCK) etc.
+}
+```
+
+Same hook exists per secondary window via `Window_Desc.on_open`.
+
+### Auto-close a popover on click-away
+
+```odin
+app.on_window_focus_lost = on_focus_lost
+
+on_focus_lost :: proc(window: skald.Window_Id) -> Msg {
+    return Focus_Lost{id = window}
+}
+
+// in update:
+case Focus_Lost:
+    if out.popover_id == v.id {
+        return out, skald.cmd_close_window(Msg, out.popover_id)
+    }
+```
+
+Fires once when any window stops being foreground (user clicks
+another app, Alt-Tabs, switches workspace). Works for both primary
+and secondary windows.
 
 ---
 

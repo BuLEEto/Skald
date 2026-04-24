@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "vendor:sdl3"
+import vk "vendor:vulkan"
 
 // App is the elm-style application record. An application is four things:
 // a small piece of state, a message union describing every event the app
@@ -94,6 +95,16 @@ App :: struct($State, $Msg: typeid) {
 	// struts, level, shadow, etc.). Purely additive; no Msg round-trip.
 	// Optional — leave nil to skip.
 	on_window_open: proc(w: ^Window),
+
+	// on_window_focus_lost fires once when a window stops being the
+	// foreground window (user clicked another app, switched workspaces,
+	// Alt-Tabbed away). Fires for both primary and secondary windows,
+	// passing the `Window_Id` of whichever one lost focus. Typical
+	// use: auto-dismiss popovers / notifications / transient overlays
+	// on click-away — return a Msg that flips your "is popover open"
+	// state or fires `cmd_close_window`. Optional; nil means "ignore
+	// focus changes."
+	on_window_focus_lost: proc(window: Window_Id) -> Msg,
 }
 
 // Window_State captures everything needed to restore a window's
@@ -134,6 +145,13 @@ Ctx :: struct($Msg: typeid) {
 	// request to render-time. It's nil outside of `run` — unit tests
 	// constructing a Ctx by hand don't need a live GPU context.
 	renderer: ^Renderer,
+
+	// window identifies which window this view call is for. Single-window
+	// apps never need to inspect it — it always equals `main_window` (the
+	// id of the primary window). Multi-window apps compare against ids
+	// returned from `cmd_open_window` so one `view` proc can switch on id
+	// to render different subtrees in each window.
+	window:   Window_Id,
 }
 
 // send pushes a message onto the ctx's queue. Equivalent to
@@ -180,12 +198,193 @@ map_msg :: proc(
 		msgs     = sub_msgs,
 		widgets  = parent_ctx.widgets,
 		renderer = parent_ctx.renderer,
+		window   = parent_ctx.window,
 	}
 
 	v := sub_view(sub_state, &sub_ctx)
 
 	for m in sub_msgs^ { send(parent_ctx, to_parent(m)) }
 	return v
+}
+
+// drain_window_ops processes queued `cmd_open_window` / `cmd_close_window`
+// requests. Called each frame after the msg-drain pass so newly-opened
+// windows appear in the same frame the triggering action landed. Open
+// creates the SDL window, spins up a per-window Vulkan surface +
+// swapchain + sync, appends a `Window_Target` to `r.targets`, and fires
+// `on_result(new_id)` onto the msg queue. Close tears down and removes.
+// Closing the primary target is a no-op — use `should_close` on the
+// primary's platform window instead.
+@(private)
+drain_window_ops :: proc(
+	r:          ^Renderer,
+	ops:        ^[dynamic]Window_Op($Msg),
+	msgs:       ^[dynamic]Msg,
+	close_reg:  ^[dynamic]Window_Close_Reg(Msg),
+	open_clear: Color,
+) {
+	for op in ops {
+		switch op.kind {
+		case .Open:
+			// Allocate + open the new SDL window.
+			new_w := new(Window)
+			w, ok := window_open(op.desc.title, op.desc.size, op.desc.initial_state, op.desc.flags)
+			if !ok {
+				free(new_w)
+				continue
+			}
+			new_w^ = w
+			if op.desc.on_open != nil { op.desc.on_open(new_w) }
+
+			// New target carries its own widget store + batch. The
+			// platform `^Window` is heap-allocated (unlike the primary
+			// target's, which points at `run`'s stack local) so flag
+			// it owned so `renderer_destroy` and
+			// `drain_window_ops`.Close can free it correctly.
+			target := new(Window_Target)
+			target.platform       = new_w
+			target.platform_owned = true
+			target.widgets        = new(Widget_Store)
+			widget_store_init(target.widgets)
+
+			// Vulkan surface for the new window, then swapchain + sync
+			// through the existing `cur`-driven initializers.
+			prev := r.cur
+			r.cur = target
+			target.window = new_w.handle
+			if !sdl3.Vulkan_CreateSurface(new_w.handle, r.instance, nil, &target.surface) {
+				fmt.eprintfln("skald: Vulkan_CreateSurface (secondary): %s", sdl3.GetError())
+				// Unwind.
+				widget_store_destroy(target.widgets)
+				free(target.widgets)
+				free(target)
+				window_destroy(new_w)
+				free(new_w)
+				r.cur = prev
+				continue
+			}
+			if !vk_create_swapchain(r, new_w) ||
+			   !vk_create_commands_and_sync(r) ||
+			   !vk_create_render_finished_semaphores(r) ||
+			   !target_vk_init(r, target, &r.pipeline, &r.text) {
+				// Best-effort unwind — walk back through everything
+				// that might have partially succeeded. Each vk_destroy_*
+				// is defensive against zero handles so it's safe even
+				// when the failing step was the first one.
+				target_vk_destroy(r, target, &r.pipeline)
+				vk_destroy_render_finished_semaphores(r)
+				vk_destroy_commands_and_sync(r)
+				vk_destroy_swapchain(r)
+				sdl3.Vulkan_DestroySurface(r.instance, target.surface, nil)
+				widget_store_destroy(target.widgets)
+				free(target.widgets)
+				free(target)
+				window_destroy(new_w)
+				free(new_w)
+				r.cur = prev
+				continue
+			}
+
+			append(&r.targets, target)
+
+			// First-frame flicker fix. A freshly-created Vulkan
+			// swapchain has undefined contents — on X11 with a
+			// compositor, those undefined pixels sample from whatever
+			// was last in that GPU memory and flash on screen for a
+			// frame or two before the app's real view paints over
+			// them. Running a clear-and-present pass right now means
+			// the compositor's first sample is the app's background
+			// colour, not leftovers from the previous tenant.
+			//
+			// frame_begin + frame_end with an empty batch is exactly
+			// the "paint nothing, present" sequence we need — the
+			// renderer's clear-on-load plus its end-of-frame
+			// transition-to-PRESENT_SRC do the work.
+			r.cur = target
+			if frame_begin(r, target.platform, open_clear) {
+				frame_end(r)
+			}
+
+			r.cur = prev
+
+			// Hand the new id back to the app via the on_result callback,
+			// and register the on_close callback so X-close and programmatic
+			// close both dispatch it on teardown.
+			id := Window_Id(target)
+			if op.on_result != nil {
+				append(msgs, op.on_result(id))
+			}
+			if op.on_close != nil {
+				append(close_reg, Window_Close_Reg(Msg){id = id, on_close = op.on_close})
+			}
+
+		case .Close:
+			if len(r.targets) == 0 { continue }
+			primary := r.targets[0]
+			// Can't close the primary — app uses its window's X button
+			// or should_close for that.
+			if Window_Id(primary) == op.id { continue }
+
+			// Find the target by id (pointer equality).
+			idx := -1
+			for t, i in r.targets {
+				if Window_Id(t) == op.id { idx = i; break }
+			}
+			if idx < 0 { continue }
+
+			target := r.targets[idx]
+			dispatch_window_close(close_reg, msgs, Window_Id(target))
+
+			// Serialize with any in-flight GPU work tied to this surface.
+			if r.device != nil { vk.DeviceWaitIdle(r.device) }
+
+			prev := r.cur
+			r.cur = target
+			target_vk_destroy(r, target, &r.pipeline)
+			batch_destroy(&target.batch)
+			vk_destroy_commands_and_sync(r)
+			vk_destroy_swapchain(r)
+			if target.surface != 0 && r.instance != nil {
+				sdl3.Vulkan_DestroySurface(r.instance, target.surface, nil)
+			}
+			if target.widgets != nil {
+				widget_store_destroy(target.widgets)
+				free(target.widgets)
+			}
+			if target.platform != nil {
+				// window_destroy, not window_close — we're closing a
+				// secondary mid-run; SDL itself stays alive.
+				window_destroy(target.platform)
+				free(target.platform)
+			}
+			free(target)
+			r.cur = prev if prev != target else primary
+
+			ordered_remove(&r.targets, idx)
+		}
+	}
+	clear(ops)
+}
+
+// dispatch_window_close fires + unregisters the on_close callback for
+// a window that's about to be torn down. Called by both the drain_window_ops
+// close path and the secondary-X-close auto-teardown in the run loop,
+// so either path reaches app code identically.
+@(private)
+dispatch_window_close :: proc(
+	close_reg: ^[dynamic]Window_Close_Reg($Msg),
+	msgs:      ^[dynamic]Msg,
+	id:        Window_Id,
+) {
+	for r, i in close_reg {
+		if r.id == id {
+			if r.on_close != nil {
+				append(msgs, r.on_close(id))
+			}
+			ordered_remove(close_reg, i)
+			return
+		}
+	}
 }
 
 // run opens a window, initializes the renderer, and enters the main loop:
@@ -231,10 +430,27 @@ run :: proc(app: App($State, $Msg)) {
 	pending: [dynamic]Pending_Delay(Msg)
 	defer delete(pending)
 
-	widgets: Widget_Store
-	widget_store_init(&widgets)
-	defer widget_store_destroy(&widgets)
-	r.widgets = &widgets
+	// windows_pending accumulates cmd_open_window / cmd_close_window
+	// requests from update. Drained after each msg-drain pass, before
+	// the next render, so newly-opened windows render in the same
+	// frame the triggering action was processed in.
+	windows_pending: [dynamic]Window_Op(Msg)
+	defer delete(windows_pending)
+
+	// close_reg tracks `on_close` callbacks registered at open time.
+	// The user hitting a window's X button and an app-issued
+	// cmd_close_window both go through the same dispatch path — if
+	// there's a registration for the closing window, we fire its Msg
+	// just before teardown, so state that holds the Window_Id can
+	// clear itself.
+	close_reg: [dynamic]Window_Close_Reg(Msg)
+	defer delete(close_reg)
+
+	// The primary target's Widget_Store was heap-allocated inside
+	// renderer_init. Alias it here so the rest of run() reads naturally.
+	// Secondary windows (multi-window apps) get their own stores via
+	// cmd_open_window.
+	widgets := r.targets[0].widgets
 
 	// Async I/O is ticked from the same thread that owns this loop, so
 	// we acquire the nbio thread-local event loop once here and release
@@ -288,8 +504,81 @@ run :: proc(app: App($State, $Msg)) {
 	bench_rss_start_kb  := _bench_rss_kb()
 
 	for !w.should_close {
-		window_pump(&w)
-		if w.resized { renderer_resize(&r, &w) }
+		// Multi-window event pump: collect every open target's platform
+		// window into a temp slice, reset each one's per-frame edges,
+		// then let the dispatcher route SDL events by windowID. With
+		// only the primary open it's identical to `window_pump(&w)`.
+		plats := make([dynamic]^Window, 0, len(r.targets), context.temp_allocator)
+		for t in r.targets { append(&plats, t.platform) }
+		windows_pump(plats[:])
+
+		// Focus-lost dispatch. Fires once per target whose window
+		// stopped being foreground this frame. Apps use this to
+		// auto-dismiss popovers / notifications on click-away —
+		// typically by returning a Msg that flips State or issues
+		// `cmd_close_window`.
+		if app.on_window_focus_lost != nil {
+			for t in r.targets {
+				if t.platform != nil && t.platform.focus_lost {
+					append(&msgs, app.on_window_focus_lost(Window_Id(t)))
+				}
+			}
+		}
+
+		// Secondary windows closed via their native X button set their
+		// own `platform.should_close`. Tear them down immediately so
+		// the render loop doesn't paint into a dead swapchain. Primary's
+		// close drives app exit via the outer `for !w.should_close`
+		// below — not touched here.
+		{
+			i := 1
+			for i < len(r.targets) {
+				t := r.targets[i]
+				if t.platform != nil && t.platform.should_close {
+					// Fire the app's on_close callback before teardown
+					// so its Msg handler can clear any Window_Id stashed
+					// in State — can't do it after, since the id (a
+					// pointer to the freed target) would be dangling.
+					dispatch_window_close(&close_reg, &msgs, Window_Id(t))
+
+					if r.device != nil { vk.DeviceWaitIdle(r.device) }
+					prev := r.cur
+					r.cur = t
+					target_vk_destroy(&r, t, &r.pipeline)
+					batch_destroy(&t.batch)
+					vk_destroy_commands_and_sync(&r)
+					vk_destroy_swapchain(&r)
+					if t.surface != 0 && r.instance != nil {
+						sdl3.Vulkan_DestroySurface(r.instance, t.surface, nil)
+					}
+					if t.widgets != nil {
+						widget_store_destroy(t.widgets)
+						free(t.widgets)
+					}
+					if t.platform != nil {
+						window_destroy(t.platform)
+						free(t.platform)
+					}
+					free(t)
+					r.cur = prev if prev != t else r.targets[0]
+					ordered_remove(&r.targets, i)
+					continue
+				}
+				i += 1
+			}
+		}
+
+		// Resize handling runs per-target so a secondary window that
+		// gets resized (rare but legal for non-borderless popovers)
+		// rebuilds its own swapchain, not the primary's.
+		for t in r.targets {
+			if t.platform.resized {
+				r.cur = t
+				renderer_resize(&r, t.platform)
+			}
+		}
+		r.cur = r.targets[0]
+
 		if w.system_theme_changed && app.on_system_theme_change != nil {
 			append(&msgs, app.on_system_theme_change(system_theme()))
 		}
@@ -326,12 +615,25 @@ run :: proc(app: App($State, $Msg)) {
 		caret_blink_due := had_focus &&
 			time.since(last_render) >= CARET_BLINK_PERIOD
 
-		widget_deadline_due := widgets.next_frame_deadline_ns != 0 &&
-			time.now()._nsec >= widgets.next_frame_deadline_ns
+		// Multi-window: any target that's dirty forces a re-render of the
+		// whole frame. Any individual window having pending deadlines,
+		// events, or a resize this frame means we paint at least once —
+		// the per-target render loop then re-paints every window so their
+		// view trees stay fresh.
+		any_events, any_resized, any_widget_deadline := false, false, false
+		now_ns := time.now()._nsec
+		for t in r.targets {
+			if t.platform.had_events { any_events = true }
+			if t.platform.resized    { any_resized = true }
+			if t.widgets.next_frame_deadline_ns != 0 &&
+			   now_ns >= t.widgets.next_frame_deadline_ns {
+				any_widget_deadline = true
+			}
+		}
 
-		dirty := first_frame || w.had_events || w.resized ||
+		dirty := first_frame || any_events || any_resized ||
 			w.system_theme_changed || delay_fired || io_fired ||
-			len(msgs) > 0 || caret_blink_due || widget_deadline_due ||
+			len(msgs) > 0 || caret_blink_due || any_widget_deadline ||
 			state_may_have_changed ||
 			bench_frames_target > 0  // bench mode forces every frame
 
@@ -374,120 +676,132 @@ run :: proc(app: App($State, $Msg)) {
 			continue
 		}
 
-		// Capture last frame's modal rect before frame_reset wipes it
-		// so both the focus-trap filter (inside widget_advance_focus)
-		// and the backdrop-click preprocessor (below, post-reset) can
-		// read the same source of truth.
-		modal_rect_prev := widgets.modal_rect
+		// Per-target render pass. Single-window apps iterate once (the
+		// primary target). Multi-window apps iterate every open target —
+		// each has its own platform window (so its own input + geometry),
+		// its own Widget_Store (so focus + modal scope don't leak across
+		// windows), its own vertex/index buffers and descriptor set (so
+		// two targets submitting in the same frame can't race), and
+		// runs its own frame_begin / view / frame_end against its own
+		// swapchain. fb_size travels via push constants, so every draw
+		// carries the current window's dimensions without touching
+		// shared state. No DeviceWaitIdle between targets.
+		had_focus = false
+		primary := r.targets[0]
+		for t in r.targets {
+			r.cur = t
+			t_widgets := t.widgets
+			t_w       := t.platform
 
-		// Tab / Shift-Tab is the one input the framework intercepts
-		// before widgets see it. The previous frame's focusables list
-		// is still live (widget_store_frame_reset clears it below), so
-		// we can cycle focus now; the widget that gains focus will see
-		// any subsequent keystrokes in the same frame via its builder.
-		if .Tab in w.input.keys_pressed {
-			widget_advance_focus(&widgets, .Shift in w.input.modifiers)
-		}
+			// Capture last frame's modal rect before frame_reset wipes it
+			// so both the focus-trap filter (inside widget_advance_focus)
+			// and the backdrop-click preprocessor (below, post-reset) can
+			// read the same source of truth.
+			modal_rect_prev := t_widgets.modal_rect
 
-		// F12 toggles the debug inspector overlay. In release builds
-		// (ODIN_DEBUG off) the whole gating proc compiles to nothing,
-		// so users can't trip it by pressing F12 on a shipped app.
-		when ODIN_DEBUG {
-			inspector_handle_toggle(&widgets, &w.input, w.input.mouse_pos)
-		}
-
-		widget_store_frame_reset(&widgets)
-
-		// Modal dialog interception. A left-press outside the card is
-		// swallowed — `mouse_pressed[.Left]` and `mouse_released[.Left]`
-		// are zeroed so nothing underneath the scrim fires. The click
-		// does *not* dismiss the dialog: accidental backdrop clicks
-		// losing typed input is worse than requiring an explicit Cancel
-		// or Escape. Matches macOS/GNOME sheet behavior. Buttons already
-		// held aren't touched — only the edge event is swallowed.
-		if modal_rect_prev.w > 0 && modal_rect_prev.h > 0 {
-			if w.input.mouse_pressed[.Left] &&
-			   !rect_contains_point(modal_rect_prev, w.input.mouse_pos) {
-				w.input.mouse_pressed[.Left]  = false
-				w.input.mouse_released[.Left] = false
+			// Tab / Shift-Tab is the one input the framework intercepts
+			// before widgets see it. The previous frame's focusables list
+			// is still live (widget_store_frame_reset clears it below), so
+			// we can cycle focus now; the widget that gains focus will see
+			// any subsequent keystrokes in the same frame via its builder.
+			if .Tab in t_w.input.keys_pressed {
+				widget_advance_focus(t_widgets, .Shift in t_w.input.modifiers)
 			}
-		}
 
-		// Frame pipeline (order matters):
-		//   1. view    — builds the tree, hit-tests, pushes Msgs. Strings
-		//                inside Msgs are allocated from the frame arena.
-		//   2. render  — draws the tree that view just produced.
-		//   3. update  — drains the Msgs into `state`, running in a loop
-		//                so cmd_now cascades resolve in the same frame.
-		//                Commands returned from update schedule further
-		//                msgs (onto the frame queue for `.Now`, onto
-		//                `pending` for `.Delay`).
-		//   4. free_all temp — arena reset after update has consumed
-		//                everything that pointed into it.
-		//
-		// The visible effect is one frame of lag between a *view* msg
-		// and the resulting state change — a button click updates state
-		// for the *next* frame's view call. cmd_now msgs cascade within
-		// a single frame so e.g. Save → Close_Dialog both land before
-		// the next render.
-		if frame_begin(&r, &w, th.color.bg) {
-			ctx := Ctx(Msg){
-				theme    = &th,
-				labels   = &lbls,
-				input    = &w.input,
-				msgs     = &msgs,
-				widgets  = &widgets,
-				renderer = &r,
-			}
-			v := app.view(state, &ctx)
-			win_size := [2]f32{f32(w.size_logical.x), f32(w.size_logical.y)}
-			render_view(&r, v, {0, 0}, win_size)
-			// Overlays (dropdowns, tooltips, menus) drew nothing during
-			// the main pass — they only queued themselves. Drain the
-			// queue now so they sit on top in draw order.
-			render_overlays(&r)
-			// Debug inspector paints last so it floats over every app
-			// surface. No-op in release builds — the whole proc is gated
-			// behind `when ODIN_DEBUG`.
+			// F12 toggles the debug inspector overlay. In release builds
+			// (ODIN_DEBUG off) the whole gating proc compiles to nothing,
+			// so users can't trip it by pressing F12 on a shipped app.
 			when ODIN_DEBUG {
-				// Sample wall-clock render gap for the FPS readout.
-				// `last_render` still holds last frame's end timestamp;
-				// the first frame reads 0 and is filtered out by the
-				// smoothing proc.
-				dt_ms := f32(time.duration_milliseconds(time.since(last_render)))
-				inspector_push_frame_time(&widgets, dt_ms)
-				inspector_render(&r, &widgets, &w.input)
+				inspector_handle_toggle(t_widgets, &t_w.input, t_w.input.mouse_pos)
 			}
-			frame_end(&r)
 
-			// Bench sampling happens after frame_end so the time covers
-			// the full view → render → present path.
-			if bench_frames_target > 0 {
-				frame_ms := time.duration_milliseconds(time.since(last_render))
-				if !first_frame {
-					append(&bench_times, f64(frame_ms))
-				}
-				bench_frames_seen += 1
-				if bench_frames_seen >= bench_frames_target {
-					_bench_emit_summary(
-						bench_times[:],
-						bench_rss_start_kb,
-						_bench_rss_kb(),
-					)
-					w.should_close = true
+			widget_store_frame_reset(t_widgets)
+
+			// Modal dialog interception. A left-press outside the card is
+			// swallowed — `mouse_pressed[.Left]` and `mouse_released[.Left]`
+			// are zeroed so nothing underneath the scrim fires. The click
+			// does *not* dismiss the dialog: accidental backdrop clicks
+			// losing typed input is worse than requiring an explicit Cancel
+			// or Escape. Matches macOS/GNOME sheet behavior. Buttons already
+			// held aren't touched — only the edge event is swallowed.
+			if modal_rect_prev.w > 0 && modal_rect_prev.h > 0 {
+				if t_w.input.mouse_pressed[.Left] &&
+				   !rect_contains_point(modal_rect_prev, t_w.input.mouse_pos) {
+					t_w.input.mouse_pressed[.Left]  = false
+					t_w.input.mouse_released[.Left] = false
 				}
 			}
 
-			last_render = time.now()
-			first_frame = false
+			// Frame pipeline (order matters):
+			//   1. view    — builds the tree, hit-tests, pushes Msgs. Strings
+			//                inside Msgs are allocated from the frame arena.
+			//   2. render  — draws the tree that view just produced.
+			//   3. update  — (outside the target loop) drains the Msgs into
+			//                `state`.
+			//   4. free_all temp — (outside the target loop) arena reset.
+			//
+			// The visible effect is one frame of lag between a *view* msg
+			// and the resulting state change — a button click updates state
+			// for the *next* frame's view call.
+			if frame_begin(&r, t_w, th.color.bg) {
+				ctx := Ctx(Msg){
+					theme    = &th,
+					labels   = &lbls,
+					input    = &t_w.input,
+					msgs     = &msgs,
+					widgets  = t_widgets,
+					renderer = &r,
+					window   = Window_Id(t),
+				}
+				v := app.view(state, &ctx)
+				win_size := [2]f32{f32(t_w.size_logical.x), f32(t_w.size_logical.y)}
+				render_view(&r, v, {0, 0}, win_size)
+				// Overlays (dropdowns, tooltips, menus) drew nothing during
+				// the main pass — they only queued themselves. Drain the
+				// queue now so they sit on top in draw order.
+				render_overlays(&r)
+				// Debug inspector paints on the primary window only — the
+				// FPS / RSS readout is app-level info, not per-window, and
+				// multiplying it across every popover would be noise.
+				when ODIN_DEBUG {
+					if t == primary {
+						dt_ms := f32(time.duration_milliseconds(time.since(last_render)))
+						inspector_push_frame_time(t_widgets, dt_ms)
+						inspector_render(&r, t_widgets, &t_w.input)
+					}
+				}
+				frame_end(&r)
+			}
+
+			// Text input mode is per-window: SDL3 tracks it on the window
+			// handle, so each target sets its own based on what this
+			// frame's view asked for.
+			window_set_text_input(t_w, t_widgets.wants_text_input)
+			had_focus = had_focus || t_widgets.wants_text_input
 		}
 
-		// Toggle SDL3's text-input mode based on what this frame's view
-		// claimed. Doing it after view (not on a KeyDown) means IME state
-		// exactly matches whatever the app currently renders, including
-		// when focus moves programmatically or a field unmounts.
-		window_set_text_input(&w, widgets.wants_text_input)
-		had_focus = widgets.wants_text_input
+		// Bench sampling + last_render live outside the per-target loop
+		// so we count one frame per iteration of the outer loop rather
+		// than one per window — the benchmark is measuring frame cadence,
+		// not render invocations.
+		if bench_frames_target > 0 {
+			frame_ms := time.duration_milliseconds(time.since(last_render))
+			if !first_frame {
+				append(&bench_times, f64(frame_ms))
+			}
+			bench_frames_seen += 1
+			if bench_frames_seen >= bench_frames_target {
+				_bench_emit_summary(
+					bench_times[:],
+					bench_rss_start_kb,
+					_bench_rss_kb(),
+				)
+				w.should_close = true
+			}
+		}
+
+		last_render = time.now()
+		first_frame = false
 
 		// Drain msgs through update, looping until the queue is empty
 		// so `.Now` commands fold back into this frame. Commands other
@@ -509,7 +823,14 @@ run :: proc(app: App($State, $Msg)) {
 			for msg in frame_msgs {
 				new_state, cmd := app.update(state, msg)
 				state = new_state
-				process_command(cmd, &msgs, &pending, &io)
+				process_command(cmd, &msgs, &pending, &io, &windows_pending)
+			}
+			// Drain window-op requests between each msg batch so a follow-up
+			// `cmd_now` that reacts to a newly-opened window's id lands in
+			// the same frame. Also ensures the on_result msg from an Open
+			// is immediately available to the next iteration of this loop.
+			if len(windows_pending) > 0 {
+				drain_window_ops(&r, &windows_pending, &msgs, &close_reg, th.color.bg)
 			}
 		}
 

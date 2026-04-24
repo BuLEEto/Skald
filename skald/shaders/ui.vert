@@ -21,14 +21,18 @@ layout(location = 4) out float v_radius;
 layout(location = 5) out float v_kind;
 layout(location = 6) out vec2  v_uv;
 
-layout(set = 0, binding = 0) uniform Uniforms {
+// Push constants are per-pipeline-bind, per-draw state — ideal for
+// per-window values like fb_size that change between submissions
+// without needing a descriptor-set rebind. 8 bytes; sits comfortably
+// inside Vulkan's guaranteed 128-byte push-constant budget.
+layout(push_constant) uniform PushConstants {
     vec2 fb_size;
-} u;
+} pc;
 
 void main() {
     vec2 ndc = vec2(
-        in_pos.x * 2.0 / u.fb_size.x - 1.0,
-        1.0 - in_pos.y * 2.0 / u.fb_size.y
+        in_pos.x * 2.0 / pc.fb_size.x - 1.0,
+        1.0 - in_pos.y * 2.0 / pc.fb_size.y
     );
     gl_Position = vec4(ndc, 0.0, 1.0);
     v_color     = in_color;

@@ -18,7 +18,10 @@ layout(location = 6) in vec2  v_uv;
 
 layout(location = 0) out vec4 out_color;
 
-layout(set = 0, binding = 1) uniform sampler2D atlas;
+// Binding 0 — the only descriptor in the set, since fb_size moved to
+// push constants. Per-image draws rebind this slot to their own
+// texture via Batch_Range.bind_group.
+layout(set = 0, binding = 0) uniform sampler2D atlas;
 
 float sd_rounded_box(vec2 p, vec2 hs, float r) {
     vec2 q = abs(p) - hs + vec2(r);

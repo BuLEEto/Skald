@@ -4,6 +4,47 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## 1.1.0 — unreleased
+
+### Added
+
+- **Multi-window.** `cmd_open_window` / `cmd_close_window` spawn and
+  tear down secondary OS windows. Each gets its own Vulkan swapchain,
+  per-frame command buffers + sync, `Input` snapshot, `Widget_Store`,
+  vertex + index buffers, and descriptor set. Device, pipeline,
+  fonts, and the image cache stay shared. `ctx.window` (type
+  `Window_Id`) lets a single `view` proc switch on which window it's
+  rendering. See `examples/38_multi_window` and the Multi-window
+  section of the cookbook.
+- `App.on_window_focus_lost` — fires when any window stops being
+  foreground (click-away, Alt-Tab, workspace switch). Typical use:
+  auto-dismiss popovers / notifications.
+- `App.window_flags: sdl3.WindowFlags` — caller-override of the SDL
+  flag set passed to `SDL_CreateWindow`. For dock windows, always-
+  on-top panels, transparent HUDs, and the like.
+- `App.on_window_open: proc(w: ^Window)` — post-create hook for
+  platform-specific tweaks (X11 `_NET_WM_WINDOW_TYPE_DOCK` via Xlib,
+  macOS `NSWindow` levels, and so on). No forking required.
+- Swapchain picks the best `compositeAlpha` the driver advertises
+  (`POST_MULTIPLIED` → `INHERIT` → `PRE_MULTIPLIED` → `OPAQUE`). Apps
+  that set `.TRANSPARENT` in `window_flags` actually get a transparent
+  swapchain instead of an opaque black backdrop.
+
+### Changed
+
+- `fb_size` moved from a uniform-buffer binding to a push constant.
+  Descriptor set layout is now one binding (atlas). Shaders
+  rebuilt.
+
+### Internal
+
+- `Renderer` split into device-scoped (instance, device, queue,
+  pipeline, text, images) and per-window `Window_Target` (surface,
+  swapchain, cmd buffers, sync, vertex + index + dset, widget store,
+  platform window). Single-window apps unaffected.
+- `window_pump` split into `window_reset_frame` + `window_apply_event`;
+  `windows_pump(slice)` dispatches SDL events by window id.
+
 ## 1.0.0 — 2026-04-23
 
 First public release. What the API looks like now is the contract going

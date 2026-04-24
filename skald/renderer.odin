@@ -22,21 +22,51 @@ import vk "vendor:vulkan"
 
 FRAMES_IN_FLIGHT :: 2
 
-// Renderer owns the whole GPU stack for a single window: instance and
-// surface down at the Vulkan layer, the swapchain it presents through,
-// per-frame command buffers and sync primitives, and the Skald-side
-// state (pipeline, batch, glyph atlas, image cache, current-frame info)
-// that the public drawing API writes into.
-Renderer :: struct {
-	window:           ^sdl3.Window,
+// Window_Id identifies one window inside Skald's renderer. Apps hold
+// these as opaque handles — created by `cmd_open_window`, passed back
+// via callback msgs, and compared for equality (in particular against
+// `ctx.window`) to dispatch per-window logic. The underlying value is
+// a distinct `^Window_Target` so pointer-equality is the identity, and
+// the target itself is heap-allocated + stable across `targets` slice
+// growth.
+//
+// `main_window` is the id the app's primary window always gets; a
+// single-window app never sees anything else in `ctx.window`, so this
+// comparison is the natural "am I the main view?" test in multi-window
+// apps too.
+Window_Id :: distinct ^Window_Target
 
-	instance:         vk.Instance,
+// Window_Target holds everything tied to a specific SDL window: its
+// Vulkan surface, swapchain and framebuffer views, per-frame command
+// buffers and sync, the Skald per-frame batch and overlay queue, and
+// the `Widget_Store` that owns the window's focus + modal tracking.
+//
+// The device-scoped Vulkan resources (instance, physical/logical device,
+// queue, command pool, pipeline, text atlas, image cache) live on the
+// outer `Renderer`. Splitting it this way keeps the heavy state
+// (shaders, glyph atlas, image decodes) single-instanced regardless of
+// how many windows are open — multi-window only pays for the swapchain
+// and the per-frame plumbing. First step of #204; the second step will
+// promote this from an inline field on `Renderer` to a collection of
+// targets keyed by window id.
+Window_Target :: struct {
+	// platform points at the Skald `Window` struct (SDL handle + Input +
+	// geometry). The main window is stack-allocated inside `run`; secondary
+	// windows opened via `cmd_open_window` are heap-allocated. Either way,
+	// the pointer is stable for the target's lifetime, and the per-window
+	// Input this pointer reaches is where the event pump delivers events
+	// tagged for this window.
+	platform:         ^Window,
+	// platform_owned is true when this target allocated its own
+	// `^Window` on the heap (cmd_open_window path). False for the
+	// primary target, whose platform points at a stack local inside
+	// `run`. `renderer_destroy` walks targets at shutdown and tears
+	// down every owned platform so secondary popovers still open at
+	// exit don't leak their `^Window` allocation.
+	platform_owned:   bool,
+
+	window:           ^sdl3.Window, // mirror of platform.handle, kept for compat with existing vk_* call sites
 	surface:          vk.SurfaceKHR,
-	phys_device:      vk.PhysicalDevice,
-	device:           vk.Device,
-	queue:            vk.Queue,
-	queue_family_idx: u32,
-	mem_props:        vk.PhysicalDeviceMemoryProperties,
 
 	swapchain:        vk.SwapchainKHR,
 	swap_format:      vk.Format,
@@ -44,7 +74,6 @@ Renderer :: struct {
 	swap_images:      []vk.Image,
 	swap_views:       []vk.ImageView,
 
-	cmd_pool:         vk.CommandPool,
 	cmd_buffers:      [FRAMES_IN_FLIGHT]vk.CommandBuffer,
 	image_available:  [FRAMES_IN_FLIGHT]vk.Semaphore,
 	// render_finished is one semaphore per swapchain image, not per
@@ -61,10 +90,35 @@ Renderer :: struct {
 	cur_slot:         u32,
 	cur_image:        u32,
 
-	pipeline:   Pipeline,
-	batch:      Batch,
-	text:       Text,
-	images:     Image_Cache,
+	batch:            Batch,
+
+	// Per-frame writable GPU buffers. Live on the target (not on the
+	// shared Pipeline) so that two windows submitting in the same frame
+	// don't race on each other's writes. The vertex + index buffers
+	// grow on demand; fb_size travels as a push constant, so there's no
+	// per-target uniform buffer.
+	// Per-target command pool. cmd_buffers above are allocated from
+	// this pool; destroying the pool frees them. Keeping it per-target
+	// (rather than sharing one device-wide pool) means closing a
+	// window can tear down its cmd buffers with a single
+	// `vk.DestroyCommandPool` without touching any other window's
+	// in-flight work. One-shot uploads (atlas + image) go through a
+	// separate `Renderer.device_cmd_pool` so they survive any window
+	// teardown.
+	cmd_pool:         vk.CommandPool,
+
+	vertex_buf:       vk.Buffer,
+	vertex_mem:       vk.DeviceMemory,
+	vertex_buf_bytes: vk.DeviceSize,
+	index_buf:        vk.Buffer,
+	index_mem:        vk.DeviceMemory,
+	index_buf_bytes:  vk.DeviceSize,
+
+	// Descriptor set bound at frame_end for the "default" (atlas-only)
+	// ranges. Image draws still get their own per-image sets allocated
+	// from Pipeline's shared pool. Rebuilt when the text atlas resizes,
+	// broadcast across every open target.
+	dset:             vk.DescriptorSet,
 
 	// Per-frame state, valid between frame_begin and frame_end.
 	//
@@ -74,24 +128,24 @@ Renderer :: struct {
 	// consulted at the renderer boundary for scissor conversion.
 	// `scale` is `fb_size_px / fb_size` and is baked into the glyph
 	// raster size so text stays crisp at non-integer OS scaling.
-	frame_clear:   Color,
-	fb_size:       [2]u32,
-	fb_size_px:    [2]u32,
-	scale:         f32,
-	frame_valid:   bool,
+	frame_clear:      Color,
+	fb_size:          [2]u32,
+	fb_size_px:       [2]u32,
+	scale:            f32,
+	frame_valid:      bool,
 
 	// Borrowed by `run` for the lifetime of the main loop. `render_view`
 	// records per-widget bounding boxes into `widgets.states` so the next
 	// frame's builders can hit-test against them. nil when the renderer
 	// is driven directly (02_shapes etc.) without the App loop.
-	widgets:       ^Widget_Store,
+	widgets:          ^Widget_Store,
 
 	// Overlays collected during the main render_view pass. They are
 	// drawn in a post-pass (render_overlays) so they sit on top of
 	// everything else in the frame — the z-order of a 2-D toolkit is
 	// just draw-order, and deferring is cheaper than a depth buffer.
 	// Cleared at the top of each frame via the temp allocator.
-	overlays:      [dynamic]Overlay_Entry,
+	overlays:         [dynamic]Overlay_Entry,
 
 	// alpha_multiplier scales the alpha channel of every `draw_*` call.
 	// Default 1 (transparent pass-through); render_overlays lowers it
@@ -100,6 +154,42 @@ Renderer :: struct {
 	// render, restore — handlers nest cleanly because we save/restore
 	// rather than push/pop a stack.
 	alpha_multiplier: f32,
+}
+
+// Renderer owns the whole GPU stack: the device-scoped Vulkan resources
+// (instance, physical/logical device, queue, command pool) plus the
+// Skald-side shared state (pipeline, glyph atlas, image cache). Per-
+// window state lives on heap-allocated `Window_Target`s held in
+// `targets`; `cur` points at whichever one the current frame is
+// rendering into. `using cur: ^Window_Target` keeps every call site
+// that reads `r.surface` / `r.swapchain` / `r.batch` etc. resolving
+// through the pointer, so single-window code flows unchanged and
+// multi-window just means updating `cur` before each frame.
+Renderer :: struct {
+	instance:         vk.Instance,
+	phys_device:      vk.PhysicalDevice,
+	device:           vk.Device,
+	queue:            vk.Queue,
+	queue_family_idx: u32,
+	mem_props:        vk.PhysicalDeviceMemoryProperties,
+	// device_cmd_pool backs the one-shot uploads used by `vk_begin_one_shot`
+	// (text atlas grows, image decode uploads, anything that needs a
+	// command buffer outside the per-frame window loop). Lives on the
+	// device — not destroyed when a window closes, so glyph uploads
+	// triggered by a later frame still have a valid pool to allocate
+	// from. Per-window command buffers live on each `Window_Target`'s
+	// own `cmd_pool`, which is destroyed with the window.
+	device_cmd_pool:  vk.CommandPool,
+
+	pipeline:         Pipeline,
+	text:             Text,
+	images:           Image_Cache,
+
+	// Targets are `^Window_Target` so the slice can grow without
+	// invalidating `cur` or any previously-handed-out Window_Ids —
+	// each target is its own heap allocation, stable for its lifetime.
+	targets:          [dynamic]^Window_Target,
+	using cur:        ^Window_Target,
 }
 
 // Overlay_Entry is one deferred popover/tooltip/menu to be rendered
@@ -130,6 +220,18 @@ Overlay_Entry :: struct {
 // have been created with `sdl3.WindowFlag.VULKAN` set — `window_open`
 // in platform.odin handles that.
 renderer_init :: proc(r: ^Renderer, w: ^Window) -> (ok: bool) {
+	// Allocate the primary target and install it as `cur` before any
+	// Vulkan work — the `vk_*` procs write into `cur` via `using`, so
+	// it needs to be live first. Targets own themselves; renderer_destroy
+	// walks the list and frees each.
+	r.targets = make([dynamic]^Window_Target)
+	primary := new(Window_Target)
+	primary.platform = w
+	primary.widgets  = new(Widget_Store)
+	widget_store_init(primary.widgets)
+	append(&r.targets, primary)
+	r.cur = primary
+
 	r.window = w.handle
 
 	get_proc := sdl3.Vulkan_GetVkGetInstanceProcAddr()
@@ -147,6 +249,10 @@ renderer_init :: proc(r: ^Renderer, w: ^Window) -> (ok: bool) {
 	if !vk_pick_physical_device(r) { return }
 	vk.GetPhysicalDeviceMemoryProperties(r.phys_device, &r.mem_props)
 	if !vk_create_device(r)            { return }
+	// Device-scoped one-shot pool first so anything that needs
+	// `vk_begin_one_shot` (text atlas growth, image uploads) has a pool
+	// to allocate from even before the primary target is fully built.
+	if !vk_create_device_cmd_pool(r)          { return }
 	if !vk_create_swapchain(r, w)             { return }
 	if !vk_create_commands_and_sync(r)        { return }
 	if !vk_create_render_finished_semaphores(r) { return }
@@ -161,6 +267,13 @@ renderer_init :: proc(r: ^Renderer, w: ^Window) -> (ok: bool) {
 	}
 	if !image_cache_init(&r.images, r) {
 		fmt.eprintln("skald: image cache init failed")
+		return
+	}
+
+	// Per-target Vulkan state (descriptor set bound to the atlas). The
+	// primary's vertex + index buffers grow on the first frame's upload.
+	if !target_vk_init(r, primary, &r.pipeline, &r.text) {
+		fmt.eprintln("skald: target_vk_init (primary) failed")
 		return
 	}
 
@@ -184,21 +297,71 @@ renderer_resize :: proc(r: ^Renderer, w: ^Window) {
 }
 
 // renderer_destroy releases every Vulkan resource owned by the
-// renderer. Order mirrors the init sequence in reverse: Skald-side
-// resources first, then device-scoped handles, then instance.
+// renderer. Order mirrors init in reverse: Skald-side resources
+// (which span all targets) first, then per-target Vulkan handles
+// (swapchains, sync, cmd buffers, surfaces), then device-scoped
+// handles, then the instance. `cur` is pointed at each target in
+// turn so the existing vk_destroy_* procs can keep reading through
+// `using`.
 renderer_destroy :: proc(r: ^Renderer) {
 	if r.device != nil {
 		vk.DeviceWaitIdle(r.device)
+
+		// Image cache destroys its own descriptor pool (separate from
+		// Pipeline's), so it can run in any order — doing it first
+		// matches the long-standing shape of this proc.
 		image_cache_destroy(&r.images, r)
+
+		// Targets go BEFORE pipeline: `target_vk_destroy` calls
+		// `vk.FreeDescriptorSets(pipeline.dset_pool, ...)`, which has
+		// to happen while the pool is still alive. Tearing the pool
+		// down first would make those frees a use-after-destroy.
+		for t in r.targets {
+			r.cur = t
+			target_vk_destroy(r, t, &r.pipeline)
+			batch_destroy(&r.batch)
+			vk_destroy_commands_and_sync(r)
+			vk_destroy_swapchain(r)
+			if r.surface != 0 && r.instance != nil {
+				sdl3.Vulkan_DestroySurface(r.instance, r.surface, nil)
+				r.surface = 0
+			}
+			if t.widgets != nil {
+				widget_store_destroy(t.widgets)
+				free(t.widgets)
+			}
+			// Only heap-owned platforms (secondaries opened via
+			// cmd_open_window) are freed here. The primary target's
+			// `platform` points at `run`'s stack-local Window; its
+			// handle is destroyed later by the run's
+			// `defer window_close(&w)` which also fires `sdl3.Quit`.
+			if t.platform_owned && t.platform != nil {
+				window_destroy(t.platform)
+				free(t.platform)
+				t.platform = nil
+			}
+			free(t)
+		}
+		delete(r.targets)
+		r.cur = nil
+
+		// Pipeline + text can tear down now that nothing references
+		// either: the pool they'd release (pipeline) is no longer
+		// holding live descriptor sets, and the atlas view (text) is
+		// no longer referenced by any target dset.
 		pipeline_destroy(&r.pipeline, r)
 		text_destroy(&r.text, r)
-		batch_destroy(&r.batch)
-		vk_destroy_commands_and_sync(r)
-		vk_destroy_swapchain(r)
+
+		// Device-scoped one-shot pool last — text_destroy uses
+		// `vk_begin_one_shot` on teardown for… actually it doesn't,
+		// but image_cache_destroy might, so we keep this pool alive
+		// through everything that could possibly need it.
+		if r.device_cmd_pool != 0 {
+			vk.DestroyCommandPool(r.device, r.device_cmd_pool, nil)
+			r.device_cmd_pool = 0
+		}
+
 		vk.DestroyDevice(r.device, nil); r.device = nil
-	}
-	if r.surface != 0 && r.instance != nil {
-		sdl3.Vulkan_DestroySurface(r.instance, r.surface, nil); r.surface = 0
 	}
 	if r.instance != nil {
 		vk.DestroyInstance(r.instance, nil); r.instance = nil
@@ -252,7 +415,8 @@ frame_begin :: proc(r: ^Renderer, w: ^Window, clear: Color) -> (ok: bool) {
 		index_start = 0,
 	})
 
-	pipeline_update_uniforms(&r.pipeline, r.fb_size)
+	// fb_size reaches the shader via push constants inside frame_end —
+	// no uniform buffer write needed here any more.
 
 	ok = true
 	return
@@ -270,9 +434,12 @@ frame_end :: proc(r: ^Renderer) {
 	if !r.frame_valid { return }
 
 	if text_upload_dirty(&r.text, r) {
-		pipeline_rebuild_descriptor(&r.pipeline, r, r.text.atlas_view)
+		// Atlas may have resized — broadcast the new view to every
+		// open target's descriptor set so all windows sample from
+		// the fresh atlas on the very next draw.
+		targets_rebuild_descriptors(r, &r.pipeline, r.text.atlas_view)
 	}
-	pipeline_upload_batch(&r.pipeline, r, &r.batch)
+	target_upload_batch(r, r.cur, &r.batch)
 
 	slot := r.cur_slot
 	img  := r.cur_image
@@ -319,10 +486,17 @@ frame_end :: proc(r: ^Renderer) {
 
 	if len(r.batch.indices) > 0 {
 		vk.CmdBindPipeline(cb, .GRAPHICS, r.pipeline.pipeline)
+
+		// Push this target's fb_size. The shader divides pixel coords
+		// by it to get NDC — changing windows changes this value, no
+		// descriptor rebind required.
+		uni := Uniforms{fb_size = {f32(r.fb_size.x), f32(r.fb_size.y)}}
+		vk.CmdPushConstants(cb, r.pipeline.pipe_layout, {.VERTEX}, 0, size_of(Uniforms), &uni)
+
 		offset: vk.DeviceSize = 0
-		vbuf := r.pipeline.vertex_buf
+		vbuf := r.vertex_buf
 		vk.CmdBindVertexBuffers(cb, 0, 1, &vbuf, &offset)
-		vk.CmdBindIndexBuffer(cb, r.pipeline.index_buf, 0, .UINT32)
+		vk.CmdBindIndexBuffer(cb, r.index_buf, 0, .UINT32)
 
 		// Default descriptor set for ranges that don't carry an override
 		// (which is everything except per-image ranges). Ranges that
@@ -336,7 +510,7 @@ frame_end :: proc(r: ^Renderer) {
 			if count == 0                               { continue }
 			if rng.clip[2] == 0 || rng.clip[3] == 0    { continue }
 			ds := rng.bind_group
-			if ds == 0 { ds = r.pipeline.dset }
+			if ds == 0 { ds = r.dset }
 			if ds != last_ds {
 				ds_mut := ds
 				vk.CmdBindDescriptorSets(cb, .GRAPHICS, r.pipeline.pipe_layout, 0, 1, &ds_mut, 0, nil)
@@ -636,6 +810,30 @@ vk_destroy_swapchain :: proc(r: ^Renderer) {
 
 // ---- internal: commands + sync ----
 
+// vk_create_device_cmd_pool creates the shared one-shot pool used by
+// `vk_begin_one_shot` for text-atlas grows and image decode uploads.
+// Created once at renderer_init, destroyed once at renderer_destroy —
+// it does NOT get torn down alongside any individual window.
+@(private)
+vk_create_device_cmd_pool :: proc(r: ^Renderer) -> bool {
+	pi := vk.CommandPoolCreateInfo{
+		sType = .COMMAND_POOL_CREATE_INFO,
+		flags = {.RESET_COMMAND_BUFFER},
+		queueFamilyIndex = r.queue_family_idx,
+	}
+	if res := vk.CreateCommandPool(r.device, &pi, nil, &r.device_cmd_pool); res != .SUCCESS {
+		fmt.eprintfln("skald: CreateCommandPool (device): %v", res)
+		return false
+	}
+	return true
+}
+
+// vk_create_commands_and_sync sets up the current target's per-frame
+// plumbing: its own command pool, a command buffer per frame-in-flight,
+// and the image_available / in_flight sync primitives. Called for each
+// target — primary at `renderer_init`, secondaries at
+// `drain_window_ops`.Open. Writes through `using cur` so every field
+// lands on the target being built up.
 @(private)
 vk_create_commands_and_sync :: proc(r: ^Renderer) -> bool {
 	pi := vk.CommandPoolCreateInfo{
@@ -644,7 +842,7 @@ vk_create_commands_and_sync :: proc(r: ^Renderer) -> bool {
 		queueFamilyIndex = r.queue_family_idx,
 	}
 	if res := vk.CreateCommandPool(r.device, &pi, nil, &r.cmd_pool); res != .SUCCESS {
-		fmt.eprintfln("skald: CreateCommandPool: %v", res)
+		fmt.eprintfln("skald: CreateCommandPool (target): %v", res)
 		return false
 	}
 	ai := vk.CommandBufferAllocateInfo{
@@ -697,6 +895,11 @@ vk_destroy_render_finished_semaphores :: proc(r: ^Renderer) {
 	}
 }
 
+// vk_destroy_commands_and_sync tears down the CURRENT target's per-
+// frame plumbing — semaphores, fences, render-finished list, and its
+// own cmd_pool (which releases its cmd_buffers automatically). The
+// device-wide one-shot pool (`r.device_cmd_pool`) is untouched; that
+// belongs to `renderer_destroy`.
 @(private)
 vk_destroy_commands_and_sync :: proc(r: ^Renderer) {
 	for i in 0..<FRAMES_IN_FLIGHT {

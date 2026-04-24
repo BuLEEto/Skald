@@ -53,6 +53,14 @@ Window :: struct {
 	// idle windows. Cleared at the top of the next `window_pump`.
 	had_events:   bool,
 
+	// focus_lost is edge-triggered on WINDOW_FOCUS_LOST — true for
+	// exactly one frame after this window stops being the foreground
+	// window. The run loop turns it into an `App.on_window_focus_lost`
+	// callback so apps can auto-dismiss transient windows (popovers,
+	// notifications, overview panels) when the user clicks away.
+	// Cleared at the top of the next `window_pump`.
+	focus_lost:   bool,
+
 	input:        Input,  // populated by window_pump — logical-pixel space
 }
 
@@ -148,40 +156,58 @@ window_refresh_size :: proc(w: ^Window) {
 	if w.scale < 1 { w.scale = 1 }
 }
 
-// window_close destroys the window and shuts SDL3 down. Safe to call once.
-window_close :: proc(w: ^Window) {
+// window_destroy tears down just the SDL window handle without shutting
+// down the SDL library. Use this to close secondary windows while the
+// app's main loop is still running. The primary window uses
+// `window_close`, which also `sdl3.Quit()`s — that's the final app
+// shutdown step, called once per process.
+window_destroy :: proc(w: ^Window) {
 	if w.handle != nil {
 		sdl3.DestroyWindow(w.handle)
 		w.handle = nil
 	}
+}
+
+// window_close destroys the window and shuts SDL3 down. Call at app
+// shutdown — only for the primary window. Secondary windows opened
+// via `cmd_open_window` are torn down with `window_destroy` so SDL
+// stays alive for the rest of the app.
+window_close :: proc(w: ^Window) {
+	window_destroy(w)
 	sdl3.Quit()
 }
 
 
-// window_pump polls all pending SDL events and updates the window state.
-// Call once per frame before rendering. Sets `should_close` when the user
-// clicks close or presses Escape, `resized` when the framebuffer size
-// changed this frame, and populates `input` with mouse position, button
-// edges, scroll delta, and any text input received this frame.
-window_pump :: proc(w: ^Window) {
+// window_reset_frame clears the per-frame input edges and flags a window
+// carries from pump to pump: mouse/pen pressed/released, scroll delta,
+// keys_pressed, text input, dropped_files, resized, had_events, and the
+// edge-triggered system_theme_changed latch. The held-set fields
+// (keys_down, mouse_buttons, pen_buttons_down) are NOT touched — they
+// mirror hardware state and are maintained across frames.
+//
+// Split out of `window_pump` so the multi-window event dispatcher can
+// reset every open window once per frame, then apply each SDL event to
+// the window it targets via `window_apply_event`.
+window_reset_frame :: proc(w: ^Window) {
 	w.resized              = false
 	w.system_theme_changed = false
 	w.had_events           = false
+	w.focus_lost           = false
 	input_reset_edges(&w.input)
+}
 
-	// SDL3 delivers mouse + drop coordinates already in logical window
-	// units — the same space the framework lays out in. No per-event
-	// scaling needed; HiDPI is handled exclusively at the renderer
-	// boundary via `scale`.
+// window_apply_event mutates `w` in response to one SDL3 event. Called
+// by `window_pump` for single-window apps and by the multi-window
+// dispatcher after matching an event's windowID to the right window.
+// All coordinate conversions (none, currently — SDL3 delivers logical
+// px directly) and edge bookkeeping happen here.
+window_apply_event :: proc(w: ^Window, e: sdl3.Event) {
+	w.had_events = true
+	#partial switch e.type {
+	case .QUIT:
+		w.should_close = true
 
-	e: sdl3.Event
-	for sdl3.PollEvent(&e) {
-		w.had_events = true
-		#partial switch e.type {
-		case .QUIT:
-			w.should_close = true
-
-		case .KEY_DOWN:
+	case .KEY_DOWN:
 			input_apply_modifiers(&w.input, e.key.mod)
 			if k, ok := sdl_scancode_to_key(e.key.scancode); ok {
 				// keys_pressed tracks any down event including auto-repeat,
@@ -203,6 +229,19 @@ window_pump :: proc(w: ^Window) {
 		     .WINDOW_DISPLAY_CHANGED, .WINDOW_DISPLAY_SCALE_CHANGED:
 			window_refresh_size(w)
 			w.resized = true
+
+	case .WINDOW_CLOSE_REQUESTED:
+		// User hit the window's X button. Flip `should_close` so the
+		// run loop can react — primary-window close exits the app,
+		// secondary close triggers target teardown.
+		w.should_close = true
+
+	case .WINDOW_FOCUS_LOST:
+		// Window stopped being the foreground window. Edge-flag;
+		// the run loop routes it into `App.on_window_focus_lost` so
+		// apps can auto-close popovers / notifications on
+		// click-away.
+		w.focus_lost = true
 
 		case .MOUSE_MOTION:
 			nx := e.motion.x
@@ -359,8 +398,87 @@ window_pump :: proc(w: ^Window) {
 			// with a value — apps that care re-query `system_theme()`
 			// inside their callback.
 			w.system_theme_changed = true
+	}
+}
+
+// window_pump polls all pending SDL events and updates the window state.
+// Call once per frame before rendering. Sets `should_close` when the user
+// clicks close or presses Escape, `resized` when the framebuffer size
+// changed this frame, and populates `input` with mouse position, button
+// edges, scroll delta, and any text input received this frame.
+//
+// Thin shell over `window_reset_frame` + the event-dispatch loop
+// + `window_apply_event`. The multi-window dispatcher uses those pieces
+// directly: reset every open window once, then fan events out to the
+// matching window's Input.
+window_pump :: proc(w: ^Window) {
+	window_reset_frame(w)
+	e: sdl3.Event
+	for sdl3.PollEvent(&e) {
+		window_apply_event(w, e)
+	}
+}
+
+// windows_pump is the multi-window variant of `window_pump`. It resets
+// every window's per-frame edges once, then polls SDL events and routes
+// each to the window whose SDL window id matches the event's tag.
+// Events without a window id (QUIT, most notably) apply to the primary
+// window — `targets[0]` — so Cmd-Q / Alt-F4 closes the app cleanly
+// regardless of which window the user was focused on.
+windows_pump :: proc(windows: []^Window) {
+	if len(windows) == 0 { return }
+	for w in windows { window_reset_frame(w) }
+
+	e: sdl3.Event
+	for sdl3.PollEvent(&e) {
+		wid := sdl_event_window_id(e)
+		if wid == 0 {
+			// No window-scoped id on this event — treat as app-wide
+			// and deliver to the primary window.
+			window_apply_event(windows[0], e)
+			continue
+		}
+		// Linear scan is fine for the small N we expect (panel + a
+		// couple of popovers + maybe a notification). If a DE ever
+		// opens dozens of windows we'd want a hash map; until then
+		// the simple walk is cheapest.
+		for w in windows {
+			if sdl3.GetWindowID(w.handle) == wid {
+				window_apply_event(w, e)
+				break
+			}
 		}
 	}
+}
+
+// sdl_event_window_id pulls the window id out of whichever SDL event
+// variant carries one. Returns 0 for events that are app-scoped
+// (QUIT, system-theme change, etc).
+@(private)
+sdl_event_window_id :: proc(e: sdl3.Event) -> sdl3.WindowID {
+	#partial switch e.type {
+	case .KEY_DOWN, .KEY_UP:                            return e.key.windowID
+	case .MOUSE_MOTION:                                 return e.motion.windowID
+	case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:          return e.button.windowID
+	case .MOUSE_WHEEL:                                  return e.wheel.windowID
+	case .TEXT_INPUT:                                   return e.text.windowID
+	case .DROP_BEGIN, .DROP_POSITION, .DROP_FILE,
+	     .DROP_TEXT, .DROP_COMPLETE:                    return e.drop.windowID
+	case .PEN_PROXIMITY_IN, .PEN_PROXIMITY_OUT,
+	     .PEN_DOWN, .PEN_UP,
+	     .PEN_BUTTON_DOWN, .PEN_BUTTON_UP:              return e.ptouch.windowID
+	case .PEN_MOTION:                                   return e.pmotion.windowID
+	case .PEN_AXIS:                                     return e.paxis.windowID
+	case .WINDOW_RESIZED, .WINDOW_PIXEL_SIZE_CHANGED,
+	     .WINDOW_DISPLAY_CHANGED,
+	     .WINDOW_DISPLAY_SCALE_CHANGED,
+	     .WINDOW_CLOSE_REQUESTED,
+	     .WINDOW_FOCUS_GAINED, .WINDOW_FOCUS_LOST,
+	     .WINDOW_MINIMIZED, .WINDOW_MAXIMIZED,
+	     .WINDOW_RESTORED, .WINDOW_SHOWN,
+	     .WINDOW_HIDDEN, .WINDOW_MOVED:                 return e.window.windowID
+	}
+	return 0
 }
 
 @(private)

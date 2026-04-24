@@ -72,6 +72,12 @@ meant to exercise — the one-liners below are a jumping-off point.
 |---------|-----------------|
 | `19_dialog` | Modal `dialog`: scrim blocks clicks, Escape routes to Cancel, focus trap. |
 
+### Windows
+
+| Example | What it teaches |
+|---------|-----------------|
+| `38_multi_window` | `cmd_open_window` + `cmd_close_window`, dispatching per window via `ctx.window`, the `on_close` callback that fires for both programmatic and X-button close. The pattern for dock popovers, notifications, floating palettes. |
+
 ## Suggested learning path
 
 1. `01_hello` → `07_counter` — the mental model.

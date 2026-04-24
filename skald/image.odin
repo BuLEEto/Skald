@@ -137,7 +137,6 @@ Image_Cache :: struct {
 @(private)
 image_cache_init :: proc(c: ^Image_Cache, r: ^Renderer) -> bool {
 	pool_sizes := [?]vk.DescriptorPoolSize{
-		{type = .UNIFORM_BUFFER,         descriptorCount = IMAGE_CACHE_MAX_ENTRIES},
 		{type = .COMBINED_IMAGE_SAMPLER, descriptorCount = IMAGE_CACHE_MAX_ENTRIES},
 	}
 	pi := vk.DescriptorPoolCreateInfo{
@@ -311,9 +310,9 @@ image_cache_get :: proc(r: ^Renderer, path: string) -> ^Image_Entry {
 		}
 	}
 
-	// Per-image descriptor set — same layout as the pipeline's, but
-	// binding 1 points at this image's view. Sampler and uniform buffer
-	// come from Pipeline (shared across all images and glyph runs).
+	// Per-image descriptor set. Same layout as Pipeline's single-
+	// binding set — binding 0 points at this image's view + sampler.
+	// fb_size is pushed via push constants, no uniform binding needed.
 	dset: vk.DescriptorSet
 	{
 		layout := r.pipeline.dset_layout
@@ -328,17 +327,15 @@ image_cache_get :: proc(r: ^Renderer, path: string) -> ^Image_Entry {
 			vk.DestroyImage(r.device, image, nil); vk.FreeMemory(r.device, mem, nil)
 			return nil
 		}
-		bi := vk.DescriptorBufferInfo{
-			buffer = r.pipeline.uniform_buf, offset = 0, range = size_of(Uniforms),
-		}
 		ii := vk.DescriptorImageInfo{
 			sampler = r.pipeline.sampler, imageView = view, imageLayout = .SHADER_READ_ONLY_OPTIMAL,
 		}
-		writes := [?]vk.WriteDescriptorSet{
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = dset, dstBinding = 0, descriptorCount = 1, descriptorType = .UNIFORM_BUFFER,         pBufferInfo = &bi},
-			{sType = .WRITE_DESCRIPTOR_SET, dstSet = dset, dstBinding = 1, descriptorCount = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, pImageInfo  = &ii},
+		write := vk.WriteDescriptorSet{
+			sType = .WRITE_DESCRIPTOR_SET, dstSet = dset,
+			dstBinding = 0, descriptorCount = 1, descriptorType = .COMBINED_IMAGE_SAMPLER,
+			pImageInfo = &ii,
 		}
-		vk.UpdateDescriptorSets(r.device, u32(len(writes)), raw_data(writes[:]), 0, nil)
+		vk.UpdateDescriptorSets(r.device, 1, &write, 0, nil)
 	}
 
 	entry := new(Image_Entry)

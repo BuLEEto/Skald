@@ -103,6 +103,26 @@ input event and the visible result. At 60 Hz that's 16 ms, invisible
 to users, but worth knowing when you're debugging "why does my state
 look one step behind the click?"
 
+## In multi-window apps, dispatch on `ctx.window`
+
+Skald calls the app's `view` once per open window per frame. A naive
+`view` that always returns the same tree will render the main UI into
+every popover.
+
+```odin
+view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
+    switch ctx.window {
+    case s.popover_id: return popover_view(s, ctx)
+    case:              return main_view(s, ctx)
+    }
+}
+```
+
+`ctx.window` is a `Window_Id` — pointer-valued, compared with `==`.
+Single-window apps never need to look at it; `ctx.window` just always
+equals the primary id there. Cookbook's Multi-window section has a
+full example.
+
 ## `odin doc` and widget builder signatures
 
 Widget builders like `button(ctx, label, msg, width = ..., color = ...)`
