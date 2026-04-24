@@ -70,6 +70,30 @@ App :: struct($State, $Msg: typeid) {
 	// platform layer, not per-event, so a drag produces one callback
 	// on release rather than hundreds during the drag.
 	on_window_state_change: proc(new_state: Window_State) -> Msg,
+
+	// window_flags is the caller's override of the SDL window flags
+	// Skald passes to `SDL_CreateWindow`. Zero value (`{}`) preserves
+	// Skald's default of `{.RESIZABLE}` so existing apps keep working.
+	// Any non-empty value replaces that default — Skald still ORs in
+	// its two non-negotiable flags (`.VULKAN`, `.HIGH_PIXEL_DENSITY`)
+	// because the renderer and DPI scaling contract both require them,
+	// but every other flag is the caller's call.
+	//
+	// Typical uses:
+	//   window_flags = {.BORDERLESS, .ALWAYS_ON_TOP}  // dock / HUD
+	//   window_flags = {.TRANSPARENT, .RESIZABLE}     // overlay
+	//   window_flags = {.UTILITY}                     // tool window
+	window_flags: sdl3.WindowFlags,
+
+	// on_window_open fires once after the SDL window is created and
+	// before the render loop starts. The callback receives the live
+	// `^Window`, whose `handle: ^sdl3.Window` is usable with any SDL3
+	// API — including `sdl3.GetWindowProperties` for extracting the
+	// X11 `Display*` + `Window` or the macOS `NSWindow*` when an app
+	// needs to set platform properties Skald doesn't wrap (dock type,
+	// struts, level, shadow, etc.). Purely additive; no Msg round-trip.
+	// Optional — leave nil to skip.
+	on_window_open: proc(w: ^Window),
 }
 
 // Window_State captures everything needed to restore a window's
@@ -170,9 +194,15 @@ map_msg :: proc(
 // every frame — so `view` implementations can allocate freely via the
 // `skald.col` / `skald.row` / `skald.clip` builders without leaking.
 run :: proc(app: App($State, $Msg)) {
-	w, ok := window_open(app.title, app.size, app.initial_window_state)
+	w, ok := window_open(app.title, app.size, app.initial_window_state, app.window_flags)
 	if !ok { return }
 	defer window_close(&w)
+
+	// Post-create native-tweaks hook. Fires once, before any render work,
+	// so apps can set X11 window types, macOS window levels, etc. without
+	// forking Skald. The callback sees the live `^Window` and can
+	// extract the underlying `^sdl3.Window` via `w.handle`.
+	if app.on_window_open != nil { app.on_window_open(&w) }
 
 	// Track the last state we reported via on_window_state_change so
 	// we only dispatch on actual changes, not every frame the pump

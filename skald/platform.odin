@@ -56,9 +56,13 @@ Window :: struct {
 	input:        Input,  // populated by window_pump — logical-pixel space
 }
 
-// window_open initializes SDL3 (if not already) and creates a resizable
-// window with HiDPI support. Returns ok=false on SDL error.
-window_open :: proc(title: string, size: Size, initial: Window_State = {}) -> (w: Window, ok: bool) {
+// window_open initializes SDL3 (if not already) and creates the app
+// window. Returns ok=false on SDL error. `extra_flags` overrides the
+// default optional flag set (`{.RESIZABLE}`) — `.VULKAN` and
+// `.HIGH_PIXEL_DENSITY` are always OR'd in because the renderer and
+// DPI scaling contract both require them. Zero `extra_flags` preserves
+// the default behavior.
+window_open :: proc(title: string, size: Size, initial: Window_State = {}, extra_flags: sdl3.WindowFlags = {}) -> (w: Window, ok: bool) {
 	if !sdl3.Init({.VIDEO}) {
 		fmt.eprintfln("skald: SDL.Init failed: %s", sdl3.GetError())
 		return
@@ -71,8 +75,15 @@ window_open :: proc(title: string, size: Size, initial: Window_State = {}) -> (w
 	if initial.size.x > 0 { open_w = initial.size.x }
 	if initial.size.y > 0 { open_h = initial.size.y }
 
+	flags: sdl3.WindowFlags = {.VULKAN, .HIGH_PIXEL_DENSITY}
+	if extra_flags == {} {
+		flags |= {.RESIZABLE}
+	} else {
+		flags |= extra_flags
+	}
+
 	ctitle := strings.clone_to_cstring(title, context.temp_allocator)
-	handle := sdl3.CreateWindow(ctitle, open_w, open_h, {.VULKAN, .RESIZABLE, .HIGH_PIXEL_DENSITY})
+	handle := sdl3.CreateWindow(ctitle, open_w, open_h, flags)
 	if handle == nil {
 		fmt.eprintfln("skald: SDL.CreateWindow failed: %s", sdl3.GetError())
 		return
