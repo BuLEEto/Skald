@@ -561,6 +561,28 @@ vk_create_swapchain :: proc(r: ^Renderer, w: ^Window) -> bool {
 	if len(os.get_env("SKALD_BENCH_UNCAP", context.temp_allocator)) > 0 {
 		present_mode = .IMMEDIATE
 	}
+	// Pick the best compositeAlpha the driver exposes. POST_MULTIPLIED
+	// is strictly preferred because our shader writes straight-alpha
+	// (RGB is the colour, A is the blend factor) which is exactly what
+	// POST_MULTIPLIED's compositor expects. For fully-opaque apps the
+	// framebuffer ends up with alpha=1 everywhere, so POST_MULTIPLIED
+	// is indistinguishable from OPAQUE — but for apps that opt into
+	// `.TRANSPARENT` window flags and clear with alpha<1, the compositor
+	// actually lets the desktop show through.
+	//
+	// Fallback order: POST_MULTIPLIED → INHERIT → PRE_MULTIPLIED →
+	// OPAQUE. PRE_MULTIPLIED is last-resort because it'd slightly
+	// darken translucent edges (we're not premultiplying the shader
+	// output), but at least the window becomes transparent.
+	composite_alpha: vk.CompositeAlphaFlagsKHR = {.OPAQUE}
+	if .POST_MULTIPLIED in caps.supportedCompositeAlpha {
+		composite_alpha = {.POST_MULTIPLIED}
+	} else if .INHERIT in caps.supportedCompositeAlpha {
+		composite_alpha = {.INHERIT}
+	} else if .PRE_MULTIPLIED in caps.supportedCompositeAlpha {
+		composite_alpha = {.PRE_MULTIPLIED}
+	}
+
 	info := vk.SwapchainCreateInfoKHR{
 		sType = .SWAPCHAIN_CREATE_INFO_KHR, surface = r.surface,
 		minImageCount = count,
@@ -569,7 +591,7 @@ vk_create_swapchain :: proc(r: ^Renderer, w: ^Window) -> bool {
 		imageUsage = {.COLOR_ATTACHMENT, .TRANSFER_DST},
 		imageSharingMode = .EXCLUSIVE,
 		preTransform = caps.currentTransform,
-		compositeAlpha = {.OPAQUE},
+		compositeAlpha = composite_alpha,
 		presentMode = present_mode, clipped = true,
 	}
 	if res := vk.CreateSwapchainKHR(r.device, &info, nil, &r.swapchain); res != .SUCCESS {
