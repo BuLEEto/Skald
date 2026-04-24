@@ -7097,22 +7097,6 @@ dialog :: proc(
 		send(ctx, on_dismiss())
 	}
 
-	// Close any popovers that were open outside this dialog. Without
-	// this sweep, a dropdown or picker that the user had open when the
-	// dialog appeared stays visible (possibly peeking out from under
-	// the scrim) until the picker's own builder runs next frame and
-	// sees modal_rect_prev. Doing it here eliminates the one-frame
-	// flicker. Only popover-bearing widget kinds have an `open` field
-	// worth clearing.
-	for id2, &st2 in ctx.widgets.states {
-		_ = id2
-		#partial switch st2.kind {
-		case .Select, .Combobox, .Date_Picker, .Time_Picker,
-		     .Color_Picker, .Click_Zone:
-			st2.open = false
-		}
-	}
-
 	// Closed→open transition: snapshot whatever currently holds focus
 	// so we can hand it back when the dialog closes. Then seed focus
 	// into the caller-designated widget (initial_focus) so forms can
@@ -7121,6 +7105,25 @@ dialog :: proc(
 	// Widget_State so the check is stable across frames where
 	// open=true keeps firing.
 	if !st.open {
+		// Close any popovers that were open outside this dialog.
+		// Without this sweep, a dropdown or picker that the user had
+		// open when the dialog appeared stays visible (possibly peeking
+		// out from under the scrim) until the picker's own builder runs
+		// next frame and sees modal_rect_prev. Only popover-bearing
+		// widget kinds have an `open` field worth clearing.
+		//
+		// Must only run on the open-transition frame: popovers opened
+		// *inside* the dialog after it's up would otherwise be killed
+		// one frame later.
+		for id2, &st2 in ctx.widgets.states {
+			_ = id2
+			#partial switch st2.kind {
+			case .Select, .Combobox, .Date_Picker, .Time_Picker,
+			     .Color_Picker, .Click_Zone:
+				st2.open = false
+			}
+		}
+
 		// Only snapshot if nothing else already did this frame (e.g.
 		// two nested dialogs opening in the same frame — unlikely, but
 		// the earlier opener's return target should win).
