@@ -78,6 +78,12 @@ meant to exercise — the one-liners below are a jumping-off point.
 |---------|-----------------|
 | `38_multi_window` | `cmd_open_window` + `cmd_close_window`, dispatching per window via `ctx.window`, the `on_close` callback that fires for both programmatic and X-button close. The pattern for dock popovers, notifications, floating palettes. |
 
+### Fonts & icons
+
+| Example | What it teaches |
+|---------|-----------------|
+| `39_icons` | Registering an icon font (Font Awesome 6 Solid) as a fallback to Inter via `font_add_fallback`, then using PUA codepoints inline in `text()` and `button()`. Same trick works for any monochrome icon font (Lucide, Phosphor, Material, …). |
+
 ## Suggested learning path
 
 1. `01_hello` → `07_counter` — the mental model.

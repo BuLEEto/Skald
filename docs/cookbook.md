@@ -576,6 +576,41 @@ bidirectional layout is a planned post-1.0 feature — contributions
 from native speakers of those scripts are welcome. See
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the concrete work items.
 
+### Use an icon font (Font Awesome, Lucide, Phosphor, Material…)
+
+Same mechanism as the fallback above — register the icon font as a
+fallback to Inter, then drop the icon's PUA codepoint straight into
+any string. The glyph renders inline alongside regular text; nothing
+else in the framework needs to know it's an icon.
+
+```odin
+FA_SOLID_TTF :: #load("assets/fa-solid-900.ttf", []byte)
+
+ICON_SAVE  :: ""  // floppy-disk
+ICON_TRASH :: ""
+
+// First-frame init (same pattern as the CJK example above).
+fa := skald.font_load(ctx.renderer, "fa-solid", FA_SOLID_TTF)
+skald.font_add_fallback(ctx.renderer, skald.font_default(ctx.renderer), fa)
+
+// Then anywhere in your view:
+skald.button(ctx, ICON_SAVE + "  Save", On_Save{})
+skald.text(ICON_TRASH, th.color.fg, 24)
+```
+
+Pick the **TTF** distribution, not OTF/CFF — fontstash's stb_truetype
+backend only renders TrueType outlines. Font Awesome 6 Free, Lucide,
+Phosphor, and Material Symbols all ship a TTF. Codepoint catalogues
+are on the icon set's website; copy `\uXXXX` into your string.
+
+A working example lives in [`examples/39_icons`](../examples/39_icons).
+
+**Color emoji** (😀 with the actual yellow face) is a separate
+problem — the OS system emoji fonts ship glyphs in CBDT / sbix /
+COLR formats that fontstash doesn't decode. Tracked as a post-1.0
+item; for now Inter renders monochrome fallbacks for the few emoji
+codepoints it carries, and unmapped ones tofu.
+
 ## Localization
 
 Skald ships a `Labels` struct that carries every string the framework
