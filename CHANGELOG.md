@@ -4,7 +4,7 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## 1.1.0 — unreleased
+## 1.1.0 — 2026-04-25
 
 ### Added
 
@@ -35,6 +35,17 @@ bug fixes bump the patch.
 - `fb_size` moved from a uniform-buffer binding to a push constant.
   Descriptor set layout is now one binding (atlas). Shaders
   rebuilt.
+
+### Fixed
+
+- Dialog popover sweep no longer fires every frame — only on the
+  closed→open transition. Popover-bearing widgets (`color_picker`,
+  `select`, `combobox`, `date_picker`, `time_picker`) inside a
+  dialog's content can now be opened and stay open.
+- Modal-click filter whitelists clicks inside any open popover
+  overlay. A picker anchored inside a dialog whose dropdown spills
+  outside the dialog card now receives clicks on its slider, hex
+  field, and other controls.
 
 ### Internal
 
