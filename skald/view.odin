@@ -9533,13 +9533,19 @@ table :: proc(
 // (skip with a zero-value Shortcut{}). `msg` is dispatched on click —
 // and on accelerator — unless `disabled` is true. `separator = true`
 // renders a horizontal divider instead of a row; all other fields are
-// ignored in that case.
+// ignored in that case. `checked = true` prefixes the row with a ✓
+// glyph for togglable items (View → Show Grid, etc.) — set this from
+// your state in `view`, dispatch a flip-msg on click. The column is
+// only reserved when at least one item in the active menu has
+// `checked = true`, so menus without any checks lay out identically
+// to before.
 Menu_Item :: struct($Msg: typeid) {
 	label:     string,
 	shortcut:  Shortcut,
 	msg:       Msg,
 	separator: bool,
 	disabled:  bool,
+	checked:   bool,
 }
 
 // Menu_Entry is one top-level menu on a menu_bar — the label that sits
@@ -9661,12 +9667,15 @@ menu_bar :: proc(
 	dropdown_rect: Rect
 	dropdown_w: f32
 	active_items: []Menu_Item(Msg)
+	check_col_w := f32(0)
 	if open_idx >= 0 {
 		active_items = entries[open_idx].items
 		max_label := f32(0)
 		max_short := f32(0)
+		has_checks := false
 		for item in active_items {
 			if item.separator { continue }
+			if item.checked { has_checks = true }
 			lw, _ := measure_text(ctx.renderer, item.label, fs)
 			if lw > max_label { max_label = lw }
 			if !shortcut_is_empty(item.shortcut) {
@@ -9675,7 +9684,14 @@ menu_bar :: proc(
 				if sw > max_short { max_short = sw }
 			}
 		}
-		inner_w := max_label + max_short
+		// Reserve a checkmark column only when this menu actually has a
+		// checked item right now — keeps unchecked menus visually identical
+		// to pre-1.2 builds. Width is the glyph + a spacing.sm gutter.
+		if has_checks {
+			cw, _ := measure_text(ctx.renderer, "✓", fs)
+			check_col_w = cw + th.spacing.sm
+		}
+		inner_w := check_col_w + max_label + max_short
 		if max_short > 0 { inner_w += SHORTCUT_GAP }
 		dropdown_w = inner_w + 2*(DROPDOWN_PAD + BORDER_W + ROW_PAD_X)
 		if dropdown_w < MIN_DROPDOWN_W { dropdown_w = MIN_DROPDOWN_W }
@@ -9809,8 +9825,22 @@ menu_bar :: proc(
 		short_str := shortcut_format(item.shortcut)
 		short_view: View = spacer(0)
 		if short_str != "" { short_view = text(short_str, fg_sh, fs_short) }
+
+		// Check column: empty spacer when the menu has no checks at all
+		// (check_col_w == 0), or for unchecked items in a menu that does.
+		// Only the actually-checked rows paint the glyph.
+		check_view: View = spacer(check_col_w)
+		if item.checked {
+			check_view = col(
+				text("✓", fg, fs),
+				width       = check_col_w,
+				cross_align = .Start,
+			)
+		}
+
 		rows[i] = row(
 			spacer(ROW_PAD_X),
+			check_view,
 			text(item.label, fg, fs),
 			flex(1, spacer(0)),
 			short_view,

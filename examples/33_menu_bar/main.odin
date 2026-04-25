@@ -9,8 +9,11 @@ import "gui:skald"
 // mouse clicks and hotkey presses flowing through the same path.
 
 State :: struct {
-	count: int,
-	log:   [8]string,
+	count:        int,
+	log:          [8]string,
+	show_grid:    bool,
+	word_wrap:    bool,
+	show_sidebar: bool,
 }
 
 Msg :: union {
@@ -25,6 +28,9 @@ Msg :: union {
 	Copy_Clicked,
 	Paste_Clicked,
 	About_Clicked,
+	Toggle_Grid,
+	Toggle_Wrap,
+	Toggle_Sidebar,
 }
 
 New_Clicked     :: struct{}
@@ -38,6 +44,9 @@ Cut_Clicked     :: struct{}
 Copy_Clicked    :: struct{}
 Paste_Clicked   :: struct{}
 About_Clicked   :: struct{}
+Toggle_Grid     :: struct{}
+Toggle_Wrap     :: struct{}
+Toggle_Sidebar  :: struct{}
 
 init :: proc() -> State { return State{} }
 
@@ -62,6 +71,15 @@ update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
 	case Copy_Clicked:    log_line(&out, "Edit → Copy")
 	case Paste_Clicked:   log_line(&out, "Edit → Paste")
 	case About_Clicked:   log_line(&out, "Help → About")
+	case Toggle_Grid:
+		out.show_grid = !out.show_grid
+		log_line(&out, fmt.tprintf("View → Show Grid: %v", out.show_grid))
+	case Toggle_Wrap:
+		out.word_wrap = !out.word_wrap
+		log_line(&out, fmt.tprintf("View → Word Wrap: %v", out.word_wrap))
+	case Toggle_Sidebar:
+		out.show_sidebar = !out.show_sidebar
+		log_line(&out, fmt.tprintf("View → Show Sidebar: %v", out.show_sidebar))
 	}
 	return out, {}
 }
@@ -91,6 +109,14 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 				{label = "Copy",  shortcut = {.C, {.Ctrl}}, msg = Copy_Clicked{}},
 				{label = "Paste", shortcut = {.V, {.Ctrl}}, msg = Paste_Clicked{},
 				 disabled = s.count == 0},
+			},
+		},
+		{
+			label = "View",
+			items = []skald.Menu_Item(Msg){
+				{label = "Show Grid",    msg = Toggle_Grid{},    checked = s.show_grid},
+				{label = "Word Wrap",    msg = Toggle_Wrap{},    checked = s.word_wrap},
+				{label = "Show Sidebar", msg = Toggle_Sidebar{}, checked = s.show_sidebar},
 			},
 		},
 		{
