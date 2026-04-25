@@ -725,10 +725,22 @@ run :: proc(app: App($State, $Msg)) {
 			// or Escape. Matches macOS/GNOME sheet behavior. Buttons already
 			// held aren't touched — only the edge event is swallowed.
 			if modal_rect_prev.w > 0 && modal_rect_prev.h > 0 {
+				mp := t_w.input.mouse_pos
 				if t_w.input.mouse_pressed[.Left] &&
-				   !rect_contains_point(modal_rect_prev, t_w.input.mouse_pos) {
-					t_w.input.mouse_pressed[.Left]  = false
-					t_w.input.mouse_released[.Left] = false
+				   !rect_contains_point(modal_rect_prev, mp) {
+					// Popovers anchored inside the dialog (color_picker's
+					// HSV grid, select dropdown, etc.) can spill outside
+					// the card. Their cards stamp into overlay_rects_prev,
+					// so a click inside any of them still belongs to the
+					// dialog's content layer and must pass through.
+					over_popover := false
+					for rr in t_widgets.overlay_rects_prev {
+						if rect_contains_point(rr, mp) { over_popover = true; break }
+					}
+					if !over_popover {
+						t_w.input.mouse_pressed[.Left]  = false
+						t_w.input.mouse_released[.Left] = false
+					}
 				}
 			}
 
