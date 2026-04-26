@@ -19,32 +19,48 @@ import "gui:skald"
 ASSET           :: "examples/20_image/assets/MooMoo.png"
 GENERATED_NAME  :: "demo://gradient-checkerboard"
 
-State :: struct {}
-Msg   :: struct {}
+State :: struct {
+	// Bumped on every Regenerate click so view's lazy-load branch knows
+	// to call `image_load_pixels` again under the same name — exercising
+	// the replace path (DeviceWaitIdle + free old + register new).
+	regen_seed: int,
+}
 
-init   :: proc() -> State { return {} }
-update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) { return s, {} }
+Msg :: union {
+	Regenerate,
+}
+Regenerate :: struct{}
+
+init :: proc() -> State { return {} }
+
+update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
+	out := s
+	switch _ in m {
+	case Regenerate:
+		out.regen_seed += 1
+	}
+	return out, {}
+}
+
+on_regen :: proc() -> Msg { return Regenerate{} }
 
 @(private)
-generated_loaded: bool
+last_loaded_seed := -1
 
-// Generate a 256×256 RGBA buffer with a hue-shifted checkerboard so we
-// have something visibly procedural to register through
-// `image_load_pixels`. Same call shape as a DXF / SVG / video frame
-// pipeline would use.
-make_demo_pixels :: proc() -> []u8 {
+// Generate a 256×256 RGBA buffer. `seed` shifts the hue + the
+// checkerboard offset so each call produces a visually distinct image.
+make_demo_pixels :: proc(seed: int) -> []u8 {
 	W :: 256
 	H :: 256
 	pixels := make([]u8, W * H * 4, context.temp_allocator)
+	hue_shift := u8(seed * 47)
 	for y in 0..<H {
 		for x in 0..<W {
 			i := (y * W + x) * 4
-			// Diagonal hue gradient.
-			r := u8((x * 255) / (W - 1))
-			g := u8((y * 255) / (H - 1))
+			r := u8((x * 255) / (W - 1)) + hue_shift
+			g := u8((y * 255) / (H - 1)) + hue_shift / 2
 			b := u8(255 - r/2 - g/2)
-			// 32-px checkerboard darkens half the cells.
-			if ((x / 32) + (y / 32)) % 2 == 0 {
+			if ((x / 32) + (y / 32) + seed) % 2 == 0 {
 				r = r / 3
 				g = g / 3
 				b = b / 3
@@ -61,14 +77,15 @@ make_demo_pixels :: proc() -> []u8 {
 view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	th := ctx.theme
 
-	// One-shot register the generated pixels under a synthetic name.
-	// Same lifecycle as a CAD viewer pushing rasterized output, a
-	// PDF page renderer, a video frame, or any other "I produced
-	// these pixels myself" source.
-	if !generated_loaded && ctx.renderer != nil {
-		pixels := make_demo_pixels()
+	// Register / re-register the generated pixels under a synthetic name.
+	// First load is the same lifecycle as a CAD viewer pushing rasterized
+	// output, a PDF page render, etc. Subsequent calls (when the user
+	// clicks Regenerate) hit `image_load_pixels`'s replace path —
+	// DeviceWaitIdle, free old GPU resources, register new.
+	if last_loaded_seed != s.regen_seed && ctx.renderer != nil {
+		pixels := make_demo_pixels(s.regen_seed)
 		skald.image_load_pixels(ctx.renderer, GENERATED_NAME, 256, 256, pixels)
-		generated_loaded = true
+		last_loaded_seed = s.regen_seed
 	}
 
 	// Each slot is a fixed-size rect — the image fills that slot using
@@ -142,7 +159,9 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 
 	// Demonstration of `image_load_pixels`: a procedural buffer
 	// registered under a synthetic name, drawn the same way as any
-	// file-loaded image (same `image()` call, same fit modes).
+	// file-loaded image (same `image()` call, same fit modes). The
+	// Regenerate button calls image_load_pixels again under the same
+	// name, exercising the replace path.
 	pixels_row := skald.row(
 		skald.col(
 			skald.text("image_load_pixels (256×256 generated)",
@@ -167,6 +186,11 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 				bg     = th.color.surface,
 				radius = 6,
 			),
+		),
+		skald.col(
+			skald.spacer(th.spacing.lg + th.font.size_sm),
+			skald.button(ctx, "Regenerate", on_regen()),
+			cross_align = .Start,
 		),
 		spacing = th.spacing.lg,
 	)
