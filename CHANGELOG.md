@@ -4,7 +4,7 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## 1.2.0 — unreleased
+## 1.2.0 — 2026-04-26
 
 ### Added
 
@@ -13,9 +13,15 @@ bug fixes bump the patch.
   later `image(ctx, name, …)` draws it the same way as a file-loaded
   image. For rasterized DXF / SVG / PDF output, video frames,
   in-memory PNGs, procedural thumbnails, golden-image tests. Pair
-  with `image_unload(r, name)` for explicit cleanup. Replacing under
-  the same name is supported (DeviceWaitIdle + free + reload); not
-  intended for per-frame updates — that wants its own primitive.
+  with `image_unload(r, name)` for explicit cleanup.
+- `image_update_pixels(r, name, w, h, rgba)` refreshes an already-
+  registered image in place at the same size — reuses the existing
+  `VkImage` + view + descriptor set; one staged copy per call, no
+  allocations, no `DeviceWaitIdle`. Cheap enough for 60 fps
+  streaming (CAD viewports, video frames, paint canvases).
+- `draw_image(r, name, rect, fit, tint)` paints a registered image
+  inside a `canvas` callback so app-drawn overlay primitives (lines,
+  markers, text) can sit on top in the same view node.
 - `Menu_Item.checked: bool` — prefix a row with a ✓ glyph for
   togglable state (View → Show Grid, etc.). The check column is
   only reserved when at least one item in the active menu is
