@@ -184,6 +184,26 @@ image_cache_get :: proc(r: ^Renderer, path: string) -> ^Image_Entry {
 
 	w := u32(w_c)
 	h := u32(h_c)
+	rgba := ([^]u8)(pixels)[:int(w * h * 4)]
+	return image_cache_insert(r, path, w, h, rgba)
+}
+
+// image_cache_insert allocates a VkImage of (w, h), uploads `rgba` (plus
+// downsampled mips), wraps it in a view + descriptor set, and stores
+// the resulting Image_Entry in the cache under `key`. Used by the
+// file-path loader (after stb decode) and by the public
+// `image_load_pixels` entry point.
+//
+// The `rgba` slice must be exactly w*h*4 bytes (RGBA8). It is consumed
+// synchronously into a staging buffer; the caller's memory does not
+// need to outlive this call.
+@(private)
+image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> ^Image_Entry {
+	if int(w) * int(h) * 4 != len(rgba) {
+		fmt.eprintfln("skald: image_cache_insert size mismatch (w=%d h=%d, %d bytes given)",
+			w, h, len(rgba))
+		return nil
+	}
 
 	// Mip count: ceil(log2(max(w, h))) + 1, so a 1000-px texture gets
 	// 10 levels down to 1×1. Mips are built CPU-side below; the sampler
@@ -263,16 +283,15 @@ image_cache_get :: proc(r: ^Renderer, path: string) -> ^Image_Entry {
 		vk.CmdCopyBufferToImage(cb, stg_buf, image, .TRANSFER_DST_OPTIMAL, 1, &region)
 	}
 
-	// Level 0: upload the decoded pixels directly.
-	level0 := ([^]u8)(pixels)[:int(w * h * 4)]
-	upload_level(r, cb, image, 0, w, h, level0, &staging_bufs, &staging_mems)
+	// Level 0: upload the caller's pixels directly.
+	upload_level(r, cb, image, 0, w, h, rgba, &staging_bufs, &staging_mems)
 
 	// Levels 1..N: box-filter the previous level in linear space and
 	// upload. Each level's RAM comes from temp_allocator — we've already
 	// copied it into the GPU by the time the function returns, and
 	// free_all(temp) at frame-end reclaims the scratch.
 	if mip_count > 1 {
-		cur := level0
+		cur := rgba
 		cur_w := w; cur_h := h
 		for level in u32(1)..<mip_count {
 			dw := max(u32(1), cur_w / 2)
@@ -344,11 +363,101 @@ image_cache_get :: proc(r: ^Renderer, path: string) -> ^Image_Entry {
 		width = w, height = h, mip_count = mip_count,
 		last_use = r.images.use_counter,
 	}
-	// Clone the path so the key outlives the caller's string — view-
-	// tree strings live in the frame arena and would go stale between
-	// frames otherwise.
-	r.images.entries[strings.clone(path)] = entry
+	// Clone the key so it outlives the caller's string — view-tree
+	// strings and synthetic names alike may live in the frame arena.
+	r.images.entries[strings.clone(key)] = entry
 	return entry
+}
+
+// image_load_pixels registers an in-memory RGBA8 buffer with the image
+// cache under a synthetic name, so any later `image(ctx, name, …)` call
+// draws it the same way as a file-loaded image. Use this when the
+// pixels come from anywhere other than disk — a rasterized DXF / SVG /
+// PDF page, a video frame, an in-memory PNG fetched over the network,
+// a procedurally generated thumbnail, a golden-image test fixture.
+//
+// `rgba` must be exactly `w * h * 4` bytes. Format is RGBA8 sRGB,
+// matching the file-loaded path; pre-multiplied alpha is not assumed.
+// The bytes are copied into a staging buffer synchronously — the
+// caller's slice does not need to outlive this call.
+//
+// Pick a name unlikely to collide with any file path you might also
+// load (e.g. `"app://thumb/42"`, `"dxfwg.viewport"`). If `name` is
+// already registered the existing entry is replaced (after a
+// `DeviceWaitIdle` so any in-flight frame referencing it has finished).
+//
+// Returns true on success, false on size mismatch or allocation
+// failure. The image draws via `image(ctx, name, ...)` and participates
+// in LRU eviction the same as file-loaded images.
+//
+// **Not** intended for per-frame updates (paint apps, video playback).
+// Replacement allocates a fresh `VkImage` + `DeviceMemory` + descriptor
+// set every call and waits the device idle to release the old one — at
+// 60 fps that's strictly worse than redrawing many quads. The streaming
+// case wants its own primitive that re-uses one allocation; tracked as
+// a separate framework task.
+image_load_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> bool {
+	if r == nil || r.device == nil { return false }
+	if w == 0 || h == 0            { return false }
+	if int(w) * int(h) * 4 != len(rgba) {
+		fmt.eprintfln("skald: image_load_pixels(%s): size mismatch (w=%d h=%d, %d bytes given)",
+			name, w, h, len(rgba))
+		return false
+	}
+
+	if r.images.entries == nil {
+		r.images.entries = make(map[string]^Image_Entry)
+	}
+
+	// Replacing an existing entry: wait for in-flight frames to drain
+	// so we don't free a VkImage the GPU is still sampling, then drop
+	// the old entry. Cheap when no replacement is happening.
+	if existing, ok := r.images.entries[name]; ok && existing != nil {
+		vk.DeviceWaitIdle(r.device)
+		if existing.dset  != 0 { vk.FreeDescriptorSets(r.device, r.images.dset_pool, 1, &existing.dset) }
+		if existing.view  != 0 { vk.DestroyImageView(r.device, existing.view, nil) }
+		if existing.image != 0 { vk.DestroyImage(r.device, existing.image, nil) }
+		if existing.mem   != 0 { vk.FreeMemory(r.device, existing.mem, nil) }
+		// Recover the cloned key so the next insert can re-clone without
+		// leaking the prior allocation.
+		for k in r.images.entries {
+			if k == name {
+				delete_key(&r.images.entries, k)
+				delete(k)
+				break
+			}
+		}
+		free(existing)
+	} else if len(r.images.entries) >= IMAGE_CACHE_MAX_ENTRIES {
+		image_cache_evict_lru(&r.images, r)
+	}
+
+	r.images.use_counter += 1
+	return image_cache_insert(r, name, w, h, rgba) != nil
+}
+
+// image_unload drops a registered image, releasing its GPU resources.
+// Safe to call with a name that was never registered (no-op). Used to
+// reclaim memory when the producer of a registered image (a closed CAD
+// document, a finished video) no longer needs it on screen — file-
+// loaded images self-evict via LRU and rarely need this.
+image_unload :: proc(r: ^Renderer, name: string) {
+	if r == nil || r.device == nil || r.images.entries == nil { return }
+	entry, ok := r.images.entries[name]
+	if !ok || entry == nil { return }
+	vk.DeviceWaitIdle(r.device)
+	if entry.dset  != 0 { vk.FreeDescriptorSets(r.device, r.images.dset_pool, 1, &entry.dset) }
+	if entry.view  != 0 { vk.DestroyImageView(r.device, entry.view, nil) }
+	if entry.image != 0 { vk.DestroyImage(r.device, entry.image, nil) }
+	if entry.mem   != 0 { vk.FreeMemory(r.device, entry.mem, nil) }
+	for k in r.images.entries {
+		if k == name {
+			delete_key(&r.images.entries, k)
+			delete(k)
+			break
+		}
+	}
+	free(entry)
 }
 
 // image_cache_evict_lru drops the entry with the smallest `last_use`,

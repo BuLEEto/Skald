@@ -16,7 +16,8 @@ import "gui:skald"
 // the `tint` modulator recolors (or fades) the sampled RGBA without
 // needing a separate asset per accent.
 
-ASSET :: "examples/20_image/assets/MooMoo.png"
+ASSET           :: "examples/20_image/assets/MooMoo.png"
+GENERATED_NAME  :: "demo://gradient-checkerboard"
 
 State :: struct {}
 Msg   :: struct {}
@@ -24,8 +25,51 @@ Msg   :: struct {}
 init   :: proc() -> State { return {} }
 update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) { return s, {} }
 
+@(private)
+generated_loaded: bool
+
+// Generate a 256×256 RGBA buffer with a hue-shifted checkerboard so we
+// have something visibly procedural to register through
+// `image_load_pixels`. Same call shape as a DXF / SVG / video frame
+// pipeline would use.
+make_demo_pixels :: proc() -> []u8 {
+	W :: 256
+	H :: 256
+	pixels := make([]u8, W * H * 4, context.temp_allocator)
+	for y in 0..<H {
+		for x in 0..<W {
+			i := (y * W + x) * 4
+			// Diagonal hue gradient.
+			r := u8((x * 255) / (W - 1))
+			g := u8((y * 255) / (H - 1))
+			b := u8(255 - r/2 - g/2)
+			// 32-px checkerboard darkens half the cells.
+			if ((x / 32) + (y / 32)) % 2 == 0 {
+				r = r / 3
+				g = g / 3
+				b = b / 3
+			}
+			pixels[i+0] = r
+			pixels[i+1] = g
+			pixels[i+2] = b
+			pixels[i+3] = 255
+		}
+	}
+	return pixels
+}
+
 view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	th := ctx.theme
+
+	// One-shot register the generated pixels under a synthetic name.
+	// Same lifecycle as a CAD viewer pushing rasterized output, a
+	// PDF page renderer, a video frame, or any other "I produced
+	// these pixels myself" source.
+	if !generated_loaded && ctx.renderer != nil {
+		pixels := make_demo_pixels()
+		skald.image_load_pixels(ctx.renderer, GENERATED_NAME, 256, 256, pixels)
+		generated_loaded = true
+	}
 
 	// Each slot is a fixed-size rect — the image fills that slot using
 	// its chosen fit mode. The bg rect painted *under* each image makes
@@ -96,6 +140,37 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		spacing = th.spacing.lg,
 	)
 
+	// Demonstration of `image_load_pixels`: a procedural buffer
+	// registered under a synthetic name, drawn the same way as any
+	// file-loaded image (same `image()` call, same fit modes).
+	pixels_row := skald.row(
+		skald.col(
+			skald.text("image_load_pixels (256×256 generated)",
+				th.color.fg, th.font.size_sm),
+			skald.spacer(th.spacing.xs),
+			skald.col(
+				skald.image(ctx, GENERATED_NAME, width = 220, height = 160, fit = .Cover),
+				width  = 220,
+				height = 160,
+				bg     = th.color.surface,
+				radius = 6,
+			),
+		),
+		skald.col(
+			skald.text(".Contain (letterboxed)",
+				th.color.fg, th.font.size_sm),
+			skald.spacer(th.spacing.xs),
+			skald.col(
+				skald.image(ctx, GENERATED_NAME, width = 260, height = 160, fit = .Contain),
+				width  = 260,
+				height = 160,
+				bg     = th.color.surface,
+				radius = 6,
+			),
+		),
+		spacing = th.spacing.lg,
+	)
+
 	return skald.col(
 		skald.text("Skald — Images", th.color.fg, th.font.size_xl),
 		skald.spacer(th.spacing.xs),
@@ -107,6 +182,9 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		skald.spacer(th.spacing.xl),
 
 		tint_row,
+		skald.spacer(th.spacing.xl),
+
+		pixels_row,
 
 		padding     = th.spacing.xl,
 		cross_align = .Start,

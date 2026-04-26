@@ -186,7 +186,39 @@ Loads an image from `path` and draws it scaled to fit. `fit` is
 or `.None` (pixel-exact). Images are cached by path — cheap to use
 the same one in many places.
 
+`path` can be a file path **or** a synthetic name registered through
+`image_load_pixels` (see below) — the widget treats both the same.
+
 **Example: `examples/20_image`.**
+
+#### image_load_pixels
+
+```odin
+image_load_pixels(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> bool
+```
+
+Registers an in-memory RGBA8 buffer with the image cache under a
+synthetic name, so any later `image(ctx, name, …)` draws it the same
+way as a file-loaded image. Use it when the pixels come from anywhere
+other than disk — a rasterized DXF / SVG / PDF page, a video frame, an
+in-memory PNG fetched over the network, a procedurally generated
+thumbnail, a golden-image test fixture.
+
+`rgba` must be exactly `w * h * 4` bytes (RGBA8 sRGB, straight alpha).
+Bytes are copied into a staging buffer synchronously — the caller's
+slice does not need to outlive the call.
+
+Pick a name unlikely to collide with any file path you might also
+load (`"app://thumb/42"`, `"dxfwg.viewport"`). Calling with an
+existing name replaces the entry (after a `DeviceWaitIdle`) so a
+producer that re-renders on demand can keep the same name.
+
+Returns `true` on success, `false` on size mismatch or allocation
+failure. Pair with `image_unload(r, name)` when you're done.
+
+**Not** intended for per-frame updates — replacement allocates a fresh
+texture every call. The streaming case wants a different primitive
+(tracked separately).
 
 ---
 
