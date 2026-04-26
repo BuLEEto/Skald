@@ -188,6 +188,34 @@ image_cache_get :: proc(r: ^Renderer, path: string) -> ^Image_Entry {
 	return image_cache_insert(r, path, w, h, rgba)
 }
 
+// image_upload_level stages `bytes` into a HOST_VISIBLE buffer and
+// records a CmdCopyBufferToImage into `cb` targeting (image, level).
+// The staging buffer + memory are appended to `sbufs` / `smems` so the
+// caller can free them after the command-buffer's QueueWaitIdle. Used
+// by both the create path (image_cache_insert) and the streaming
+// refresh path (image_update_pixels) so the upload geometry stays
+// in one place.
+@(private)
+image_upload_level :: proc(
+	r: ^Renderer, cb: vk.CommandBuffer, image: vk.Image,
+	level: u32, lw, lh: u32, bytes: []u8,
+	sbufs: ^[dynamic]vk.Buffer, smems: ^[dynamic]vk.DeviceMemory,
+) {
+	size := vk.DeviceSize(len(bytes))
+	stg_buf, stg_mem := vk_make_buffer(r, size, {.TRANSFER_SRC}, {.HOST_VISIBLE, .HOST_COHERENT})
+	append(sbufs, stg_buf); append(smems, stg_mem)
+	ptr: rawptr
+	vk.MapMemory(r.device, stg_mem, 0, size, {}, &ptr)
+	vk_copy_bytes(ptr, raw_data(bytes), int(size))
+	vk.UnmapMemory(r.device, stg_mem)
+
+	region := vk.BufferImageCopy{
+		imageSubresource = {aspectMask = {.COLOR}, mipLevel = level, layerCount = 1},
+		imageExtent = {lw, lh, 1},
+	}
+	vk.CmdCopyBufferToImage(cb, stg_buf, image, .TRANSFER_DST_OPTIMAL, 1, &region)
+}
+
 // image_cache_insert allocates a VkImage of (w, h), uploads `rgba` (plus
 // downsampled mips), wraps it in a view + descriptor set, and stores
 // the resulting Image_Entry in the cache under `key`. Used by the
@@ -263,28 +291,8 @@ image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> 
 	staging_bufs: [dynamic]vk.Buffer;        staging_bufs.allocator = context.temp_allocator
 	staging_mems: [dynamic]vk.DeviceMemory;  staging_mems.allocator = context.temp_allocator
 
-	upload_level :: proc(
-		r: ^Renderer, cb: vk.CommandBuffer, image: vk.Image,
-		level: u32, lw, lh: u32, bytes: []u8,
-		sbufs: ^[dynamic]vk.Buffer, smems: ^[dynamic]vk.DeviceMemory,
-	) {
-		size := vk.DeviceSize(len(bytes))
-		stg_buf, stg_mem := vk_make_buffer(r, size, {.TRANSFER_SRC}, {.HOST_VISIBLE, .HOST_COHERENT})
-		append(sbufs, stg_buf); append(smems, stg_mem)
-		ptr: rawptr
-		vk.MapMemory(r.device, stg_mem, 0, size, {}, &ptr)
-		vk_copy_bytes(ptr, raw_data(bytes), int(size))
-		vk.UnmapMemory(r.device, stg_mem)
-
-		region := vk.BufferImageCopy{
-			imageSubresource = {aspectMask = {.COLOR}, mipLevel = level, layerCount = 1},
-			imageExtent = {lw, lh, 1},
-		}
-		vk.CmdCopyBufferToImage(cb, stg_buf, image, .TRANSFER_DST_OPTIMAL, 1, &region)
-	}
-
 	// Level 0: upload the caller's pixels directly.
-	upload_level(r, cb, image, 0, w, h, rgba, &staging_bufs, &staging_mems)
+	image_upload_level(r, cb, image, 0, w, h, rgba, &staging_bufs, &staging_mems)
 
 	// Levels 1..N: box-filter the previous level in linear space and
 	// upload. Each level's RAM comes from temp_allocator — we've already
@@ -298,7 +306,7 @@ image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> 
 			dh := max(u32(1), cur_h / 2)
 			next := make([]u8, int(dw * dh * 4), context.temp_allocator)
 			downsample_mip(cur, cur_w, cur_h, next, dw, dh)
-			upload_level(r, cb, image, level, dw, dh, next, &staging_bufs, &staging_mems)
+			image_upload_level(r, cb, image, level, dw, dh, next, &staging_bufs, &staging_mems)
 			cur = next; cur_w = dw; cur_h = dh
 		}
 	}
@@ -390,12 +398,13 @@ image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> 
 // failure. The image draws via `image(ctx, name, ...)` and participates
 // in LRU eviction the same as file-loaded images.
 //
-// **Not** intended for per-frame updates (paint apps, video playback).
-// Replacement allocates a fresh `VkImage` + `DeviceMemory` + descriptor
-// set every call and waits the device idle to release the old one — at
-// 60 fps that's strictly worse than redrawing many quads. The streaming
-// case wants its own primitive that re-uses one allocation; tracked as
-// a separate framework task.
+// **Not** intended for per-frame updates (paint apps, video playback,
+// CAD viewport panning). Replacement allocates a fresh `VkImage` +
+// `DeviceMemory` + descriptor set every call and waits the device idle
+// to release the old one — at 60 fps that's strictly worse than
+// redrawing many quads. For per-frame refreshes at the same size, use
+// `image_update_pixels` after the initial `image_load_pixels` — it
+// reuses the existing GPU allocation and skips the device-wait.
 image_load_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> bool {
 	if r == nil || r.device == nil { return false }
 	if w == 0 || h == 0            { return false }
@@ -434,6 +443,130 @@ image_load_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> 
 
 	r.images.use_counter += 1
 	return image_cache_insert(r, name, w, h, rgba) != nil
+}
+
+// image_update_pixels refreshes an already-registered image in place,
+// reusing its `VkImage` / `DeviceMemory` / `VkImageView` / descriptor
+// set. Intended for per-frame streaming sources — software rasterizers
+// (CAD pan/zoom), video frame queues, paint canvases, anything that
+// produces fresh RGBA on a clock. Cost is one staged copy + a
+// `QueueWaitIdle` to drain the upload before staging-buffer free; no
+// `DeviceWaitIdle`, no fresh allocations, no descriptor-set rebuild —
+// orders of magnitude cheaper than `image_load_pixels` at 60 fps.
+//
+// Preconditions: `name` must already be registered (call
+// `image_load_pixels` once to seed the entry), and `w` × `h` must
+// match the existing entry's extent. Returns false on either miss —
+// callers handle the size-changed case by re-seeding via
+// `image_load_pixels`.
+//
+// `rgba` is RGBA8 sRGB, w*h*4 bytes, copied synchronously into a
+// staging buffer.
+//
+// Mip caveat: when the registered image was created with mips
+// (anything not 1×1), this proc regenerates **all** mip levels each
+// call by box-filtering on the CPU and uploading every level. That's
+// the correct behaviour for content viewed at varying scales (the
+// sampler picks a mip per pixel) but adds cost roughly proportional
+// to 4/3 × the level-0 upload. If you know the image is always
+// sampled at native size or larger (the common CAD-viewport case),
+// the cost is dominated by level 0 and the mip overhead is just the
+// CPU box-filter — still vastly cheaper than the alloc/free path.
+image_update_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> bool {
+	if r == nil || r.device == nil || r.images.entries == nil { return false }
+	if w == 0 || h == 0 { return false }
+	if int(w) * int(h) * 4 != len(rgba) {
+		fmt.eprintfln("skald: image_update_pixels(%s): size mismatch (w=%d h=%d, %d bytes given)",
+			name, w, h, len(rgba))
+		return false
+	}
+	entry, ok := r.images.entries[name]
+	if !ok || entry == nil { return false }
+	if entry.width != w || entry.height != h { return false }
+
+	full_range := vk.ImageSubresourceRange{
+		aspectMask = {.COLOR}, baseMipLevel = 0, levelCount = entry.mip_count,
+		baseArrayLayer = 0, layerCount = 1,
+	}
+
+	cb := vk_begin_one_shot(r)
+
+	// Image was left in SHADER_READ_ONLY_OPTIMAL by its previous
+	// upload (or by image_cache_insert at create time). Flip it to
+	// TRANSFER_DST_OPTIMAL so we can copy into it.
+	vk_image_barrier(cb, entry.image, full_range,
+		{.SHADER_READ}, {.TRANSFER_WRITE},
+		.SHADER_READ_ONLY_OPTIMAL, .TRANSFER_DST_OPTIMAL,
+		{.FRAGMENT_SHADER}, {.TRANSFER})
+
+	staging_bufs: [dynamic]vk.Buffer;        staging_bufs.allocator = context.temp_allocator
+	staging_mems: [dynamic]vk.DeviceMemory;  staging_mems.allocator = context.temp_allocator
+
+	image_upload_level(r, cb, entry.image, 0, w, h, rgba, &staging_bufs, &staging_mems)
+
+	// Regenerate mips so shrunken samples don't read stale levels
+	// from the previous frame's content. Same algorithm as the create
+	// path; box-filter in linear space, upload each level.
+	if entry.mip_count > 1 {
+		cur := rgba
+		cur_w := w; cur_h := h
+		for level in u32(1)..<entry.mip_count {
+			dw := max(u32(1), cur_w / 2)
+			dh := max(u32(1), cur_h / 2)
+			next := make([]u8, int(dw * dh * 4), context.temp_allocator)
+			downsample_mip(cur, cur_w, cur_h, next, dw, dh)
+			image_upload_level(r, cb, entry.image, level, dw, dh, next, &staging_bufs, &staging_mems)
+			cur = next; cur_w = dw; cur_h = dh
+		}
+	}
+
+	// Back to sampling layout for the rest of the frame.
+	vk_image_barrier(cb, entry.image, full_range,
+		{.TRANSFER_WRITE}, {.SHADER_READ},
+		.TRANSFER_DST_OPTIMAL, .SHADER_READ_ONLY_OPTIMAL,
+		{.TRANSFER}, {.FRAGMENT_SHADER})
+
+	vk_end_one_shot(r, cb)
+
+	for buf in staging_bufs { vk.DestroyBuffer(r.device, buf, nil) }
+	for m   in staging_mems { vk.FreeMemory(r.device, m, nil) }
+
+	r.images.use_counter += 1
+	entry.last_use = r.images.use_counter
+	return true
+}
+
+// draw_image paints an image cache entry into a canvas-style draw
+// callback at `rect` (logical pixels, same coordinate space as
+// `draw_rect` / `draw_text`). The image must already be registered
+// — by file path via the normal `image()` widget render, or by name
+// via `image_load_pixels`. Use this when you want to composite an
+// image inside a `canvas` callback so app-drawn overlay primitives
+// (lines, markers, text) can sit on top in the same view node.
+//
+// Fit modes follow the same semantics as `image()`:
+//   .Fill    stretch to fill, aspect ignored
+//   .Contain scale to fit inside, letterbox the shorter axis
+//   .Cover   scale to fill, crop the overflow via UV trim (default)
+//   .None    native size, centered (clipped to `rect`)
+//
+// Returns false if `name` isn't registered (caller can paint a
+// placeholder); true on success.
+draw_image :: proc(
+	r:    ^Renderer,
+	name: string,
+	rect: Rect,
+	fit:  Image_Fit = .Cover,
+	tint: Color     = {1, 1, 1, 1},
+) -> bool {
+	if r == nil { return false }
+	entry := image_cache_get(r, name)
+	if entry == nil { return false }
+	pos, uv := image_fit_rects(rect, f32(entry.width), f32(entry.height), fit)
+	push_clip(r, rect)
+	batch_push_image(r, entry.dset, pos, uv, tint)
+	pop_clip(r)
+	return true
 }
 
 // image_unload drops a registered image, releasing its GPU resources.

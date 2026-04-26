@@ -21,15 +21,26 @@ GENERATED_NAME  :: "demo://gradient-checkerboard"
 
 State :: struct {
 	// Bumped on every Regenerate click so view's lazy-load branch knows
-	// to call `image_load_pixels` again under the same name — exercising
-	// the replace path (DeviceWaitIdle + free old + register new).
+	// to refresh the registered image under the same name. Exercises
+	// the cheap streaming refresh (`image_update_pixels`) — same VkImage
+	// reused, just a staging-buffer copy.
 	regen_seed: int,
+	// Streaming mode: while on, a `Tick` ping arrives every ~16 ms via
+	// `cmd_delay`, bumps `stream_tick`, and view feeds fresh pixels into
+	// the registered image at frame rate. Stress-tests the streaming
+	// path (per-frame upload, no allocations, no DeviceWaitIdle).
+	streaming:   bool,
+	stream_tick: int,
 }
 
 Msg :: union {
 	Regenerate,
+	Toggle_Stream,
+	Stream_Tick,
 }
-Regenerate :: struct{}
+Regenerate    :: struct{}
+Toggle_Stream :: struct{}
+Stream_Tick   :: struct{}
 
 init :: proc() -> State { return {} }
 
@@ -38,14 +49,29 @@ update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
 	switch _ in m {
 	case Regenerate:
 		out.regen_seed += 1
+	case Toggle_Stream:
+		out.streaming = !out.streaming
+		if out.streaming {
+			tick: Msg = Stream_Tick{}
+			return out, skald.cmd_delay(0.016, tick)
+		}
+	case Stream_Tick:
+		if out.streaming {
+			out.stream_tick += 1
+			tick: Msg = Stream_Tick{}
+			return out, skald.cmd_delay(0.016, tick)
+		}
 	}
 	return out, {}
 }
 
-on_regen :: proc() -> Msg { return Regenerate{} }
+on_regen        :: proc() -> Msg { return Regenerate{} }
+on_toggle_stream :: proc() -> Msg { return Toggle_Stream{} }
 
 @(private)
 last_loaded_seed := -1
+@(private)
+last_stream_tick := -1
 
 // Generate a 256×256 RGBA buffer. `seed` shifts the hue + the
 // checkerboard offset so each call produces a visually distinct image.
@@ -77,15 +103,26 @@ make_demo_pixels :: proc(seed: int) -> []u8 {
 view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	th := ctx.theme
 
-	// Register / re-register the generated pixels under a synthetic name.
-	// First load is the same lifecycle as a CAD viewer pushing rasterized
-	// output, a PDF page render, etc. Subsequent calls (when the user
-	// clicks Regenerate) hit `image_load_pixels`'s replace path —
-	// DeviceWaitIdle, free old GPU resources, register new.
-	if last_loaded_seed != s.regen_seed && ctx.renderer != nil {
-		pixels := make_demo_pixels(s.regen_seed)
+	// First-load: seed the registered image once. Same lifecycle as a
+	// CAD viewer's initial rasterization or the first decoded video frame.
+	if last_loaded_seed < 0 && ctx.renderer != nil {
+		pixels := make_demo_pixels(0)
 		skald.image_load_pixels(ctx.renderer, GENERATED_NAME, 256, 256, pixels)
+		last_loaded_seed = 0
+	}
+
+	// Streaming refresh: when the regenerate seed changed, or while
+	// streaming mode is on (which fires Stream_Tick → view re-runs at
+	// ~60 fps), feed fresh pixels through `image_update_pixels`. Same
+	// VkImage, same view, same descriptor set — only the staging copy is
+	// new each call. No allocations, no DeviceWaitIdle.
+	if ctx.renderer != nil &&
+	   (last_loaded_seed != s.regen_seed || last_stream_tick != s.stream_tick) {
+		seed := s.regen_seed * 1000 + s.stream_tick
+		pixels := make_demo_pixels(seed)
+		skald.image_update_pixels(ctx.renderer, GENERATED_NAME, 256, 256, pixels)
 		last_loaded_seed = s.regen_seed
+		last_stream_tick = s.stream_tick
 	}
 
 	// Each slot is a fixed-size rect — the image fills that slot using
@@ -190,6 +227,10 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		skald.col(
 			skald.spacer(th.spacing.lg + th.font.size_sm),
 			skald.button(ctx, "Regenerate", on_regen()),
+			skald.spacer(th.spacing.sm),
+			skald.button(ctx,
+				"Stop streaming" if s.streaming else "Stream @ 60 fps",
+				on_toggle_stream()),
 			cross_align = .Start,
 		),
 		spacing = th.spacing.lg,

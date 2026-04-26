@@ -217,8 +217,43 @@ Returns `true` on success, `false` on size mismatch or allocation
 failure. Pair with `image_unload(r, name)` when you're done.
 
 **Not** intended for per-frame updates — replacement allocates a fresh
-texture every call. The streaming case wants a different primitive
-(tracked separately).
+texture every call. For per-frame refresh of the same name + size,
+seed once with `image_load_pixels` and refresh in-place via
+`image_update_pixels` (below).
+
+#### image_update_pixels
+
+```odin
+image_update_pixels(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> bool
+```
+
+Refreshes an already-registered image in place — reuses the existing
+`VkImage` / memory / view / descriptor set. One staged copy + a queue
+wait for that one upload, no fresh allocations, no `DeviceWaitIdle`.
+Cheap enough for 60 fps streaming sources: software rasterizers (CAD
+pan / zoom), video frame queues, paint canvases.
+
+Preconditions: `name` already registered (call `image_load_pixels`
+once first), and `w` × `h` matches the existing entry's extent. Mips
+are regenerated CPU-side and re-uploaded each call so shrunken samples
+don't read stale levels.
+
+Returns false on miss (name not registered, or size mismatch) — caller
+re-seeds via `image_load_pixels` if the dimensions changed.
+
+#### draw_image
+
+```odin
+draw_image(r: ^Renderer, name: string, rect: Rect,
+           fit = .Cover, tint = {1, 1, 1, 1}) -> bool
+```
+
+Paints a registered image inside a `canvas` callback at `rect` (logical
+pixels). Use this when you want to composite an image *behind* app-drawn
+overlay primitives (lines, markers, text) in the same canvas node — the
+ordinary `image()` widget can't be interleaved with `draw_*` calls
+because it lives in the view tree, not the immediate-mode canvas
+pass. Same `Image_Fit` semantics as the widget.
 
 ---
 
