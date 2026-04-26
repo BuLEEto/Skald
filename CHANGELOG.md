@@ -4,6 +4,28 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## 1.2.0 — unreleased
+
+### Added
+
+- `image_load_pixels(r, name, w, h, rgba)` registers an in-memory
+  RGBA8 buffer with the image cache under a synthetic name; any
+  later `image(ctx, name, …)` draws it the same way as a file-loaded
+  image. For rasterized DXF / SVG / PDF output, video frames,
+  in-memory PNGs, procedural thumbnails, golden-image tests. Pair
+  with `image_unload(r, name)` for explicit cleanup. Replacing under
+  the same name is supported (DeviceWaitIdle + free + reload); not
+  intended for per-frame updates — that wants its own primitive.
+- `Menu_Item.checked: bool` — prefix a row with a ✓ glyph for
+  togglable state (View → Show Grid, etc.). The check column is
+  only reserved when at least one item in the active menu is
+  currently checked, so unchecked menus lay out unchanged.
+- `examples/39_icons` + cookbook recipe: registering an icon font
+  (Font Awesome 6 Solid TTF bundled, SIL OFL 1.1) as a fallback to
+  Inter, then using PUA codepoints inline in `text()` and
+  `button()`. Same trick works for Lucide, Phosphor, Material —
+  whatever ships TTF outlines.
+
 ## 1.1.0 — 2026-04-25
 
 ### Added

@@ -649,10 +649,23 @@ segment.
 menu_bar(ctx, entries: []Menu_Entry(Msg))
 ```
 
-Top-level menu bar with keyboard accelerators, hover-switch between
-menus, submenu support. Build `[]Menu_Entry` as a nested structure of
-labels, separators, shortcut hints, and Msgs. Alt-activated
-accelerators are surfaced automatically.
+Top-level menu bar with keyboard accelerators and hover-switch between
+menus. Each `Menu_Item` carries a label, an optional `Shortcut`, the
+`Msg` to dispatch, and three optional flags:
+
+- `disabled = true` — grey the row out, drop the shortcut from the
+  global accelerator registry.
+- `separator = true` — render a horizontal divider; all other fields
+  ignored.
+- `checked = true` — prefix the row with a ✓ glyph for togglable
+  state (View → Show Grid, View → Word Wrap, etc.). Set this from
+  your state in `view`; dispatch a flip-msg on click. The leading
+  column is only reserved when at least one item in the active menu
+  is currently checked, so menus without checks lay out unchanged.
+
+Need an icon next to a label? Use the same Font Awesome / Lucide /
+Phosphor fallback trick from the Fonts cookbook section — embed the
+PUA codepoint in `label`.
 
 **Example: `examples/33_menu_bar`.**
 
