@@ -9142,13 +9142,20 @@ table :: proc(
 
 	// Column widths are computed against viewport.x minus the
 	// scrollbar gutter so header cells line up with body cells
-	// whenever the body's scrollbar is visible. Drag-time width
-	// bookkeeping is resolved through the donor model below — the
-	// handle grows one column and shrinks another by the same delta,
-	// so total stays equal to `usable_w` and the divider tracks the
-	// cursor without the table overflowing or the flex column
-	// silently absorbing every pixel.
-	usable_w := viewport.x - SCROLLBAR_GUTTER
+	// whenever the body's scrollbar is visible. When the rows
+	// fit inside the viewport (no scrollbar) we let the columns
+	// claim the full width — otherwise the header trails off into
+	// an empty strip on the right that reads as a layout bug.
+	// Drag-time width bookkeeping is resolved through the donor
+	// model below — the handle grows one column and shrinks
+	// another by the same delta, so total stays equal to
+	// `usable_w` and the divider tracks the cursor without the
+	// table overflowing or the flex column silently absorbing
+	// every pixel.
+	body_h_est    := viewport.y - header_height
+	will_scroll   := f32(row_count) * item_height > body_h_est
+	gutter        := SCROLLBAR_GUTTER if will_scroll else 0
+	usable_w := viewport.x - gutter
 	if usable_w < 0 { usable_w = 0 }
 	widths := compute_column_widths(columns, usable_w)
 
