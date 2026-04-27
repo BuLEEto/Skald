@@ -27,9 +27,12 @@ actual numbers.
   GPU (Linux); capped by display refresh on macOS.
 - **GPU rendering** — pure-Odin Vulkan 1.3 backend (`vendor:vulkan`), glyphs
   via fontstash, one pipeline for rects + text + images.
-- **Async without threads** — the `Command(Msg)` effect system runs file I/O,
-  native dialogs, and delays through `core:nbio`; completions round-trip back
-  as regular `Msg` values.
+- **Async** — the `Command(Msg)` effect system runs file I/O, native
+  dialogs, and delays through `core:nbio` on the main thread; completions
+  round-trip back as regular `Msg` values. For sync libraries that aren't
+  nbio-shaped (postgres, sqlite, big-file parsers), `cmd_thread` runs the
+  blocking call on a worker thread and delivers the return value as a Msg.
+  The UI never freezes; `view` and `update` always run single-threaded.
 - **Real widget set** — buttons, checkboxes, sliders, selects, text inputs
   (single + multi-line, with undo/clipboard/selection), tables, virtual
   lists, tabs, menus, dialogs, image, split panes, toasts, drag-and-drop,

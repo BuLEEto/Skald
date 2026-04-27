@@ -13,11 +13,30 @@ import sdl3 "vendor:sdl3"
 // libraries (postgres, sqlite, sync HTTP, large-file parsers) keep
 // working as-is, and the UI never freezes.
 //
+// ⚠️  WORKER CONTRACT — VIOLATIONS ARE DATA RACES, NOT COMPILE ERRORS.
+//
+//   1. The work proc runs on a *different OS thread*. Don't touch ANY
+//      Skald state from inside it — no `ctx`, no renderer, no widget
+//      store, no view-tree procs, no read or mutate of `state`. Snapshot
+//      what you need into the typed payload; it's copied by value at
+//      dispatch.
+//   2. Strings + slices in your payload (in) and your returned Msg (out)
+//      must be heap-allocated, NOT temp-arena. The worker has no Skald
+//      frame arena and the main-thread temp allocator gets reset under
+//      it. Use `strings.clone` for outputs.
+//   3. One call → one Msg out. Don't loop forever inside the worker.
+//   4. Errors are part of your Msg union (`Query_Failed{err}`). DON'T
+//      panic — an Odin assertion in a worker terminates the whole
+//      process before `update` ever sees it.
+//
+// See also: docs/gotchas.md ("cmd_thread workers must not touch Skald
+// state") and docs/cookbook.md ("Run a blocking library on a background
+// thread") for fuller treatment.
+//
 // Two arities are supported via `cmd_thread_simple` (no params) and the
-// payload-bearing variant (typed by-value snapshot). Pick the second
-// whenever the work depends on state — it copies your params at
-// dispatch time so the worker reads a private snapshot, no aliasing
-// of live state.
+// payload-bearing variant. Pick the second whenever the work depends
+// on state — the by-value snapshot is what protects you from aliasing
+// live state.
 //
 //     // No params:
 //     return out, skald.cmd_thread_simple(Msg, do_recount)
@@ -38,22 +57,6 @@ import sdl3 "vendor:sdl3"
 //                                p.search)
 //         return Search_Done{rows = rows}  // rows own heap-allocated strings
 //     }
-//
-// Contract — these aren't enforced by the compiler; violations are data
-// races:
-//
-//   1. Don't touch any Skald state from inside the work proc — no `ctx`,
-//      no renderer, no widget store, no view-tree procs. The worker is
-//      a plain compute thread.
-//   2. Strings + slices in your payload (in) and your returned Msg (out)
-//      must be heap-allocated, NOT temp-arena. The worker thread has no
-//      Skald frame arena and the temp allocator on the main thread will
-//      get reset under the worker's feet.
-//   3. The work proc returns when the operation completes. Don't loop
-//      forever inside it; one call = one Msg out.
-//   4. Errors are part of your Msg union — return `Query_Failed{err}`
-//      from work, branch in update. Don't panic; an unrecoverable Odin
-//      assertion in a worker will terminate the process.
 //
 // Cancellation, progress reporting, and a thread pool are deliberately
 // out-of-scope for v1. Apps wanting cancellation include a request-id

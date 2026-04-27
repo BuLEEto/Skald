@@ -123,6 +123,38 @@ Single-window apps never need to look at it; `ctx.window` just always
 equals the primary id there. Cookbook's Multi-window section has a
 full example.
 
+## `cmd_thread` workers must not touch Skald state
+
+The work proc you hand to `cmd_thread` / `cmd_thread_simple` runs on a
+**different OS thread**. Skald's runtime (renderer, widget store, frame
+arena, msg queue, ctx) is single-threaded. Touching any of it from
+inside the worker is a data race — undefined behaviour that may not
+surface until production.
+
+Inside the work proc:
+
+- ❌ Don't read or mutate `state` or anything pointing into it. Snapshot
+  what you need into the typed payload of `cmd_thread`; it's copied
+  by value at dispatch.
+- ❌ Don't call any `skald.*` proc that takes `^Ctx`, `^Renderer`, or
+  `^Widget_Store`. The worker has none of those.
+- ❌ Don't allocate strings or slices into `context.temp_allocator`.
+  The temp allocator on the worker is its own thread-local one; the
+  main thread's gets reset under the worker's feet.
+
+Safe inside the worker:
+
+- ✅ Plain compute — CPU-bound math, parsing, decoding.
+- ✅ Calls into your own sync libraries — postgres pool, sqlite, sync
+  HTTP, image codec.
+- ✅ Allocating heap memory you'll hand back via the returned Msg.
+  Use `strings.clone` (default allocator) for output strings — they
+  need to outlive the trip from worker to main thread.
+
+Errors come back as Msg variants — don't panic. An Odin assertion
+inside a worker terminates the whole process, with no chance for
+`update` to handle it.
+
 ## `odin doc` and widget builder signatures
 
 Widget builders like `button(ctx, label, msg, width = ..., color = ...)`
