@@ -12,7 +12,7 @@ bug fixes bump the patch.
   — runs a synchronous proc on a fresh OS thread and posts its return
   value back as a Msg. The escape hatch for any blocking library
   (postgres, sqlite, sync HTTP, large-file parsers, image codecs)
-  that isn't nbio-shaped — most aren't. The payload-bearing variant
+  that isn't nbio-shaped. The payload-bearing variant
   copies your params by value at dispatch so the worker reads a
   private snapshot, never aliasing live state. UI never freezes
   regardless of how many workers are in flight; the runtime drains
