@@ -4,7 +4,7 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## 1.3.0 — unreleased
+## 1.3.0 — 2026-04-27
 
 ### Added
 
@@ -26,6 +26,13 @@ bug fixes bump the patch.
   discipline (job_id), in-flight counter, and a spinner that keeps
   spinning during 3 s of background work to prove the main thread
   isn't blocked.
+
+### Fixed
+
+- `table` no longer reserves the scrollbar gutter on the right of the
+  header when the rows fit inside the viewport. Previously a small
+  empty strip showed past the last column when no scrollbar was
+  needed.
 
 ## 1.2.0 — 2026-04-26
 
