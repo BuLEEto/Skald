@@ -903,6 +903,77 @@ case File_Loaded:
 `cmd_open_file_dialog` / `cmd_save_file_dialog`. See
 `examples/14_file_viewer` for a full read+display flow.
 
+### Run a blocking library on a background thread
+
+Skald's nbio integration covers file I/O. Anything else that blocks —
+postgres, sqlite, sync HTTP, big-file parsers, image codecs — uses
+`cmd_thread`. The work proc runs on a fresh OS thread and its return
+value is delivered back as a Msg. The UI never freezes.
+
+```odin
+Search_Params :: struct {
+    job_id: int,
+    term:   string,                                // heap-owned
+}
+
+run_search :: proc(p: Search_Params) -> Root_Msg {
+    conn := postgres.pool_acquire(g_pool)
+    defer postgres.pool_release(g_pool, conn)
+    rows := postgres.query(conn,
+        "SELECT id, name FROM users WHERE name ILIKE $1",
+        p.term)
+    return Search_Done{job_id = p.job_id, rows = rows}
+}
+
+case Search_Submitted:
+    out.job_seq += 1
+    params := Search_Params{
+        job_id = out.job_seq,
+        term   = strings.clone(out.draft),         // snapshot
+    }
+    return out, skald.cmd_thread(Root_Msg, params, run_search)
+
+case Search_Done:
+    // Drop stale results — only keep the highest job_id we've seen.
+    // Without this, a slow earlier search could overwrite a newer one.
+    if v.job_id < out.job_seq { return out, {} }
+    out.rows = v.rows
+```
+
+`cmd_thread_simple(Root_Msg, work)` is the no-payload form for jobs
+that need no runtime parameters.
+
+**Worker contract** — these aren't enforced by the compiler; violations
+are data races:
+
+1. Don't touch any Skald state from inside the work proc — no `ctx`,
+   no renderer, no widget store, no `view`-tree procs. Treat the
+   worker as a plain compute thread.
+2. Strings + slices in your payload (in) and your returned Msg (out)
+   must be heap-allocated, not temp-arena. The worker thread has no
+   Skald frame arena and the main-thread temp allocator gets reset
+   under the worker's feet.
+3. The work proc returns when the operation completes — one call,
+   one Msg out. Don't loop forever inside it.
+4. Errors are part of your Msg union (`Search_Failed{err}`) — branch
+   in `update`. Don't panic; an Odin assertion in a worker terminates
+   the whole process.
+
+**Composes cleanly with library-managed pools.** A postgres `Pool`
+pre-allocates N connections; `cmd_thread`'s worker calls
+`pool_acquire` (which blocks if all N are in use) and `pool_release`
+on the same thread. N concurrent searches with `cmd_thread` plus a
+pool of N → all N run in parallel, no thread fights the pool.
+
+Cancellation, progress reporting, and a built-in worker pool are
+deliberately out of scope for now. To cancel a stale request, give
+each job an incrementing `job_id` and ignore late results in `update`
+(shown above). To show progress while a job runs, render a `spinner`
+or animate a `progress` bar based on `state.jobs_in_flight`.
+
+See `examples/40_threads` for a runnable demo (sleep-simulated
+queries, in-flight job counter, stale-result discipline).
+
 ---
 
 ## Persistence

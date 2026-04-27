@@ -185,12 +185,21 @@ Kinds:
 - `cmd_write_file(path, bytes, on_result)` — async write via `core:nbio`.
 - `cmd_open_file_dialog(filters, on_result)` — native Open picker (SDL3).
 - `cmd_save_file_dialog(filters, on_result)` — native Save picker (SDL3).
+- `cmd_thread(payload, work)` / `cmd_thread_simple(work)` — run a sync
+  proc on a dedicated worker thread, deliver its return value as a
+  Msg. The escape hatch for *any* blocking library (postgres, sqlite,
+  sync HTTP, large-file parsers) that isn't nbio-shaped — most aren't.
+  Worker contract: don't touch Skald state, return one Msg per call,
+  surface errors as Msg variants. Strings in the in/out payload must
+  be heap-allocated, not temp-arena.
 
 All I/O is non-blocking. `nbio.tick(0)` runs at the top of each frame and
 any completions land on the Msg queue via `drain_io`. Handler procs (the
 `on_result` parameters) run on the main loop before `update`, not on a
 worker thread — think of them as translators from the I/O completion
-record into the app's `Msg` union.
+record into the app's `Msg` union. `cmd_thread` is the exception: its
+worker proc runs on a fresh OS thread; its return value crosses back
+through a per-app mpsc mailbox drained at the top of each frame.
 
 Lifetime rules: result buffers (`File_Read_Result.bytes`, the dialog path
 string) are handed to the handler on the persistent heap. The handler is

@@ -84,6 +84,12 @@ meant to exercise — the one-liners below are a jumping-off point.
 |---------|-----------------|
 | `39_icons` | Registering an icon font (Font Awesome 6 Solid) as a fallback to Inter via `font_add_fallback`, then using PUA codepoints inline in `text()` and `button()`. Same trick works for any monochrome icon font (Lucide, Phosphor, Material, …). |
 
+### Async work
+
+| Example | What it teaches |
+|---------|-----------------|
+| `40_threads` | `cmd_thread` and `cmd_thread_simple` running blocking work on background threads while the UI stays responsive. Sleep-simulated queries with variable latency, stale-result discipline via job_id, in-flight counter, spinner that keeps spinning to prove the main thread isn't blocked. The recipe for using any sync library (postgres, sqlite, HTTP) without freezing the app. |
+
 ## Suggested learning path
 
 1. `01_hello` → `07_counter` — the mental model.

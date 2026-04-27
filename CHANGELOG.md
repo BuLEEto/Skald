@@ -4,6 +4,29 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## 1.3.0 — unreleased
+
+### Added
+
+- **`cmd_thread(Msg, payload, work)` / `cmd_thread_simple(Msg, work)`**
+  — runs a synchronous proc on a fresh OS thread and posts its return
+  value back as a Msg. The escape hatch for any blocking library
+  (postgres, sqlite, sync HTTP, large-file parsers, image codecs)
+  that isn't nbio-shaped — most aren't. The payload-bearing variant
+  copies your params by value at dispatch so the worker reads a
+  private snapshot, never aliasing live state. UI never freezes
+  regardless of how many workers are in flight; the runtime drains
+  results into the Msg queue at the top of every frame and an SDL
+  user-event wakes a sleeping main loop instantly. Composes cleanly
+  with library-managed connection pools — N concurrent `cmd_thread`s
+  + an N-sized pool = N queries in parallel, no thread fights the
+  pool. See `examples/40_threads` for the runnable demo and the
+  cookbook's "Run a blocking library on a background thread" recipe.
+- `examples/40_threads` — cmd_thread showcase with stale-result
+  discipline (job_id), in-flight counter, and a spinner that keeps
+  spinning during 3 s of background work to prove the main thread
+  isn't blocked.
+
 ## 1.2.0 — 2026-04-26
 
 ### Added

@@ -36,6 +36,14 @@ Command :: struct($Msg: typeid) {
 	// temp-allocated by the constructor, picked up by process_command
 	// on the same frame.
 	window_op: ^Window_Op(Msg),
+	// thread_op carries the per-op descriptor for `.Thread` commands.
+	// `rawptr` (rather than `^Thread_Op(Msg)`) avoids a circular type
+	// dependency with `skald/thread.odin`, where the Job carried
+	// inside the op is monomorphised against the concrete `T` payload
+	// type at the cmd_thread call site. Cast back to `^Thread_Op(Msg)`
+	// inside `thread_op_spawn`. Heap-allocated (not temp-arena) — the
+	// worker thread may outlive the dispatch frame.
+	thread_op: rawptr,
 }
 
 // Command_Kind discriminates a `Command`. `.None` is the zero value so
@@ -49,6 +57,7 @@ Command_Kind :: enum u8 {
 	Async,
 	Open_Window,
 	Close_Window,
+	Thread,
 }
 
 // Window_Desc describes a window to be opened by `cmd_open_window`. Mirrors
@@ -222,6 +231,7 @@ process_command :: proc(
 	pending:          ^[dynamic]Pending_Delay(Msg),
 	io:               ^Io_State(Msg),
 	windows_pending:  ^[dynamic]Window_Op(Msg),
+	thread_pool:      ^Thread_Pool(Msg),
 ) {
 	switch cmd.kind {
 	case .None:
@@ -233,7 +243,7 @@ process_command :: proc(
 		append(pending, Pending_Delay(Msg){fire_at_ns = fire, msg = cmd.msg})
 	case .Batch:
 		for child in cmd.children {
-			process_command(child, msgs, pending, io, windows_pending)
+			process_command(child, msgs, pending, io, windows_pending, thread_pool)
 		}
 	case .Async:
 		process_async(cmd.async, io)
@@ -241,6 +251,8 @@ process_command :: proc(
 		if cmd.window_op != nil {
 			append(windows_pending, cmd.window_op^)
 		}
+	case .Thread:
+		thread_op_spawn(cmd.thread_op, thread_pool)
 	}
 }
 

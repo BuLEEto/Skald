@@ -463,6 +463,14 @@ run :: proc(app: App($State, $Msg)) {
 	io_state_init(&io, w.handle)
 	defer io_state_destroy(&io)
 
+	// Worker-thread mailbox. `cmd_thread` work runs on background
+	// threads and posts results here; the run loop drains it at the
+	// top of each frame. Defer waits for outstanding workers at
+	// shutdown so their writes don't land in freed memory.
+	tpool: Thread_Pool(Msg)
+	thread_pool_init(&tpool)
+	defer thread_pool_destroy(&tpool)
+
 	// Lazy-redraw state. A frame is considered dirty (needs re-render)
 	// when SDL delivered any event, the window resized, pending msgs
 	// from async IO / delays / init are waiting for update, or the
@@ -612,6 +620,11 @@ run :: proc(app: App($State, $Msg)) {
 		drain_io(&io, &msgs)
 		io_fired := len(msgs) > pre_io_len
 
+		// Drain any worker-thread results posted via `cmd_thread`. Same
+		// frame contract as the io drain — if a worker finished before
+		// this tick its Msg is delivered to update right now.
+		thread_fired := thread_pool_drain(&tpool, &msgs)
+
 		caret_blink_due := had_focus &&
 			time.since(last_render) >= CARET_BLINK_PERIOD
 
@@ -633,6 +646,7 @@ run :: proc(app: App($State, $Msg)) {
 
 		dirty := first_frame || any_events || any_resized ||
 			w.system_theme_changed || delay_fired || io_fired ||
+			thread_fired ||
 			len(msgs) > 0 || caret_blink_due || any_widget_deadline ||
 			state_may_have_changed ||
 			bench_frames_target > 0  // bench mode forces every frame
@@ -835,7 +849,7 @@ run :: proc(app: App($State, $Msg)) {
 			for msg in frame_msgs {
 				new_state, cmd := app.update(state, msg)
 				state = new_state
-				process_command(cmd, &msgs, &pending, &io, &windows_pending)
+				process_command(cmd, &msgs, &pending, &io, &windows_pending, &tpool)
 			}
 			// Drain window-op requests between each msg batch so a follow-up
 			// `cmd_now` that reacts to a newly-opened window's id lands in
