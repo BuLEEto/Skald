@@ -2665,13 +2665,15 @@ button :: proc(
 // (every char is identical). Forces `multiline = false` and `wrap =
 // false` — passwords are always one line.
 //
-// `search`: search-field affordances. Defaults the placeholder to
-// "Search" when the caller hasn't supplied one, appends a small clear
-// (`✕`) button whose click sends `on_change("")` whenever the field
-// holds text, and switches Escape to "clear first, then blur" — the
-// GTK/macOS search convention where pressing Escape on a populated
-// search field empties it instead of defocusing. Forces single-line.
-// Enter stays a no-op; wire submit via `search_field` if you need it.
+// `clear_button`: appends a small `✕` button at the right edge whose
+// click sends `on_change("")`. Useful on search-style inputs and any
+// other field where "wipe in one click" is a valid operation.
+//
+// `escape_clears`: pressing Escape on a populated field empties it
+// instead of defocusing — a subsequent Escape (now with empty value)
+// blurs as usual. Matches the GTK/macOS search-field convention. If
+// you want `clear_button` to feel right, you almost always want this
+// too. Both default off; `search_field` flips them on.
 //
 // Sizing: `width = 0` (the default) means "take the cross axis the
 // parent stack assigns you." Put the input inside a `col(..., cross_align
@@ -2700,35 +2702,28 @@ _text_input_impl :: proc(
 	bg:          Color  = {},
 	fg:          Color  = {},
 	border:      Color  = {},
-	disabled:   bool   = false,
-	multiline:   bool   = false,
-	wrap:        bool   = false,
-	password:    bool   = false,
-	search:      bool   = false,
-	invalid:     bool   = false,
-	error:       string = "",
+	disabled:    bool   = false,
+	multiline:    bool   = false,
+	wrap:         bool   = false,
+	password:     bool   = false,
+	clear_button: bool   = false,
+	escape_clears:bool   = false,
+	invalid:      bool   = false,
+	error:        string = "",
 	// max_chars caps the post-edit buffer length in runes (UTF-8 safe).
 	// 0 disables the limit. Typing or pasting past the cap silently
 	// drops the overflow at the caret; editing existing suffix text is
 	// unaffected. Apps use this instead of re-implementing the cap in
 	// their on_change handler.
-	max_chars:   int    = 0,
+	max_chars:    int    = 0,
 ) -> (view: View, new_value: string, changed: bool) {
 	th := ctx.theme
 
-	// Password and search fields are always single-line: passwords can't
-	// contain a newline a user could actually type, and a multi-line
-	// search box is a contradiction in terms. Shadow the incoming params
-	// so downstream code doesn't have to special-case.
-	multiline := multiline && !password && !search
-	wrap      := wrap      && !password && !search
-
-	// Search defaults the placeholder to the localized search label so
-	// the field reads correctly even before the app supplies one. Callers
-	// that pass an explicit placeholder keep it — this is a fallback, not
-	// an override.
-	placeholder := placeholder
-	if search && len(placeholder) == 0 { placeholder = ctx.labels.search_placeholder }
+	// Password fields are always single-line: a password can't contain a
+	// newline a user could actually type. Shadow the incoming params so
+	// downstream code doesn't have to special-case.
+	multiline := multiline && !password
+	wrap      := wrap      && !password
 
 	fs := font_size; if fs == 0 { fs = th.font.size_md }
 
@@ -2807,7 +2802,7 @@ _text_input_impl :: proc(
 	// for a `×` glyph. A press landing there empties the value outright
 	// and suppresses the caret-placement path so the field doesn't also
 	// move the cursor on the same click.
-	show_clear    := search && !disabled && len(new_value) > 0
+	show_clear    := clear_button && !disabled && len(new_value) > 0
 	clear_captured := false
 	clear_hovered  := false
 	clear_w: f32   = 0
@@ -3273,7 +3268,7 @@ _text_input_impl :: proc(
 		}
 
 		if .Escape in keys {
-			if search && len(new_value) > 0 {
+			if escape_clears && len(new_value) > 0 {
 				// GTK/macOS search convention: first Escape empties the
 				// field, a subsequent Escape (now with value == "") blurs
 				// as usual. The wipe is marked `.Other` so undo records
@@ -3473,34 +3468,36 @@ text_input_simple :: proc(
 	bg:          Color  = {},
 	fg:          Color  = {},
 	border:      Color  = {},
-	disabled:   bool   = false,
-	multiline:   bool   = false,
-	wrap:        bool   = false,
-	password:    bool   = false,
-	search:      bool   = false,
-	invalid:     bool   = false,
-	error:       string = "",
-	max_chars:   int    = 0,
+	disabled:     bool   = false,
+	multiline:    bool   = false,
+	wrap:         bool   = false,
+	password:     bool   = false,
+	clear_button: bool   = false,
+	escape_clears:bool   = false,
+	invalid:      bool   = false,
+	error:        string = "",
+	max_chars:    int    = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
 		ctx, value,
-		id          = id,
-		placeholder = placeholder,
-		width       = width,
-		height      = height,
-		font_size   = font_size,
-		padding     = padding,
-		bg          = bg,
-		fg          = fg,
-		border      = border,
-		disabled   = disabled,
-		multiline   = multiline,
-		wrap        = wrap,
-		password    = password,
-		search      = search,
-		invalid     = invalid,
-		error       = error,
-		max_chars   = max_chars,
+		id            = id,
+		placeholder   = placeholder,
+		width         = width,
+		height        = height,
+		font_size     = font_size,
+		padding       = padding,
+		bg            = bg,
+		fg            = fg,
+		border        = border,
+		disabled      = disabled,
+		multiline     = multiline,
+		wrap          = wrap,
+		password      = password,
+		clear_button  = clear_button,
+		escape_clears = escape_clears,
+		invalid       = invalid,
+		error         = error,
+		max_chars     = max_chars,
 	)
 	if changed { send(ctx, on_change(new_value)) }
 	return view
@@ -3526,53 +3523,57 @@ text_input_payload :: proc(
 	bg:          Color  = {},
 	fg:          Color  = {},
 	border:      Color  = {},
-	disabled:   bool   = false,
-	multiline:   bool   = false,
-	wrap:        bool   = false,
-	password:    bool   = false,
-	search:      bool   = false,
-	invalid:     bool   = false,
-	error:       string = "",
-	max_chars:   int    = 0,
+	disabled:     bool   = false,
+	multiline:    bool   = false,
+	wrap:         bool   = false,
+	password:     bool   = false,
+	clear_button: bool   = false,
+	escape_clears:bool   = false,
+	invalid:      bool   = false,
+	error:        string = "",
+	max_chars:    int    = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
 		ctx, value,
-		id          = id,
-		placeholder = placeholder,
-		width       = width,
-		height      = height,
-		font_size   = font_size,
-		padding     = padding,
-		bg          = bg,
-		fg          = fg,
-		border      = border,
-		disabled   = disabled,
-		multiline   = multiline,
-		wrap        = wrap,
-		password    = password,
-		search      = search,
-		invalid     = invalid,
-		error       = error,
-		max_chars   = max_chars,
+		id            = id,
+		placeholder   = placeholder,
+		width         = width,
+		height        = height,
+		font_size     = font_size,
+		padding       = padding,
+		bg            = bg,
+		fg            = fg,
+		border        = border,
+		disabled      = disabled,
+		multiline     = multiline,
+		wrap          = wrap,
+		password      = password,
+		clear_button  = clear_button,
+		escape_clears = escape_clears,
+		invalid       = invalid,
+		error         = error,
+		max_chars     = max_chars,
 	)
 	if changed { send(ctx, on_change(payload, new_value)) }
 	return view
 }
 
-// search_field is a thin wrapper over `text_input` with `search = true`
-// plus a required Enter-submit callback. Split out instead of stapled
-// onto text_input because a polymorphic `proc() -> $Msg = nil` default
-// can't exist in Odin — requiring it on every text_input call would
-// force a trailing `nil` at every site. Keeping submit on its own
-// builder means plain text fields stay clean and search fields get the
-// "type to filter incrementally, Enter to confirm" pattern for free.
+// search_field is the dedicated search-input widget: a `text_input`
+// with `clear_button = true`, `escape_clears = true`, a localized
+// "Search…" placeholder default, and a required Enter-submit callback.
+//
+// Split out instead of stapled onto text_input because a polymorphic
+// `proc() -> $Msg = nil` default can't exist in Odin — requiring an
+// `on_submit` on every text_input call would force a trailing `nil`
+// at every site. Keeping submit on its own builder means plain text
+// fields stay clean and search fields get the "type to filter
+// incrementally, Enter to confirm" pattern for free.
 //
 // `on_submit` fires on Enter while focused, with no argument — the
 // current value already round-tripped through `on_change` and sits in
-// the app's state. Escape still clears-then-blurs (inherited from the
-// `search = true` path in text_input), the `×` clear button still
-// renders when the field holds text, and all other text_input
-// contracts apply unchanged.
+// the app's state. Escape clears the field (then defocuses on the
+// next press), the `×` clear button renders when the field holds
+// text, and all other text_input contracts apply unchanged.
 search_field :: proc(
 	ctx:         ^Ctx($Msg),
 	value:       string,
@@ -3606,20 +3607,26 @@ search_field :: proc(
 		send(ctx, on_submit())
 	}
 
+	// Default the placeholder to the localized "Search…" if the caller
+	// didn't pass one. Explicit placeholders are kept as-is.
+	ph := placeholder
+	if len(ph) == 0 { ph = ctx.labels.search_placeholder }
+
 	return text_input(ctx, value, on_change,
-		id          = id,
-		placeholder = placeholder,
-		width       = width,
-		height      = height,
-		font_size   = font_size,
-		padding     = padding,
-		bg          = bg,
-		fg          = fg,
-		border      = border,
-		search      = true,
-		invalid     = invalid,
-		error       = error,
-		disabled   = disabled,
+		id            = id,
+		placeholder   = ph,
+		width         = width,
+		height        = height,
+		font_size     = font_size,
+		padding       = padding,
+		bg            = bg,
+		fg            = fg,
+		border        = border,
+		clear_button  = true,
+		escape_clears = true,
+		invalid       = invalid,
+		error         = error,
+		disabled      = disabled,
 	)
 }
 

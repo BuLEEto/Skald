@@ -417,9 +417,17 @@ search_field(ctx, value, on_change, on_submit: proc() -> Msg,
              placeholder = "", ...)
 ```
 
-`text_input` with `search = true` plus an `on_submit` callback that
-fires on Enter. Use this when pressing Enter should kick off a search
-rather than insert a newline.
+The dedicated search-input widget. Sets `clear_button = true`,
+`escape_clears = true`, defaults the placeholder to a localized
+"Search…", and **fires `on_submit` whenever the user presses Enter**
+while the field has focus.
+
+Use this whenever pressing Enter on a search box should kick off
+something — a server query, activating the highlighted result in a
+launcher, etc. If you only need keystroke-by-keystroke filtering of
+an in-memory list with no Enter behaviour, use `text_input` with
+`clear_button = true, escape_clears = true` directly — same
+affordances, no `on_submit` requirement.
 
 ### number_input
 

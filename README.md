@@ -159,6 +159,8 @@ See `examples/07_counter` for the annotated version.
 - [`docs/gotchas.md`](docs/gotchas.md) — the foot-guns worth knowing
   about before you hit them.
 - [`docs/widgets.md`](docs/widgets.md) — per-widget reference.
+- [`docs/widget_choice.md`](docs/widget_choice.md) — short decision
+  tree for "which widget should I reach for here?"
 - [`docs/examples.md`](docs/examples.md) — annotated index of every
   example, grouped by concept.
 - [`docs/distributing.md`](docs/distributing.md) — shipping your

@@ -245,23 +245,41 @@ skald.number_input(ctx, s.quantity, on_quantity,
 Type a value, click +/−, or focus and use arrow keys. Out-of-range
 input is clamped on commit.
 
-### Search input with an × clear button
+### Search box that fires on Enter
 
 ```odin
-skald.text_input(ctx, s.query, on_query,
-    placeholder = "Search",
-    search      = true)
+skald.search_field(ctx, s.query, on_query_changed,
+    on_submit = proc() -> Msg { return Search_Submitted{} },
+    width     = 360)
 ```
 
-`search = true` defaults the placeholder to the localized "Search"
-label, sits a `×` clear button to the right whenever the field holds
-text, and switches Escape from "blur" to "clear-then-blur" — the
-GTK / macOS search convention. Clicking `×` fires
-`on_query("")`, so the same handler covers typing and clearing.
+`search_field` is the dedicated search-input widget. It defaults the
+placeholder to the localized "Search…" label, sits a `×` clear button
+to the right whenever the field holds text, switches Escape from
+"blur" to "clear-then-blur" (the GTK / macOS convention), and fires
+`on_submit` whenever the user presses Enter while the field has focus.
 
-For a search field that *also* dispatches on Enter (kick off the
-actual search), use `search_field` — it wraps `text_input` with an
-`on_submit` callback for the Enter case.
+Both callbacks are required:
+
+- `on_change(new_value)` runs on every keystroke. Use this for
+  incremental filtering (recompute the visible list based on the
+  current query).
+- `on_submit()` runs on Enter. Use this for committing the query to
+  a server, kicking off a heavy search, or activating the highlighted
+  result in a launcher-style picker.
+
+If you don't need Enter-submit (you're filtering an in-memory list
+on every keystroke), use `text_input` with `clear_button = true,
+escape_clears = true` instead — same affordances, no submit callback
+required.
+
+```odin
+skald.text_input(ctx, s.filter, on_filter_changed,
+    placeholder   = "Filter…",
+    clear_button  = true,
+    escape_clears = true,
+    width         = 240)
+```
 
 ---
 

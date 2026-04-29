@@ -29,9 +29,10 @@ package skald
 //     `core:fmt` and any library the app wants to pull in.
 Labels :: struct {
 	// Placeholder strings the framework emits when the caller doesn't
-	// supply one. `search_placeholder` is used by `text_input` when
-	// `search = true`. The other three default the corresponding
-	// picker's trigger text when the widget has no value yet.
+	// supply one. `search_placeholder` is used by `search_field` as
+	// the default placeholder. The other three default the
+	// corresponding picker's trigger text when the widget has no
+	// value yet.
 	search_placeholder:      string,
 	select_placeholder:      string,
 	date_picker_placeholder: string,

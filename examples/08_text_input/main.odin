@@ -125,11 +125,12 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 
 		skald.spacer(th.spacing.md),
 
-		// `search_field` wraps `text_input` with `search = true` and a
-		// required Enter-submit callback. Typing updates the query
-		// incrementally via `on_change`; pressing Enter fires
-		// `on_submit`, which the app uses to commit the "last
-		// submitted" value shown below the field.
+		// `search_field` is the dedicated search-input widget: it sets
+		// `clear_button = true`, `escape_clears = true`, defaults the
+		// placeholder to a localized "Search…", and requires an
+		// Enter-submit callback. Typing updates the query incrementally
+		// via `on_change`; pressing Enter fires `on_submit`, which the
+		// app uses to commit the "last submitted" value shown below.
 		field_row("Filter",
 			skald.search_field(ctx, s.query, on_query, on_query_submit, width = 360),
 			th),

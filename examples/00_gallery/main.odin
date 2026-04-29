@@ -69,7 +69,7 @@ State :: struct {
 Msg :: union {
 	Theme_Toggled, Locale_Toggled, Section_Toggled,
 	Counter_Inc, Counter_Reset,
-	Name_Changed, Multiline_Changed, Password_Changed, Search_Changed,
+	Name_Changed, Multiline_Changed, Password_Changed, Search_Changed, Search_Submitted,
 	Handle_Changed,
 	Quantity_Changed, On_Flag_Toggled, Toggle_Toggled, Volume_Changed,
 	Tick,
@@ -98,6 +98,7 @@ Name_Changed      :: distinct string
 Multiline_Changed :: distinct string
 Password_Changed  :: distinct string
 Search_Changed    :: distinct string
+Search_Submitted  :: struct {}
 Handle_Changed    :: distinct string
 Quantity_Changed  :: distinct f64
 On_Flag_Toggled   :: distinct bool
@@ -300,6 +301,8 @@ update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
 		delete(out.password);  out.password  = strings.clone(string(v))
 	case Search_Changed:
 		delete(out.search);    out.search    = strings.clone(string(v))
+	case Search_Submitted:
+		// Demo no-op: in a real app this would kick off a query.
 	case Handle_Changed:
 		delete(out.handle);    out.handle    = strings.clone(string(v))
 	case Quantity_Changed:  out.quantity  = f64(v)
@@ -499,8 +502,9 @@ inputs_section :: proc(ctx: ^skald.Ctx(Msg), s: State) -> skald.View {
 			skald.text_input(ctx, s.password, on_password,
 				width = 260, password = true, placeholder = "secret")),
 		skald.form_row(ctx, "Search",
-			skald.text_input(ctx, s.search, on_search,
-				width = 260, search = true)),
+			skald.search_field(ctx, s.search, on_search,
+				on_submit = proc() -> Msg { return Search_Submitted{} },
+				width     = 260)),
 		skald.form_row(ctx, "Handle",
 			skald.text_input(ctx, s.handle, on_handle,
 				width = 260, max_chars = 12,

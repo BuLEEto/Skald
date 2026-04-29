@@ -35,6 +35,7 @@ Msg :: union {
 	Title_Changed,
 	Body_Changed,
 	Search_Changed,
+	Search_Submitted,
 	Sidebar_Resized,
 }
 
@@ -46,6 +47,7 @@ Note_Selected   :: distinct int
 Title_Changed   :: distinct string
 Body_Changed    :: distinct string
 Search_Changed  :: distinct string
+Search_Submitted :: struct {}
 Sidebar_Resized :: distinct f32
 
 init :: proc() -> State {
@@ -132,6 +134,10 @@ update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
 		delete(out.search)
 		out.search = strings.clone(string(v))
 
+	case Search_Submitted:
+		// Filtering already happens on every keystroke; Enter is a
+		// no-op here. A real app might focus the first match.
+
 	case Sidebar_Resized:
 		out.sidebar_w = f32(v)
 	}
@@ -198,8 +204,8 @@ note_list :: proc(ctx: ^skald.Ctx(Msg), s: State, width: f32) -> skald.View {
 sidebar_view :: proc(ctx: ^skald.Ctx(Msg), s: State, width: f32) -> skald.View {
 	th := ctx.theme
 
-	search := skald.text_input(ctx, s.search, on_search,
-		search      = true,
+	search := skald.search_field(ctx, s.search, on_search,
+		on_submit   = proc() -> Msg { return Search_Submitted{} },
 		placeholder = "Search notes",
 		width       = width - 2 * th.spacing.md,
 	)
