@@ -66,7 +66,10 @@ Prerequisites vary by platform. See [`PLATFORMS.md`](PLATFORMS.md) for
 the exact commands; the short version:
 
 - **Linux** — install SDL3 (`sudo apt install libsdl3-0` or equivalent)
-  and a Vulkan loader (`libvulkan1` on most distros).
+  and a Vulkan loader (`libvulkan1` on most distros). On Ubuntu 24.04
+  LTS, SDL3 isn't yet packaged — `PLATFORMS.md` has the build-from-
+  source recipe. First-time Odin install also needs the stb static
+  libs built once: `make -C $ODIN_ROOT/vendor/stb/src`.
 - **Windows** — Odin's `vendor:sdl3` bundles `SDL3.dll` and `build.bat`
   copies it next to the exe automatically. Vulkan loader ships with
   recent GPU drivers or the LunarG Vulkan SDK.

@@ -149,9 +149,53 @@ Linux is the primary dev platform and assumed to work. Quick sanity:
 ./build.sh 35_color_picker run
 ```
 
-Prerequisites: `libvulkan1` (Vulkan loader) and a Mesa Vulkan driver
-(`mesa-vulkan-drivers`) — both in every mainstream distro's package
-repo.
+### Prerequisites
+
+- **SDL3** — `libsdl3-0` (runtime) and the headers your distro packages
+  it under. SDL3 is in Debian Trixie / Devuan Excalibur, Fedora 40+,
+  Arch, and most rolling distros. **Ubuntu 24.04 LTS does not ship
+  SDL3** in any official repo as of writing — see "Building SDL3 from
+  source" below.
+- **Vulkan loader + driver** — `libvulkan1` and `mesa-vulkan-drivers`
+  (or vendor proprietary drivers). In every mainstream distro's repo.
+- **Odin's stb static libs** — Odin ships `vendor:stb/` as C source;
+  the static archives that `vendor:fontstash` (which Skald uses) links
+  against have to be built once per machine:
+
+  ```bash
+  make -C $ODIN_ROOT/vendor/stb/src
+  ```
+
+  If you skip this you'll get a link-time "cannot find `stb_truetype`"
+  error at the end of an otherwise-successful Odin compile.
+
+### Building SDL3 from source (Ubuntu 24.04 LTS or any distro
+without a packaged SDL3)
+
+```bash
+sudo apt install \
+    build-essential cmake pkg-config \
+    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+    libxi-dev libxkbcommon-dev libxkbcommon-x11-dev \
+    libwayland-dev wayland-protocols libdecor-0-dev libdbus-1-dev
+
+git clone --branch release-3.2.10 https://github.com/libsdl-org/SDL.git
+cd SDL
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+sudo cmake --install build
+sudo ldconfig
+```
+
+The two packages most commonly missing on a fresh Ubuntu box are
+`wayland-protocols` (separate from `libwayland-dev`) and
+`libxkbcommon-x11-dev` (different package from `libxkbcommon-dev`).
+If `cmake` complains it can't find X11 or Wayland despite `libx11-dev`
+being installed, those two are usually the gap.
+
+`release-3.2.10` mirrors what's in current stable distros; bump to
+`release-3.4.2` if you want to match Odin's `vendor:sdl3` bindings
+exactly.
 
 ### What to verify
 
