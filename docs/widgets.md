@@ -53,6 +53,40 @@ per row" recipe walks through both styles.
 
 ## Layout
 
+### Layout basics
+
+Skald's layout is intrinsic-by-default: a `col` or `row` sizes itself
+to fit its children unless you tell it otherwise. The four knobs every
+container takes:
+
+- **`spacing`** — gap between siblings (one number, applied between
+  each adjacent pair).
+- **`padding`** — gap inside the container's own edges (one number,
+  applied on all four sides — there is no per-side variant).
+- **`main_align`** — how leftover main-axis space is distributed:
+  `.Start`, `.Center`, `.End`, `.Space_Between`. Only matters when
+  there *is* leftover (i.e. the container is bigger than its children
+  need).
+- **`cross_align`** — perpendicular alignment of children: `.Start`,
+  `.Center`, `.End`, `.Stretch`. **Default is `.Start`**, so a `col`
+  containing one button leaves the button at its intrinsic width
+  flushed to the left rather than spanning the column. Pass
+  `cross_align = .Stretch` when you want children to fill the
+  perpendicular axis (sidebars of full-width buttons, form rows of
+  full-width inputs, etc.).
+
+To fill the *main* axis, wrap a child in `flex(weight, child)`. A
+`flex(1, button(...))` inside a `row` takes a share of the leftover
+horizontal space, growing the button. `flex` only works when its
+parent has a defined size on the main axis — see
+[`gotchas.md`](gotchas.md) for the "my flex collapsed to zero"
+symptom and fix.
+
+Several widgets (`scroll`, `grid`, `virtual_list`, `table`) use the
+convention that **zero on an axis means "fill the slot my parent
+gives me"**. Hand them a slot by wrapping in `flex(1, ...)` or a
+column with `cross_align = .Stretch`.
+
 ### col / row
 
 ```odin

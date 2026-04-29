@@ -47,6 +47,39 @@ Fixes:
 - Put the parent inside another flex layout that gives it a share.
 - Use `spacer(size)` with a real number instead of `flex`.
 
+## My child sticks to the top/left of its container
+
+Symptom: a single child inside a `col` (or `row`) with a defined
+width renders at its intrinsic size, flushed to the start of the
+cross axis instead of filling. A button looks like a small left-aligned
+chip; an input doesn't span the form row.
+
+Cause: `cross_align` defaults to `.Start`. A `col` doesn't stretch
+children to its full width unless asked, and a `row` doesn't stretch
+them to its full height either.
+
+Fix: pass `cross_align = .Stretch` on the parent.
+
+```odin
+// Button stays at intrinsic width, flushed left:
+skald.col(
+    skald.button(ctx, "Save", On_Save{}),
+    width = 320,
+)
+
+// Button fills the column's width:
+skald.col(
+    skald.button(ctx, "Save", On_Save{}),
+    width = 320,
+    cross_align = .Stretch,
+)
+```
+
+Same trick stretches *every* child of a sidebar column to a uniform
+width, regardless of how wide each child wants to be intrinsically.
+For one-off children mixed in with content-sized siblings, wrap just
+that child in `flex` (main axis) or `sized` (explicit cross-axis).
+
 ## Widget state in reshuffled rows
 
 Skald keys widget state (focus, scroll, checked, open) off the
