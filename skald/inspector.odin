@@ -1,32 +1,35 @@
 package skald
 
 // Debug inspector overlay. F12 toggles a small translucent panel that
-// shows frame stats, widget counts, focus/hover info, and per-kind
-// state entries — handy while building an app, pointless in a release.
+// names the widget under the cursor — its id, kind, and computed rect —
+// and outlines that widget on screen so you can match the readout to
+// the thing you're pointing at. Press P to pin the readout so you can
+// move the cursor away without losing what was selected.
+//
+// What it deliberately doesn't show: framerate, RSS, draw counts.
+// Lazy redraw makes "FPS" meaningless ("0 fps" reads as "frozen" but
+// is the framework working as intended), and the other counters were
+// debugging-the-framework metrics, not debugging-your-app metrics.
+// `bench.sh` is the right tool for perf and memory; the inspector's
+// job is "which widget is this and what id did it get."
 //
 // The whole file is gated on `when ODIN_DEBUG`, so `odin build -o:speed`
 // (which clears ODIN_DEBUG) strips every byte of it: no panel, no F12
 // handling, no state field cost beyond one `bool` in Widget_Store.
-// That's the whole design: app authors can't ship a debug surface to
-// users by accident because the surface literally doesn't exist in
-// release binaries.
 //
 // The run loop calls `inspector_handle_toggle` early in each pump (to
 // catch F12) and `inspector_render` at the end of the frame (so the
 // panel paints over the app). Both are no-ops outside ODIN_DEBUG.
 
 import "core:fmt"
-import "core:os"
-import "core:strconv"
-import "core:strings"
 
 when ODIN_DEBUG {
 
 // inspector_handle_toggle watches for F12 in the frame's pressed set
 // and flips the open flag. Also handles the pin keybind (P) and
-// claims the Escape key when the panel is open so the usual
-// dialog-dismiss path doesn't clash while the inspector holds focus.
-// Called from the run loop after input_pump and before view.
+// claims it while a text input is focused so typing "p" into a field
+// doesn't also flip the pin state. Called from the run loop after
+// input_pump and before view.
 inspector_handle_toggle :: proc(w: ^Widget_Store, input: ^Input, mouse_pos: [2]f32) {
 	if .F12 in input.keys_pressed {
 		w.inspector_open = !w.inspector_open
@@ -52,22 +55,9 @@ inspector_handle_toggle :: proc(w: ^Widget_Store, input: ^Input, mouse_pos: [2]f
 	}
 }
 
-// inspector_push_frame_time appends a sample to the rolling frame-time
-// buffer. The run loop calls it once per render with the last frame's
-// wall-clock duration in milliseconds. The ring's fixed 60 slots give
-// a ~1-second FPS window at 60 fps; at lower framerates it still
-// reflects recent history even if the window stretches time-wise.
-inspector_push_frame_time :: proc(w: ^Widget_Store, dt_ms: f32) {
-	w.inspector_frame_times[w.inspector_frame_time_idx] = dt_ms
-	w.inspector_frame_time_idx = (w.inspector_frame_time_idx + 1) %
-		len(w.inspector_frame_times)
-}
-
-// inspector_render draws the debug panel if open. Pulls stats from
-// the renderer (batch sizes, frame count) and the widget store
-// (state map, focus, hover). Runs after render_overlays so the panel
-// sits above every popover and dialog, outside the normal overlay
-// queue so its own rect never becomes a hover/modal gate.
+// inspector_render draws the debug panel if open. Pulls hover info
+// from the widget store and paints over every other layer (popovers,
+// dialogs, toasts) so the readout sits above the app regardless.
 //
 // Handles its own drag interaction: a mouse press on the title row
 // begins a drag, held mouse moves the panel, release ends it.
@@ -86,7 +76,6 @@ inspector_render :: proc(r: ^Renderer, w: ^Widget_Store, input: ^Input) {
 	header_bg := Color{0.14, 0.16, 0.20, 0.98}
 	fg       := Color{1, 1, 1, 1}
 	fg_dim   := Color{0.72, 0.76, 0.82, 1}
-	fg_warn  := Color{1.00, 0.74, 0.30, 1}
 
 	fs_title  := f32(13)
 	fs_body   := f32(12)
@@ -122,51 +111,23 @@ inspector_render :: proc(r: ^Renderer, w: ^Widget_Store, input: ^Input) {
 		hover_id, hover_kind, hover_rect = inspector_find_hover(w, mp)
 	}
 
-	fps, frame_ms := inspector_fps(w)
-	rss_mb := inspector_rss_mb()
-	kind_counts := inspector_kind_histogram(w)
-
 	// Build the body lines.
-	lines := make([dynamic]string, 0, 24, context.temp_allocator)
-
-	fps_line_col := fg
-	if frame_ms > 20 { fps_line_col = fg_warn }
-	_ = fps_line_col // used below to colour one row
-	append(&lines, fmt.tprintf("FPS:       %.1f   (%.2f ms)", fps, frame_ms))
-	if rss_mb >= 0 {
-		append(&lines, fmt.tprintf("RSS:       %.1f MB", rss_mb))
-	}
-	append(&lines, fmt.tprintf("Frame:     %d", w.frame))
-	append(&lines, "")
-	append(&lines, fmt.tprintf("Widgets:   %d", len(w.states)))
-	append(&lines, fmt.tprintf("Focusable: %d", len(w.focusables)))
-	append(&lines, fmt.tprintf("Overlays:  %d", len(w.overlay_rects_prev)))
-	append(&lines, "")
-	append(&lines, fmt.tprintf("Draw calls: %d", len(r.batch.ranges)))
-	append(&lines, fmt.tprintf("Vertices:   %d", len(r.batch.vertices)))
-	append(&lines, fmt.tprintf("Indices:    %d", len(r.batch.indices)))
-	append(&lines, "")
-	append(&lines, fmt.tprintf("Focused:  %v", w.focused_id))
+	lines := make([dynamic]string, 0, 8, context.temp_allocator)
 	if hover_id != 0 {
 		label := "Hovered"
 		if w.inspector_pinned { label = "Pinned " }
-		append(&lines, fmt.tprintf("%s:  %v  (%v)", label, hover_id, hover_kind))
+		append(&lines, fmt.tprintf("%s:  %v", label, hover_id))
+		append(&lines, fmt.tprintf("Kind:     %v", hover_kind))
 		append(&lines,
-			fmt.tprintf("  rect: %.0f,%.0f  %.0fx%.0f",
+			fmt.tprintf("Rect:     %.0f, %.0f   %.0f x %.0f",
 				hover_rect.x, hover_rect.y, hover_rect.w, hover_rect.h))
 	} else {
 		append(&lines, "Hovered:  (none)")
-	}
-	// Per-kind breakdown, sorted by count (desc). Only the kinds that
-	// actually appear this frame, so the panel stays compact for
-	// small apps and doesn't flood a 30-line list of zero rows.
-	if len(kind_counts) > 0 {
 		append(&lines, "")
-		append(&lines, "— by kind —")
-		for entry in kind_counts {
-			append(&lines, fmt.tprintf("  %-14v %d", entry.kind, entry.count))
-		}
+		append(&lines, "Move the cursor over a widget to inspect it.")
 	}
+	append(&lines, "")
+	append(&lines, fmt.tprintf("Focused:  %v", w.focused_id))
 	append(&lines, "")
 	append(&lines, "F12 close   P pin   drag title to move")
 
@@ -229,15 +190,13 @@ inspector_render :: proc(r: ^Renderer, w: ^Widget_Store, input: ^Input) {
 	// Body lines.
 	ascent_body := text_ascent(r, fs_body, 0)
 	ty := py + header_h + pad * 0.25
-	for line, i in lines {
+	for line in lines {
 		if len(line) > 0 {
 			col := fg
-			if strings.has_prefix(line, "  ") ||
-			   strings.has_prefix(line, "— ") ||
-			   strings.has_prefix(line, "F12 ") {
+			if line == "Move the cursor over a widget to inspect it." ||
+			   line == "F12 close   P pin   drag title to move" {
 				col = fg_dim
 			}
-			if i == 0 && frame_ms > 20 { col = fg_warn }
 			draw_text(r, line, px + pad, ty + ascent_body, col, fs_body, 0)
 		}
 		ty += row_h
@@ -310,81 +269,6 @@ inspector_find_hover :: proc(w: ^Widget_Store, mp: [2]f32) -> (Widget_ID, Widget
 		}
 	}
 	return best_id, best_kind, best_rect
-}
-
-// inspector_fps reports the smoothed FPS and average frame time (ms)
-// from the rolling buffer. Skips zero samples so the reading is
-// stable from the first live frame, not "∞ fps" for the idle buffer
-// slots that haven't been written yet.
-@(private)
-inspector_fps :: proc(w: ^Widget_Store) -> (fps: f32, avg_ms: f32) {
-	sum:   f32 = 0
-	count: int = 0
-	for v in w.inspector_frame_times {
-		if v > 0 { sum += v; count += 1 }
-	}
-	if count == 0 { return 0, 0 }
-	avg_ms = sum / f32(count)
-	if avg_ms > 0 { fps = 1000 / avg_ms }
-	return
-}
-
-// inspector_rss_mb returns the process' resident-set size in MB,
-// or a negative number if the reading isn't available on this
-// platform. Linux reads /proc/self/statm (six space-separated
-// fields; the second is resident pages). Everything else is TODO —
-// returning -1 hides the row rather than showing a bogus value.
-@(private)
-inspector_rss_mb :: proc() -> f32 {
-	when ODIN_OS == .Linux {
-		data, err := os.read_entire_file("/proc/self/statm", context.temp_allocator)
-		if err != nil { return -1 }
-		s := string(data)
-		// Fields are " size resident shared text lib data dt " (pages).
-		// Skip the first space-separated number.
-		sp := strings.index_byte(s, ' ')
-		if sp < 0 || sp+1 >= len(s) { return -1 }
-		rest := s[sp+1:]
-		sp2 := strings.index_byte(rest, ' ')
-		if sp2 < 0 { return -1 }
-		pages, pok := strconv.parse_i64(rest[:sp2])
-		if !pok { return -1 }
-		return f32(pages) * 4096.0 / (1024.0 * 1024.0)
-	} else {
-		return -1
-	}
-}
-
-// Kind_Count is a per-kind tally used by the histogram view.
-Kind_Count :: struct {
-	kind:  Widget_Kind,
-	count: int,
-}
-
-// inspector_kind_histogram bins every live widget by kind and returns
-// a slice sorted by count descending. Skips zero buckets so the list
-// stays compact. Sort is a tiny insertion pass — we have ~25 kinds
-// max, so nothing fancier is justified.
-@(private)
-inspector_kind_histogram :: proc(w: ^Widget_Store) -> []Kind_Count {
-	counts: [Widget_Kind]int
-	for _, st in w.states {
-		counts[st.kind] += 1
-	}
-	out := make([dynamic]Kind_Count, 0, len(counts), context.temp_allocator)
-	for kind in Widget_Kind {
-		if counts[kind] == 0 { continue }
-		append(&out, Kind_Count{kind = kind, count = counts[kind]})
-	}
-	// Insertion sort by count desc. Small N, stable enough.
-	for i := 1; i < len(out); i += 1 {
-		j := i
-		for j > 0 && out[j].count > out[j-1].count {
-			out[j], out[j-1] = out[j-1], out[j]
-			j -= 1
-		}
-	}
-	return out[:]
 }
 
 } // when ODIN_DEBUG

@@ -906,13 +906,11 @@ run :: proc(app: App($State, $Msg)) {
 				// the main pass — they only queued themselves. Drain the
 				// queue now so they sit on top in draw order.
 				render_overlays(&r)
-				// Debug inspector paints on the primary window only — the
-				// FPS / RSS readout is app-level info, not per-window, and
-				// multiplying it across every popover would be noise.
+				// Debug inspector paints on the primary window only — its
+				// hover readout is app-level info; drawing it on every
+				// popover and HUD would be noise.
 				when ODIN_DEBUG {
 					if t == primary {
-						dt_ms := f32(time.duration_milliseconds(time.since(last_render)))
-						inspector_push_frame_time(t_widgets, dt_ms)
 						inspector_render(&r, t_widgets, &t_w.input)
 					}
 				}

@@ -155,8 +155,10 @@ checkbox(ctx, row.selected, row.id,
 
 ### Dev tools
 
-- F12 inspector overlay (FPS, RSS, widget counts, hover readout) —
-  entirely gated behind `when ODIN_DEBUG`; release builds strip it.
+- F12 inspector overlay — names the widget under the cursor (id, kind,
+  computed rect) and outlines it on screen; press P to pin so the
+  readout doesn't follow the cursor. Entirely gated behind
+  `when ODIN_DEBUG`; release builds strip it.
 - `SKALD_BENCH_FRAMES=N` env triggers bench mode — runs N forced
   frames, prints a one-line stats summary, exits.
 - `./bench.sh` convenience script running the canonical example suite.

@@ -331,27 +331,20 @@ Widget_Store :: struct {
 	// Debug inspector state (F12 overlay). Only read/written by the
 	// run loop and the when-ODIN_DEBUG-gated inspector renderer; in
 	// release builds nothing flips the flag and the panel never draws.
-	// Kept on Widget_Store because it's per-window and shares the
-	// rotating-buffer lifetime of every other debug/diagnostic rect.
+	// Kept on Widget_Store because it's per-window.
 	//
 	// `inspector_pos` is the panel's top-left in logical pixels.
 	// Initial zero is remapped to the upper-right corner on first
 	// render; afterwards the user can drag the title bar to move it.
 	//
-	// `inspector_frame_times` is a rolling buffer of per-frame wall
-	// times (ms). The run loop feeds new samples each render; the
-	// inspector averages them for the FPS readout.
-	//
 	// `inspector_pinned_*` snapshots whichever widget was hovered
-	// when the user pressed P (or right-clicked the panel) so the
-	// info stops tracking the cursor while you move over to test a
-	// button. Right-click again or press P to unpin.
+	// when the user pressed P so the readout stops tracking the
+	// cursor while you move over to test a button. Press P again to
+	// unpin.
 	inspector_open:              bool,
 	inspector_pos:               [2]f32,
 	inspector_dragging:          bool,
 	inspector_drag_offset:       [2]f32,
-	inspector_frame_times:       [60]f32,
-	inspector_frame_time_idx:    int,
 	inspector_pinned:            bool,
 	inspector_pinned_id:         Widget_ID,
 	inspector_pinned_kind:       Widget_Kind,
