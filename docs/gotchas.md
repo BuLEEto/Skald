@@ -128,6 +128,28 @@ memory you just freed. The default allocator reuses it instantly,
 so the clone back to the heap picks up corrupted bytes. Only bites
 custom widgets — the built-in `text_input` already does this.
 
+## File-dialog filters can be flaky on Linux
+
+`cmd_open_file_dialog(filters, ...)` works reliably on Windows and on
+mainstream Linux desktops with mature `xdg-desktop-portal` backends
+(GNOME, KDE, XFCE on stable distros). On bleeding-edge desktops it
+gets sketchy: Pop!_OS's COSMIC ships an early `xdg-desktop-portal-cosmic`
+that silently drops filtered Open dialogs and crashes on rapid clicks,
+and even forcing zenity (`SDL_FILE_DIALOG_DRIVER=zenity`) doesn't
+always recover — the filter-handling path inside SDL3 itself appears
+to have a NULL-pointer bug on some Linux setups.
+
+Folder dialogs (`cmd_open_folder_dialog`) and unfiltered file dialogs
+(`cmd_open_file_dialog(nil, ...)`) work everywhere we've tested — the
+bug is specifically in the filtered-file-dialog code path.
+
+If your users hit the silent drop or a `dbus_message_unref(NULL)`
+crash, the safe fallback is to pass `nil` for filters and let the OS
+show all files. Most apps work fine that way; folder layouts usually
+already implicitly limit what the user picks. We track this as an
+upstream SDL3 issue, not a Skald bug — re-test once SDL ships a
+filter-path fix.
+
 ## The "one frame lag" isn't a bug
 
 Click → Msg queued → `update` runs → state changes → *next* frame
