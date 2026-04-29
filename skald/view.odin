@@ -10115,7 +10115,7 @@ table :: proc(
 			sort_id := widget_auto_id(ctx)
 			sort_st := widget_get(ctx, sort_id, .Click_Zone)
 			if ctx.input.mouse_pressed[.Left] &&
-			   rect_contains_point(sort_st.last_rect, ctx.input.mouse_pos) {
+			   rect_hovered(ctx, sort_st.last_rect) {
 				new_asc := true
 				if sort_column == i { new_asc = !sort_ascending }
 				send(ctx, on_sort_change(i, new_asc))
@@ -10159,7 +10159,7 @@ table :: proc(
 			// lock-in would miss the flex case on subsequent frames.
 			if !handle_st.pressed &&
 			   ctx.input.mouse_pressed[.Left] &&
-			   rect_contains_point(handle_st.last_rect, ctx.input.mouse_pos) {
+			   rect_hovered(ctx, handle_st.last_rect) {
 				handle_st.pressed     = true
 				handle_st.drag_anchor = ctx.input.mouse_pos.x - widths[i]
 
@@ -10222,7 +10222,7 @@ table :: proc(
 			// color to primary so the user sees what they're about to
 			// drag; active drag stays primary for the whole gesture.
 			divider_color := th.color.fg_muted
-			handle_hover := rect_contains_point(handle_st.last_rect, ctx.input.mouse_pos)
+			handle_hover := rect_hovered(ctx, handle_st.last_rect)
 			if handle_hover || handle_st.pressed {
 				divider_color = th.color.primary
 			}
@@ -10444,7 +10444,7 @@ table :: proc(
 			row_id := widget_auto_id(ctx)
 			row_st := widget_get(ctx, row_id, .Click_Zone)
 			if ctx.input.mouse_pressed[.Left] &&
-			   rect_contains_point(row_st.last_rect, ctx.input.mouse_pos) {
+			   rect_hovered(ctx, row_st.last_rect) {
 				send(ctx, on_row_click(i, ctx.input.modifiers))
 				// Clicking a row moves keyboard focus to the table
 				// so arrow keys Just Work without an extra Tab.
