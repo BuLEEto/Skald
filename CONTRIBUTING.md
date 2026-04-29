@@ -150,6 +150,43 @@ so widgets that only use the auto-id mechanism don't need to do
 anything extra. **Don't reach for raw `~`** — the helper exists so
 nobody can forget which constants and operators to use.
 
+### Conditionally-built children must be id-scoped
+
+If your widget conditionally builds child widgets (e.g. option rows
+when a popover is open), wrap that section in
+`widget_scope_push(ctx, u64(id))` / `widget_scope_pop` so the
+children's auto-id consumption doesn't shift the parent counter.
+
+Without this, opening the popover spawns N extra `widget_auto_id`
+calls into the parent counter. Every widget rendered after yours in
+the tree — including a sibling dialog, another picker, a button —
+gets a different id on open vs closed frames. Their `widget_get`
+returns a fresh state on the open frame, and any state-driven
+behavior keyed off that (notably the dialog's "closed→open transition
+sweep") fires spuriously, wiping the popover that just got opened.
+
+We hit this with `select` inside a dialog: clicking the trigger made
+the popover flash open and close on the same frame because the
+4 option-row buttons shifted the dialog's id, the dialog's widget_get
+returned fresh state with `open=false`, and the sweep killed the
+just-toggled select. `menu` and `context_menu` had the same risk.
+
+```odin
+// In a popover-bearing widget that builds N rows when open:
+scope := widget_scope_push(ctx, u64(id))
+rows := make([dynamic]View, 0, len(items), context.temp_allocator)
+for item, i in items {
+    append(&rows, button(ctx, item.label, item.msg, ...))  // calls auto_id
+}
+widget_scope_pop(ctx, scope)
+```
+
+Widgets that use *manual* hit-testing for their popover internals
+(date_picker, time_picker, color_picker — clicks tested against
+pre-computed rects, no nested `button(...)` calls) are already safe.
+This rule only applies to widgets that nest other auto-id-consuming
+widgets in the conditional branch.
+
 ### Parameter ordering convention
 
 New widgets should follow the same parameter order so calling them

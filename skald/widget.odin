@@ -810,11 +810,23 @@ rect_hovered :: proc(ctx: ^Ctx($Msg), rect: Rect) -> bool {
 	// Modal dialog: widgets whose rect isn't fully inside the modal card
 	// shouldn't hover, even if the mouse happens to land over them. The
 	// scrim blocks pointer events conceptually — this is the
-	// implementation. Same "rect fully covered" test as the popover
-	// overlay gate, so widgets INSIDE the dialog still hover correctly.
+	// implementation. Exception: a widget inside a registered overlay
+	// (a popover spawned from the dialog content — select dropdown,
+	// date picker, etc.) is reachable even when its rect spills past
+	// the modal card, because the user can see it and the overlay is
+	// drawn over the scrim. Without this exception, a select inside a
+	// dialog whose dropdown extends below the card has its lower
+	// options dead-clickable.
 	mr := ctx.widgets.modal_rect_prev
 	if mr.w > 0 && mr.h > 0 && !rect_contains_rect(mr, rect) {
-		return false
+		inside_overlay := false
+		for rr in ctx.widgets.overlay_rects_prev {
+			if rect_contains_rect(rr, rect) {
+				inside_overlay = true
+				break
+			}
+		}
+		if !inside_overlay { return false }
 	}
 	for rr in ctx.widgets.overlay_rects_prev {
 		if rect_contains_point(rr, mp) && !rect_contains_rect(rr, rect) {

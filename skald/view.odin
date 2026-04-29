@@ -4929,6 +4929,16 @@ _select_impl :: proc(
 	// `on_change(option)` on release. Unselected rows render on the
 	// elevated bg (their color is inherited from the bg); selected
 	// rows pick up the theme's translucent primary tint.
+	//
+	// The option-rows are wrapped in a per-select widget scope so the
+	// auto-id counter they consume doesn't pollute the parent counter.
+	// Without this, opening the popover (which spawns N option-row
+	// buttons into the view tree) shifts every auto-id past the select
+	// — e.g. a sibling dialog rendered after the select would get a
+	// different id on open vs closed frames, its widget_get would
+	// return a fresh state on the open frame, and its closed→open
+	// sweep would fire and immediately kill the just-opened popover.
+	scope := widget_scope_push(ctx, u64(id))
 	rows := make([dynamic]View, 0, len(options), context.temp_allocator)
 	for opt, i in options {
 		is_selected := opt == value
@@ -4936,6 +4946,7 @@ _select_impl :: proc(
 		if is_selected { row_bg = th.color.selection }
 		append(&rows, select_option_row(ctx, opt, option_msgs[i], row_bg, th))
 	}
+	widget_scope_pop(ctx, scope)
 
 	// Two-layer card: outer border-colored rect lays down the hairline,
 	// inner elevated rect leaves 1 px of border showing. Matches the
@@ -7551,6 +7562,13 @@ menu :: proc(
 
 	widget_set(ctx, id, st)
 
+	// Wrap the option-row buttons in a per-menu widget scope so their
+	// auto-id consumption doesn't pollute the parent counter. Without
+	// this, opening the menu (which adds N buttons to the view tree)
+	// would shift every auto-id past the menu — a sibling dialog or
+	// popover-bearing widget rendered after this menu would get a
+	// different id when it's open vs closed, breaking its state.
+	scope := widget_scope_push(ctx, u64(id))
 	rows := make([dynamic]View, 0, len(labels), context.temp_allocator)
 	for label, i in labels {
 		append(&rows, button(ctx, label, on_select(i),
@@ -7561,6 +7579,7 @@ menu :: proc(
 			font_size = th.font.size_md,
 		))
 	}
+	widget_scope_pop(ctx, scope)
 
 	// Two layers: an outer border-colored rect 1 px larger than the
 	// inner, padded by 1 so the inner's edge leaves a hairline of
@@ -7734,6 +7753,10 @@ context_menu :: proc(
 
 	// Build the popover: same two-layer card (border + elevated) as the
 	// menu widget so the two read as the same family visually.
+	// Wrap in a per-context-menu widget scope so the option-row buttons'
+	// auto-id consumption stays isolated from the parent counter — see
+	// the same pattern in `menu` and `_select_impl`.
+	scope := widget_scope_push(ctx, u64(id))
 	rows := make([dynamic]View, 0, len(items), context.temp_allocator)
 	for label, i in items {
 		append(&rows, button(ctx, label, on_select(i),
@@ -7745,6 +7768,7 @@ context_menu :: proc(
 			text_align = .Start,
 		))
 	}
+	widget_scope_pop(ctx, scope)
 	inner := col(..rows[:],
 		spacing     = 2,
 		padding     = 4,
