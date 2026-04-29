@@ -5,6 +5,10 @@ performance.** Pure-functional state, rebuild-every-frame rendering, and
 a modern dark/light aesthetic out of the box.
 
 <p align="center">
+  <img src="screenshots/Gallery_Demo.gif" alt="Skald gallery — interactive demo" width="80%"/>
+</p>
+
+<p align="center">
   <img src="screenshots/Gallery_Dark.png"  alt="Skald gallery — dark theme"  width="49%"/>
   <img src="screenshots/Gallery_Light.png" alt="Skald gallery — light theme" width="49%"/>
 </p>
