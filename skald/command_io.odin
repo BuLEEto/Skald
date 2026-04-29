@@ -3,6 +3,7 @@ package skald
 import "base:runtime"
 import "core:c"
 import "core:nbio"
+import "core:os"
 import "core:strings"
 import "vendor:sdl3"
 
@@ -46,6 +47,22 @@ File_Read_Result :: struct {
 File_Write_Result :: struct {
 	path: string,
 	err:  nbio.FS_Error,
+}
+
+// home_dir_or_empty returns the user's home directory as a temp-arena
+// string ("" if the env var is missing). Used as a fallback for file
+// dialogs whose caller didn't pass `default_location` — SDL otherwise
+// inherits whatever the OS picker defaults to, which on some Linux
+// portals is filesystem root.
+@(private)
+home_dir_or_empty :: proc() -> string {
+	when ODIN_OS == .Linux || ODIN_OS == .Darwin {
+		return os.get_env("HOME", context.temp_allocator)
+	} else when ODIN_OS == .Windows {
+		return os.get_env("USERPROFILE", context.temp_allocator)
+	} else {
+		return ""
+	}
 }
 
 // File_Dialog_Result is what `cmd_open_file_dialog` / `cmd_save_file_dialog`
@@ -146,6 +163,11 @@ cmd_write_file :: proc(
 // SDL3's semicolon-separated extension syntax (no leading dot); `*`
 // means "everything." The handler owns `result.path` on success
 // and must clone or free it before the frame arena moves on.
+//
+// `default_location` is the starting directory hint. Empty string
+// (the default) falls back to the user's home directory — apps that
+// remember the last-used location should pass it here for the
+// "open where I left off" UX.
 cmd_open_file_dialog :: proc(
 	filters:          []File_Filter,
 	on_result:        proc(File_Dialog_Result) -> $Msg,
@@ -168,8 +190,8 @@ cmd_open_file_dialog :: proc(
 // suggest a starting filename must pair this with a subsequent
 // cmd_write_file to the returned path (the picker confirmation is
 // the "Save as" step; writing happens separately). `default_location`
-// is the starting directory; empty string lets the OS pick its usual
-// default (typically the user's Documents).
+// is the starting directory; empty string falls back to the user's
+// home directory.
 cmd_save_file_dialog :: proc(
 	filters:          []File_Filter,
 	on_result:        proc(File_Dialog_Result) -> $Msg,
@@ -462,13 +484,17 @@ process_async :: proc(
 
 		append(&io.dialogs, slot)
 
-		// `default_location` goes over to SDL as a cstring. Empty string
-		// → nil so SDL picks its platform default (Documents, etc.).
-		// The cstring lives on the slot until drain_io frees it after
-		// the dialog closes, so SDL's C layer sees stable memory for
-		// the lifetime of the picker.
-		if v.default_location != "" {
-			slot.default_location = strings.clone_to_cstring(v.default_location)
+		// `default_location` goes over to SDL as a cstring. If the app
+		// didn't pass one we fall back to the user's home directory —
+		// SDL/xdg-desktop-portal would otherwise default to filesystem
+		// root on some Linux portals, which is a confusing first-time
+		// UX. The cstring lives on the slot until drain_io frees it
+		// after the dialog closes, so SDL's C layer sees stable memory
+		// for the lifetime of the picker.
+		location := v.default_location
+		if location == "" { location = home_dir_or_empty() }
+		if location != "" {
+			slot.default_location = strings.clone_to_cstring(location)
 		}
 
 		// Hand the untyped pending pointer to SDL as userdata. The C
