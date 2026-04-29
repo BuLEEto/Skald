@@ -161,6 +161,9 @@ See `examples/07_counter` for the annotated version.
 - [`docs/widgets.md`](docs/widgets.md) — per-widget reference.
 - [`docs/examples.md`](docs/examples.md) — annotated index of every
   example, grouped by concept.
+- [`docs/distributing.md`](docs/distributing.md) — shipping your
+  Skald app to end users: bundling SDL3 on Linux, app bundles on
+  macOS, what each platform's user actually needs installed.
 - [`docs/architecture.md`](docs/architecture.md) — how the framework
   fits together (for people extending Skald, not using it).
 - [`docs/benchmarks.md`](docs/benchmarks.md) — frame-time and memory
