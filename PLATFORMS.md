@@ -172,12 +172,23 @@ Linux is the primary dev platform and assumed to work. Quick sanity:
 ### Building SDL3 from source (Ubuntu 24.04 LTS or any distro
 without a packaged SDL3)
 
+This is the upstream-recommended dep set (matches SDL's own
+`docs/README-linux.md`). Skald doesn't use SDL audio, but enabling the
+audio backends here means the same `libSDL3.so` build is reusable for
+other projects, and the IME packages (`libibus-1.0-dev`,
+`fcitx-libs-dev`) are what makes Chinese / Japanese / Korean input
+work in Skald apps:
+
 ```bash
 sudo apt install \
-    build-essential cmake pkg-config \
+    build-essential git make pkg-config cmake ninja-build \
     libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-    libxi-dev libxkbcommon-dev libxkbcommon-x11-dev \
-    libwayland-dev wayland-protocols libdecor-0-dev libdbus-1-dev
+    libxi-dev libxss-dev libxkbcommon-dev libxkbcommon-x11-dev \
+    libwayland-dev wayland-protocols libdecor-0-dev \
+    libdrm-dev libgbm-dev libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
+    libdbus-1-dev libudev-dev \
+    libasound2-dev libpulse-dev libpipewire-0.3-dev libsndio-dev libjack-dev \
+    libibus-1.0-dev fcitx-libs-dev
 
 git clone --branch release-3.2.10 https://github.com/libsdl-org/SDL.git
 cd SDL
@@ -187,11 +198,22 @@ sudo cmake --install build
 sudo ldconfig
 ```
 
-The two packages most commonly missing on a fresh Ubuntu box are
-`wayland-protocols` (separate from `libwayland-dev`) and
-`libxkbcommon-x11-dev` (different package from `libxkbcommon-dev`).
-If `cmake` complains it can't find X11 or Wayland despite `libx11-dev`
-being installed, those two are usually the gap.
+If you only need windowing / input (no IME, no audio — fine for
+Skald-only use, single-locale apps), the bare-minimum dep set is:
+
+```bash
+sudo apt install \
+    build-essential cmake pkg-config \
+    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+    libxi-dev libxkbcommon-dev libxkbcommon-x11-dev \
+    libwayland-dev wayland-protocols libdecor-0-dev libdbus-1-dev
+```
+
+The two packages most commonly missing on a fresh Ubuntu box (and
+the usual cause of "could not find X11 or Wayland") are
+**`wayland-protocols`** (separate from `libwayland-dev`) and
+**`libxkbcommon-x11-dev`** (different package from
+`libxkbcommon-dev`).
 
 `release-3.2.10` mirrors what's in current stable distros; bump to
 `release-3.4.2` if you want to match Odin's `vendor:sdl3` bindings
