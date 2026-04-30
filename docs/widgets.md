@@ -391,8 +391,9 @@ hyperlink-styled actions, etc.
 text_input(ctx, value: string, on_change: proc(new: string) -> Msg,
            placeholder = "", width = 0, height = 0,
            disabled = false, multiline = false, wrap = false,
-           password = false, search = false,
-           invalid = false, error = "")
+           password = false,
+           clear_button = false, escape_clears = false,
+           invalid = false, error = "", max_chars = 0)
 ```
 
 Editable text field. Single-line by default; set `multiline = true`
@@ -400,10 +401,17 @@ for a text area (and `wrap = true` if you want soft-wrap). Built-in:
 selection, clipboard (Ctrl+C/X/V), Ctrl-A select all, undo/redo
 (Ctrl+Z/Y), cursor navigation, IME.
 
-`password = true` masks input and suppresses copy/cut. `search = true`
-adds a magnifier glyph and defaults the placeholder to "Search."
-`invalid = true` + `error = "..."` renders the red-underline error
-affordance.
+`password = true` masks input and suppresses copy/cut. `clear_button =
+true` adds a `×` button at the right edge that clears the value when
+the field holds text. `escape_clears = true` makes the first Escape
+empty the field and the second blur — the GTK / macOS search-field
+convention. `invalid = true` + `error = "..."` renders the red-
+underline error affordance. `max_chars` caps the buffer in runes (0
+means no limit).
+
+For a search box with all of these affordances *plus* an Enter-submit
+callback, use `search_field` — it sets `clear_button` and
+`escape_clears` for you and wires Enter.
 
 `on_change` is called with the new value on every edit — you clone
 the string onto state if you want to keep it (see `gotchas.md`).
