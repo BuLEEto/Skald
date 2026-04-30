@@ -8,10 +8,22 @@ tree is rebuilt from scratch every frame. That's the whole deal.
 
 ## Get it running
 
-You'll need Odin on your PATH, SDL3 installed through your OS package
-manager (bundled with Odin on Windows), and a Vulkan loader (ships with
-`libvulkan1` on Linux, recent GPU drivers on Windows, or the LunarG
-Vulkan SDK — which includes MoltenVK — on macOS). Then:
+You'll need:
+
+- **Odin** on your PATH.
+- **SDL3** — `apt install libsdl3-0` on Debian 13+ / Devuan / Fedora 40+ / Arch.
+  **Ubuntu 24.04 LTS doesn't ship SDL3 yet** — see [`PLATFORMS.md`](../PLATFORMS.md)
+  for a from-source recipe. On Windows, Odin's `vendor:sdl3` ships
+  `SDL3.dll` and `build.bat` copies it next to the exe automatically.
+  On macOS, `brew install sdl3`.
+- **Vulkan loader + driver** — `libvulkan1` + `mesa-vulkan-drivers` on
+  Linux, ships with recent GPU drivers on Windows, LunarG Vulkan SDK
+  (which includes MoltenVK) on macOS.
+- First-time on Linux only: `make -C $ODIN_ROOT/vendor/stb/src` once
+  per machine. Skald's bundled fontstash links against `stb_truetype.a`
+  which Odin ships as C source.
+
+Then:
 
 ```bash
 git clone <repo> skald && cd skald
@@ -27,8 +39,8 @@ On Windows, open "x64 Native Tools Command Prompt" before `build.bat`
 
 ## What you're looking at
 
-Open `examples/07_counter/main.odin`. It's 72 lines and every Skald app
-follows the same shape:
+Open `examples/07_counter/main.odin`. It's around 70 lines and every Skald
+app follows the same shape:
 
 ```odin
 State :: struct { count: int }
@@ -198,5 +210,11 @@ it next to your `.exe` automatically.
   will trip you up if you haven't heard about them yet.
 - **[`widgets.md`](widgets.md)** is the widget menu — signatures,
   what they do, when to reach for each one.
+- **[`widget_choice.md`](widget_choice.md)** is a short decision tree
+  for "which widget should I reach for here?" — useful when you're
+  not sure whether you want `select` vs `combobox` vs `radio_group`.
+- **[`distributing.md`](distributing.md)** covers shipping a Skald
+  app to end users — bundling SDL3 next to the binary on Linux, app
+  bundles on macOS, what each platform's user actually needs.
 - **`odin doc ./skald`** dumps every public proc if you want the raw
   reference.
