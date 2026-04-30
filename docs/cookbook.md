@@ -1253,9 +1253,11 @@ to `* Untitled`.
 ### Debug inspector (F12)
 
 No setup needed. Build with `-debug` (`odin build -debug`) and press
-F12 to toggle a floating panel showing FPS, widget counts, focus
-state, and the hovered widget's kind + rect. Press P to pin the
-current hover so you can move the cursor without losing the readout.
+F12 to toggle a floating panel showing the hovered widget's id, kind,
+and computed rect, plus the currently-focused widget. The hovered
+widget gets outlined on screen so you can match the readout to the
+thing you're pointing at. Press P to pin the current hover so you
+can move the cursor without losing the readout.
 
 Release builds (`odin build -o:speed`) strip the inspector entirely
 via `when ODIN_DEBUG` — users can't trip it.

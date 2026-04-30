@@ -56,8 +56,7 @@ Conclusions:
   +852 KB over frames 1–600 (warmup), +200 KB over frames 600–3 000
   (~85 B/frame), +100 KB over frames 3 000–30 000 (~4 B/frame — OS
   page-churn noise). Not a per-frame leak; allocator/OS resident-set
-  behaviour stabilising. An earlier wgpu-rs backend had a ~2 KB/frame
-  *real* leak; the Vulkan migration closed that.
+  behaviour stabilising.
 
 ## Test machines
 
