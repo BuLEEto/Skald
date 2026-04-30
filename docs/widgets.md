@@ -207,6 +207,12 @@ then re-enters with the real size. Used internally by `scroll`,
 `virtual_list`, `table` to implement "zero on an axis = fill the
 assigned slot." Apps rarely call `sized` directly.
 
+`min_w` / `min_h` are minimum width / height in pixels — if the
+parent's assigned slot is smaller than these on either axis, the
+deferred `build` is skipped and a zero-size spacer is rendered
+instead. Stops fill-mode widgets from re-deferring infinitely when
+they get squeezed to nothing.
+
 ### clip
 
 ```odin
@@ -225,8 +231,9 @@ scroll(ctx, size: [2]f32, content: View, wheel_step = 40,
 
 Clipped viewport with an autohiding scrollbar. Zero on an axis means
 "fill what my flex parent gives me"; pass real numbers to fix the
-viewport size. `focusable = true` lets the viewport take keyboard
-focus for PageUp/PageDown/arrow-key scrolling.
+viewport size. `wheel_step` is the pixel distance one wheel notch
+scrolls. `focusable = true` lets the viewport take keyboard focus
+for PageUp/PageDown/arrow-key scrolling.
 
 ### split
 
@@ -557,7 +564,10 @@ slider(ctx, value: f32, on_change: proc(new: f32) -> Msg,
 ```
 
 Horizontal draggable value control. `step = 0` gives continuous
-values; any positive step quantizes.
+values; any positive step quantizes (e.g. `step = 0.1` snaps to
+tenths). `track_h` is the height of the track in pixels;
+`thumb_r` is the radius of the round thumb. Bump those if your
+density needs a chunkier slider.
 
 ### progress
 
