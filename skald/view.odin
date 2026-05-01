@@ -9491,6 +9491,16 @@ virtual_list :: proc(
 	// so we don't need to branch on first == 0 / last == total.
 	rows := make([dynamic]View, 0, (last - first) + 2, context.temp_allocator)
 	append(&rows, spacer(f32(first) * item_height))
+
+	// Debug-only: warn the dev if `row_key` returns duplicate values
+	// across visible rows. Same key → same widget scope → state
+	// collisions inside the row (button hover/press, text_input edit
+	// buffer, checkbox checked, etc.). Stripped from release builds.
+	when ODIN_DEBUG {
+		seen_keys := make(map[u64]int, (last - first), context.temp_allocator)
+		warned    := false
+	}
+
 	for i in first..<last {
 		// Per-row id scope built from the caller-supplied `row_key`
 		// rather than the row index. That way widget state (checked,
@@ -9509,6 +9519,15 @@ virtual_list :: proc(
 		// real key proc.
 		k: u64 = u64(i)
 		if row_key != nil { k = row_key(state, i) }
+		when ODIN_DEBUG {
+			if first_i, dup := seen_keys[k]; dup && !warned {
+				fmt.eprintfln("[skald] virtual_list id=%v: row_key returned duplicate value 0x%X at rows %d and %d — widget state will collide between these rows. Make row_key unique per row (e.g. include a category code, or `return u64(i)` if reorder isn't a concern).",
+					id, k, first_i, i)
+				warned = true
+			} else if !dup {
+				seen_keys[k] = i
+			}
+		}
 		scope := u64(widget_make_sub_id(id, k))
 		saved := widget_scope_push(ctx, scope)
 		append(&rows, row_builder(ctx, state, i))
@@ -9698,12 +9717,25 @@ virtual_list_variable :: proc(
 	// use the measured values. Scope auto-ids per row so hover/press
 	// state rides the index, not the visible-window slot.
 	built := make([dynamic]View, 0, last - first, context.temp_allocator)
+	when ODIN_DEBUG {
+		seen_keys := make(map[u64]int, (last - first), context.temp_allocator)
+		warned    := false
+	}
 	for i in first..<last {
 		// Caller-supplied stable key so state follows items through
 		// reorders / filters. See the equivalent comment in
 		// virtual_list. Nil-safe fallback to index keying.
 		k: u64 = u64(i)
 		if row_key != nil { k = row_key(state, i) }
+		when ODIN_DEBUG {
+			if first_i, dup := seen_keys[k]; dup && !warned {
+				fmt.eprintfln("[skald] virtual_list_variable id=%v: row_key returned duplicate value 0x%X at rows %d and %d — widget state will collide between these rows. Make row_key unique per row.",
+					id, k, first_i, i)
+				warned = true
+			} else if !dup {
+				seen_keys[k] = i
+			}
+		}
 		scope   := u64(widget_make_sub_id(id, k))
 		saved   := widget_scope_push(ctx, scope)
 		v  := row_builder(ctx, state, i)
@@ -10380,6 +10412,10 @@ table :: proc(
 
 	body_rows := make([dynamic]View, 0, (last - first) + 2, context.temp_allocator)
 	append(&body_rows, spacer(f32(first) * item_height))
+	when ODIN_DEBUG {
+		seen_keys := make(map[u64]int, (last - first), context.temp_allocator)
+		warned    := false
+	}
 	for i in first..<last {
 		// Per-row id scope built off the caller-supplied `row_key` so
 		// widget state inside cells (and the row-click zone below)
@@ -10388,6 +10424,15 @@ table :: proc(
 		// fallback to index keying.
 		k: u64 = u64(i)
 		if row_key != nil { k = row_key(state, i) }
+		when ODIN_DEBUG {
+			if first_i, dup := seen_keys[k]; dup && !warned {
+				fmt.eprintfln("[skald] table id=%v: row_key returned duplicate value 0x%X at rows %d and %d — widget state inside cells will collide between these rows. Make row_key unique per row (e.g. include a discriminator field, or `return u64(i)` if your data isn't reordered).",
+					id, k, first_i, i)
+				warned = true
+			} else if !dup {
+				seen_keys[k] = i
+			}
+		}
 		scope   := u64(widget_make_sub_id(body_id, k))
 		saved   := widget_scope_push(ctx, scope)
 		cells := row_builder(ctx, state, i)

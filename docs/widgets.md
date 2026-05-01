@@ -688,11 +688,23 @@ it to produce the row view. Zero on an axis = fill (same as `scroll`).
 the item at index `i`. Widget state inside cells (focus, text buffer,
 checked, expanded) is scoped by this key, so state follows the
 *item* through reorders / filters / sort changes rather than
-following the row position. For synthetic lists that never reorder,
-just `proc(s: ^State, i: int) -> u64 { return u64(i) }`. For a real
-data set, return the item's database id or hash of a stable string.
-A nil `row_key` safely falls back to index-keying — useful if you're
-roughing something out, but unstable under reorder.
+following the row position.
+
+**The returned value must be unique across the visible rows** — two
+rows with the same key share one widget scope, which means clicks,
+hover, and edit buffers collide between them. `-debug` builds print
+a console warning the first time they detect a duplicate
+(`[skald] virtual_list id=…: row_key returned duplicate value 0x… at
+rows N and M`); release builds silently mis-behave, so don't ignore
+the warning.
+
+For synthetic lists that never reorder, the simplest correct key is
+the row index itself: `proc(s: ^State, i: int) -> u64 { return u64(i) }`.
+For a real data set, return the item's database id — or, if your data
+has natural duplicates (the same item appearing in two categories,
+say), composite the discriminator into the key
+(`(u64(category_code) << 32) | u64(item_id)`).
+A nil `row_key` safely falls back to index-keying.
 
 Set `variable_height = true` with `estimated_height` as a seed when
 rows differ in height; the list measures each row on first render and
