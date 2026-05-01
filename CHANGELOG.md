@@ -4,6 +4,52 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## 1.0.0-rc3 — 2026-05-02
+
+Transparent windows actually work now on Linux X11. The
+`.TRANSPARENT` flag was advisory before — it requested a transparent
+swapchain but three layers below that quietly defeated it.
+
+### Fixed
+
+- **Transparent X11 windows are now genuinely transparent.** Three
+  Skald-side gaps had to close together for the flag to take effect:
+
+  1. SDL3 ≥ 3.2 sets `_NET_WM_BYPASS_COMPOSITOR = 1` on every X11
+     window by default (game-engine assumption). xfwm4 caches the
+     bypass at map-time and refuses to composite the window
+     thereafter. Skald now sets
+     `SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR = "0"` pre-Init
+     so the atom stays unset and the compositor decides.
+  2. The run loop was clearing the swapchain to `th.color.bg`
+     (opaque) every frame regardless of `.TRANSPARENT`. The card's
+     view tree painted on top, but un-painted areas (rounded-card
+     corners, gaps) stayed at the clear's alpha=1. The Window struct
+     now tracks the `.TRANSPARENT` flag and the run loop zeros the
+     clear's alpha when it's set.
+  3. SDL3 creates the X11 window before Vulkan picks a swapchain
+     format, so the visual chosen at creation time determines
+     whether the framebuffer has an alpha channel. SDL3 handles this
+     correctly for OpenGL but not Vulkan — the Vulkan path defaults
+     to a 24-bit RGB visual, the X window has Depth: 24, and any
+     framebuffer alpha is silently discarded at window-pixel level.
+     Skald now enumerates X11 visuals via `XGetVisualInfo`, finds
+     a 32-bit ARGB one, and feeds the ID to SDL3 via
+     `SDL_HINT_VIDEO_X11_WINDOW_VISUALID` before window creation
+     when `.TRANSPARENT` is requested.
+
+  Diagnosed and verified building Orin Spotlight on xfwm4. After all
+  three fixes: `xwininfo -id <wid>` reports Depth: 32 / Visual Class:
+  TrueColor and translucent cards composite over the desktop as
+  expected.
+
+### Notes
+
+- Wayland, Windows, and macOS need none of the above — transparent
+  Vulkan windows work out of the box on those platforms. The
+  `pick_argb_visual_for_x11` helper is a no-op outside X11; the
+  bypass-compositor and clear-alpha fixes are harmless everywhere.
+
 ## 1.0.0-rc2 — 2026-05-01
 
 Shake-down release after a week of cross-platform dogfood (Devuan,
