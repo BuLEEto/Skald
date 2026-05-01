@@ -4,6 +4,87 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## 1.0.0-rc2 — 2026-05-01
+
+Shake-down release after a week of cross-platform dogfood (Devuan,
+Pop!_OS COSMIC, Ubuntu 24.04, Windows). Real-app testing on
+ERSaveBackup, intralabels, and a Linux ER Trainer app surfaced a
+handful of latent bugs and one usability footgun.
+
+### Changed (small breaking)
+
+- `text_input(search = true)` flag removed in favour of two
+  orthogonal flags: `clear_button` and `escape_clears`. The old
+  bundled flag conflated four behaviours (placeholder default,
+  force single-line, clear-X, escape-to-clear) and overlapped with
+  the dedicated `search_field` widget — both LLMs and humans editing
+  app code grabbed `text_input(search=true)` when they meant
+  `search_field` (which has the Enter-submit wiring). Apps that
+  used the flag have a one-line swap: pass `clear_button = true,
+  escape_clears = true` instead, or switch to `search_field` if you
+  also want Enter-to-submit.
+
+### Fixed
+
+- **Table row / sort-header / resize-handle clicks** now pass
+  through `rect_hovered` so they respect modal-rect and overlay
+  gates. Previously a click on a dialog button positioned over a
+  table also fired the row underneath.
+- **`select` / `menu` / `context_menu` no longer flash open and
+  close** when used inside a dialog. The popover's option-row
+  buttons consumed parent auto-id slots, shifting the dialog's id
+  on open frames; the dialog's `widget_get` returned a fresh state
+  on each click and its open-transition sweep killed the just-
+  toggled popover. Option rows now build inside a per-widget
+  `widget_scope_push` so their auto-ids stay isolated.
+- **`rect_hovered`** loosened: a widget whose rect spills past the
+  modal card is still reachable when contained within a registered
+  overlay (popover from inside the dialog). Without this, options
+  below the dialog card were dead-clickable.
+- **File dialogs default to `$HOME` on Linux / macOS** (and
+  `%USERPROFILE%` on Windows) when the app doesn't pass
+  `default_location`. Previously some Linux portals defaulted to
+  filesystem root, which read as a confusing first-time UX.
+
+### Added
+
+- **Debug-only `row_key` collision warning**: `virtual_list`,
+  `virtual_list_variable`, and `table` print a one-line stderr
+  warning the first time a duplicate `row_key` is detected during
+  iteration, naming both colliding row indices. Stripped from
+  release builds.
+- **`docs/distributing.md`**: end-user runtime requirements +
+  bundling pattern (patchelf RPATH on Linux, app bundles on macOS).
+- **`docs/widget_choice.md`**: short decision tree for "which
+  widget should I reach for here?"
+- **Layout-basics intro** at the top of `widgets.md`'s Layout
+  section — the four knobs every container takes, why
+  `cross_align = .Stretch` is often what new devs need.
+- **Cross_align gotcha** in `gotchas.md` for the "my child sticks
+  to the top-left" symptom.
+- **File-dialog filter limitation** documented in `gotchas.md` —
+  on bleeding-edge Linux desktops (Pop!_OS COSMIC verified) the
+  filtered file-dialog code path can silently drop or crash; the
+  workaround is to pass nil filters.
+
+### Changed (UX)
+
+- **F12 inspector** slimmed to the hover-readout panel only (id,
+  kind, computed rect, focused widget). The previous FPS / RSS /
+  widget-count metrics were misleading under lazy redraw ("0 fps"
+  read as "frozen") and weren't load-bearing.
+
+### Docs
+
+- README: hero GIF of `00_gallery` for stop-the-scroll first
+  impression.
+- `getting_started.md`: explicit Ubuntu 24.04 LTS steps (build SDL3
+  from source) and the one-time Odin `vendor:stb` step.
+- `PLATFORMS.md`: full upstream SDL3 dep set (audio + IME) with
+  the bare-minimum subset alongside.
+- Several inline parameter explanations across `widgets.md`
+  (`track_h`, `thumb_r`, `min_w`, `min_h`, `wheel_step`).
+
 ## 1.0.0-rc1 — 2026-04-29
 
 First release candidate. The API surface here is what 1.0 will ship —
