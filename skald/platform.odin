@@ -104,6 +104,18 @@ window_open :: proc(title: string, size: Size, initial: Window_State = {}, extra
 		flags |= extra_flags
 	}
 
+	// Transparency on X11 requires the window to be created with a 32-bit
+	// ARGB visual. SDL3 handles this automatically for OpenGL but not
+	// for Vulkan — the Vulkan code path defaults to a 24-bit RGB visual
+	// even with `.TRANSPARENT` set, so any framebuffer alpha is silently
+	// discarded at window-pixel level. We pick an ARGB visual ourselves
+	// and feed its ID to SDL3 as a hint right before window creation.
+	// No-op on Wayland / Windows / macOS, where transparent Vulkan
+	// windows work out of the box.
+	if .TRANSPARENT in flags {
+		pick_argb_visual_for_x11()
+	}
+
 	ctitle := strings.clone_to_cstring(title, context.temp_allocator)
 	handle := sdl3.CreateWindow(ctitle, open_w, open_h, flags)
 	if handle == nil {
