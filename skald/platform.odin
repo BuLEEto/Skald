@@ -71,6 +71,19 @@ Window :: struct {
 // DPI scaling contract both require them. Zero `extra_flags` preserves
 // the default behavior.
 window_open :: proc(title: string, size: Size, initial: Window_State = {}, extra_flags: sdl3.WindowFlags = {}) -> (w: Window, ok: bool) {
+	// Tell SDL3 not to set `_NET_WM_BYPASS_COMPOSITOR = 1` on every X11
+	// window we create. The default is "1" (bypass) because SDL is built
+	// for fullscreen games, where bypassing the compositor avoids
+	// vblank-coupled latency. For a GUI framework that's the wrong
+	// default — a window asking the compositor to skip it can't be
+	// translucent (xfwm4 caches the bypass decision at map-time and
+	// renders the window opaque from that point on). Setting the hint to
+	// "0" leaves the property unset, which means "no preference" → the
+	// compositor decides based on visual flags (RGBA visual etc.) and
+	// transparent windows actually composite. Must run BEFORE
+	// `sdl3.Init` because the hint is read once per video-driver init.
+	sdl3.SetHint(sdl3.HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0")
+
 	if !sdl3.Init({.VIDEO}) {
 		fmt.eprintfln("skald: SDL.Init failed: %s", sdl3.GetError())
 		return
