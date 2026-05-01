@@ -37,6 +37,7 @@ Window :: struct {
 	size_px:      [2]u32, // backing framebuffer size in physical pixels
 	size_logical: [2]u32, // window size in logical pixels (what the app draws into)
 	scale:        f32,    // size_px / size_logical — OS display scale factor
+	transparent:  bool,   // .TRANSPARENT was in the window flags — affects clear-color alpha
 	should_close: bool,   // set true when the user closes the window
 	resized:      bool,   // set true on the frame a resize occurred
 
@@ -121,7 +122,7 @@ window_open :: proc(title: string, size: Size, initial: Window_State = {}, extra
 		sdl3.MaximizeWindow(handle)
 	}
 
-	w = Window{handle = handle}
+	w = Window{handle = handle, transparent = .TRANSPARENT in flags}
 	window_refresh_size(&w)
 	ok = true
 	return

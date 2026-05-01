@@ -419,7 +419,9 @@ drain_window_ops :: proc(
 			// renderer's clear-on-load plus its end-of-frame
 			// transition-to-PRESENT_SRC do the work.
 			r.cur = target
-			if frame_begin(r, target.platform, open_clear) {
+			oc := open_clear
+			if target.platform.transparent { oc.a = 0 }
+			if frame_begin(r, target.platform, oc) {
 				frame_end(r)
 			}
 
@@ -888,7 +890,14 @@ run :: proc(app: App($State, $Msg)) {
 			// The visible effect is one frame of lag between a *view* msg
 			// and the resulting state change — a button click updates state
 			// for the *next* frame's view call.
-			if frame_begin(&r, t_w, th.color.bg) {
+			// Transparent windows clear with alpha=0 so the parts of the
+			// view tree that don't paint (rounded-card corners, gaps below
+			// content) composite through to the desktop. Without this the
+			// theme's opaque bg fills the swapchain on every frame and the
+			// .TRANSPARENT flag does nothing visible.
+			clear_color := th.color.bg
+			if t_w.transparent { clear_color.a = 0 }
+			if frame_begin(&r, t_w, clear_color) {
 				ctx := Ctx(Msg){
 					theme      = &th,
 					labels     = &lbls,
