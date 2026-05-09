@@ -7196,9 +7196,10 @@ _color_picker_impl :: proc(
 	border_c := th.color.border
 	if focused  { border_c = th.color.primary }
 	// Checkerboard would sit here if we drew alpha — skipped for MVP.
+	SWATCH_SIZE:: f32(20)
 	swatch_box := col(
-		rect({20, 20}, value, th.radius.sm),
-		width = 20, height = 20,
+		rect({SWATCH_SIZE, SWATCH_SIZE}, value, th.radius.sm),
+		width = SWATCH_SIZE, height = SWATCH_SIZE,
 	)
 	trigger_label := text(fmt.tprintf("#%s", hex), th.color.fg, th.font.size_md)
 	// Trailing caret (same ▼ glyph used by collapsibles / section toggles
@@ -7216,7 +7217,7 @@ _color_picker_impl :: proc(
 	)
 	trigger_view := col(
 		trigger_inner,
-		height      = th.font.size_md + 2*th.spacing.sm,
+		height      = max(th.font.size_md, SWATCH_SIZE) + 2*th.spacing.sm,
 		width       = width,
 		padding     = th.spacing.sm,
 		bg          = th.color.surface,
