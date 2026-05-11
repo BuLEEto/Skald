@@ -4,6 +4,30 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## Unreleased
+
+### Added
+
+- **`chat_input` widget** — multi-line composer with the chat-app key
+  contract: **Enter** submits, **Shift+Enter** inserts a newline,
+  **Ctrl+Enter** also submits. Wraps `text_input(multiline = true,
+  wrap = true)` and intercepts Enter before the underlying widget
+  treats it as a newline insertion. Auto-grows from one line up to
+  `max_lines` (default 8), then scrolls internally. Empty values
+  short-circuit so submit is a no-op on a blank composer. See
+  `examples/43_chat_input` for the contract in action.
+
+### Fixed
+
+- **`text()` now honours embedded line breaks in the no-wrap path.**
+  Before: `text("a\nb", color)` (without `max_width`) rendered the
+  `\n` as a missing-glyph tofu on one row. After: it renders as two
+  stacked rows. The `max_width` path already did this; this just
+  closes the inconsistency. Cross-platform line endings (`\r\n`,
+  `\r`, `\n`) all collapse to a single break, so pasted Windows
+  text doesn't leave stray `\r` glyphs behind. `wrap_text` and a
+  new `split_lines` helper share the same line-break logic.
+
 ## 1.0.0-rc3 — 2026-05-02
 
 Transparent windows actually work now on Linux X11. The

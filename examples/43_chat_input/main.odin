@@ -68,20 +68,8 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	for msg, i in s.messages {
 		bg := th.color.surface
 		if i % 2 == 1 { bg = th.color.elevated }
-
-		// Split on '\n' so multi-line submissions render as multiple
-		// rows of text rather than rendering the literal newline byte
-		// as a missing-glyph tofu. This is example-only — the chat_input
-		// itself stores newlines correctly.
-		lines := strings.split(msg, "\n", context.temp_allocator)
-		line_views := make([dynamic]skald.View, 0, len(lines), context.temp_allocator)
-		for line in lines {
-			append(&line_views,
-				skald.text(line, th.color.fg, th.font.size_md))
-		}
-
 		append(&rows, skald.row(
-			skald.col(..line_views[:], spacing = 0, cross_align = .Start),
+			skald.text(msg, th.color.fg, th.font.size_md),
 			width   = 600,
 			padding = th.spacing.sm,
 			bg      = bg,

@@ -263,6 +263,12 @@ Draws a text run. `size` defaults to 14 px. Pass `max_width` to enable
 word-wrap at that pixel width. `font` is the handle from `add_font`;
 `0` means the renderer's default (Inter).
 
+Embedded line breaks in `str` (`\n`, `\r\n`, or `\r`) produce hard
+breaks — the widget renders as multiple stacked lines and `view_size`
+reports the combined height. This means user-supplied multi-line
+strings (chat messages, log lines, pasted Windows content) render
+correctly without any caller-side splitting.
+
 ### rect
 
 ```odin

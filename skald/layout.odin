@@ -1,6 +1,7 @@
 package skald
 
 import "core:math"
+import "core:strings"
 
 // layout.odin is Phase 4's constraint-driven layout walker. Every View has
 // two sizes: its *intrinsic* size (what the node would take if unconstrained)
@@ -89,6 +90,21 @@ view_size :: proc(r: ^Renderer, v: View) -> [2]f32 {
 			lines := wrap_text(r, vv.str, vv.max_width, vv.size, vv.font)
 			_, lh := measure_text(r, "", vv.size, vv.font)
 			return {vv.max_width, lh * f32(len(lines))}
+		}
+		// No-wrap path. Embedded line breaks (\n, \r\n, \r) still
+		// produce multiple visible rows so user-supplied multi-line
+		// text doesn't render as missing-glyph tofu. The strings scan
+		// is cheap relative to fontstash shaping and avoids allocating
+		// a slice for the common single-line case.
+		if strings.contains_any(vv.str, "\n\r") {
+			lines := split_lines(vv.str)
+			_, lh := measure_text(r, "", vv.size, vv.font)
+			max_w: f32
+			for line in lines {
+				w, _ := measure_text(r, line, vv.size, vv.font)
+				if w > max_w { max_w = w }
+			}
+			return {max_w, lh * f32(len(lines))}
 		}
 		w, h := measure_text(r, vv.str, vv.size, vv.font)
 		return {w, h}
@@ -311,6 +327,14 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		ascent := text_ascent(r, vv.size, vv.font)
 		if vv.max_width > 0 {
 			lines := wrap_text(r, vv.str, vv.max_width, vv.size, vv.font)
+			_, lh := measure_text(r, "", vv.size, vv.font)
+			y := origin.y
+			for line in lines {
+				draw_text(r, line, origin.x, y + ascent, vv.color, vv.size, vv.font)
+				y += lh
+			}
+		} else if strings.contains_any(vv.str, "\n\r") {
+			lines := split_lines(vv.str)
 			_, lh := measure_text(r, "", vv.size, vv.font)
 			y := origin.y
 			for line in lines {

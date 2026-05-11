@@ -404,6 +404,50 @@ utf8_step :: proc(s: string, i: int) -> int {
 	return 4
 }
 
+// split_lines splits `s` on cross-platform line breaks. Handles `\r\n`
+// (Windows), bare `\r` (classic Mac), and `\n` (Unix). Returned slice
+// and its backing string-views all live in context.temp_allocator —
+// valid for the rest of the frame, not across frames. An empty input
+// returns a single empty line. Convention matches `wrap_text`: a
+// trailing newline does NOT produce a trailing empty line (rendering
+// "a\n" as one row of "a" matches what most UI text engines do).
+split_lines :: proc(s: string) -> []string {
+	lines: [dynamic]string
+	lines.allocator = context.temp_allocator
+
+	if len(s) == 0 {
+		append(&lines, "")
+		return lines[:]
+	}
+
+	line_start := 0
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		if ch == '\n' {
+			append(&lines, s[line_start:i])
+			i += 1
+			line_start = i
+		} else if ch == '\r' {
+			append(&lines, s[line_start:i])
+			i += 1
+			// Swallow the \n of a \r\n pair so the empty line between
+			// them isn't double-counted.
+			if i < len(s) && s[i] == '\n' { i += 1 }
+			line_start = i
+		} else {
+			i += 1
+		}
+	}
+	if line_start < len(s) {
+		append(&lines, s[line_start:])
+	}
+	if len(lines) == 0 {
+		append(&lines, "")
+	}
+	return lines[:]
+}
+
 // wrap_text breaks `text` into lines so no line's measured width exceeds
 // `max_width`. The break algorithm is word-boundary (single spaces),
 // matching what a typical desktop paragraph engine does for UI copy.
@@ -411,9 +455,9 @@ utf8_step :: proc(s: string, i: int) -> int {
 // — this isn't a typesetter, it's a UI label, and hyphenation is not worth
 // the complexity for the common case.
 //
-// Existing newlines in `text` force a break. Returned slice and its
-// backing strings all live in context.temp_allocator — valid for the rest
-// of the frame, not across frames.
+// Existing newlines in `text` (any of `\n`, `\r\n`, `\r`) force a break.
+// Returned slice and its backing strings all live in context.temp_allocator
+// — valid for the rest of the frame, not across frames.
 wrap_text :: proc(
 	r:         ^Renderer,
 	text:      string,
@@ -421,9 +465,13 @@ wrap_text :: proc(
 	size:      f32  = 14,
 	font:      Font = 0,
 ) -> []string {
-	if max_width <= 0 || len(text) == 0 {
+	if max_width <= 0 {
+		// No-wrap mode: just split on line breaks and return.
+		return split_lines(text)
+	}
+	if len(text) == 0 {
 		out := make([]string, 1, context.temp_allocator)
-		out[0] = text
+		out[0] = ""
 		return out
 	}
 
@@ -445,17 +493,18 @@ wrap_text :: proc(
 	lines: [dynamic]string
 	lines.allocator = context.temp_allocator
 
-	// Walk the source one hard-break paragraph at a time so embedded \n
-	// in the input still force a line break in the output.
-	line_start := 0
-	i := 0
-	for i <= len(text) {
-		hard_break := i == len(text) || text[i] == '\n'
-		if !hard_break { i += 1; continue }
-
-		para := text[line_start:i]
-		// Word-wrap this paragraph.
+	// Honour hard breaks first (cross-platform: \n, \r\n, \r), then
+	// word-wrap each paragraph to fit max_width.
+	paragraphs := split_lines(text)
+	for para in paragraphs {
+		if len(para) == 0 {
+			// Preserve empty paragraphs so vertical spacing in the
+			// source survives.
+			append(&lines, "")
+			continue
+		}
 		cursor := 0
+		emitted_any := false
 		for cursor < len(para) {
 			// Skip any leading spaces at the line start — callers
 			// rarely want a line that begins with whitespace.
@@ -488,19 +537,11 @@ wrap_text :: proc(
 				}
 			}
 			append(&lines, para[line_begin:last_fit_end])
+			emitted_any = true
 		}
-		// Preserve empty paragraphs from consecutive newlines so vertical
-		// spacing in the source survives.
-		if len(para) == 0 && hard_break && i < len(text) {
-			append(&lines, "")
-		}
-
-		if i < len(text) {
-			i += 1 // skip the \n
-			line_start = i
-		} else {
-			break
-		}
+		// A paragraph that was nothing but spaces still represents one
+		// visible row in the source — keep its vertical slot.
+		if !emitted_any { append(&lines, "") }
 	}
 
 	if len(lines) == 0 {
