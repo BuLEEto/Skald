@@ -4,7 +4,22 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## Unreleased
+## 1.0.0-rc4 — 2026-05-12
+
+Two new text widgets, a handful of correctness fixes uncovered by
+external app integration, and a perf cliff smoothed out. `rich_text`
++ `rich_text_links` cover markdown-style inline emphasis (bold,
+italic, inline-code chips, clickable links) in a single wrapped
+paragraph — the missing piece for any chat or docs surface that
+wants more than uniform text. `chat_input` provides the
+Enter-submits / Shift-Enter-newlines composer pattern. Below the
+widgets, several rough edges shipped in rc1-rc3 got polished:
+combobox dropdowns now scroll past their default 8-row cap and
+auto-grow to fit long labels, `text_input` normalises Windows
+line endings on both paste and app-value boundaries, scrolling
+through long chat content no longer flickers, and the wrap path
+for long pasted strings is now O(1) for re-measurements within a
+frame.
 
 ### Added
 
