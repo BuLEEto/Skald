@@ -67,6 +67,10 @@ TIMEZONES := [?]string{
 	"Asia/Kolkata",
 	"Australia/Sydney",
 	"Pacific/Auckland",
+	// Last two are deliberately wider than the trigger so the
+	// dropdown's auto-grow-to-widest-label path is exercised.
+	"Antarctica/DumontDUrville (UTC+10)",
+	"America/Argentina/Buenos_Aires (UTC-3)",
 }
 
 // A long string with literal \r\n separators, mimicking text loaded

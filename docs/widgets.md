@@ -572,6 +572,15 @@ silently dropped. Default 8 fits comfortably under most triggers;
 bump it for known-large catalogues (model pickers, country lists)
 or trim it for tight layouts.
 
+The dropdown auto-grows wider than the trigger when a label
+exceeds the trigger's width, so long entries (e.g. fully-qualified
+identifiers, file paths) don't clip. It's clamped to the
+framebuffer width so it can never paint off-screen.
+
+Opening the dropdown highlights the currently-selected value and
+scrolls the viewport to it — the user sees "where am I" the moment
+the popover appears. First-time / unmatched values land at row 0.
+
 Escape cancels (blurs without committing). Clicking outside the
 trigger or popover also dismisses.
 

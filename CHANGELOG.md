@@ -17,18 +17,33 @@ bug fixes bump the patch.
   short-circuit so submit is a no-op on a blank composer. See
   `examples/43_chat_input` for the contract in action.
 
-### Added
+- **`combobox` dropdown overhaul: `max_rows`, scrollable overflow,
+  auto-grow width, open-with-current-selection.** The dropdown
+  previously hard-capped at 8 visible rows and silently dropped
+  anything past index 7 — visible only via filter-as-you-type, which
+  most users wouldn't discover. Five changes:
+  1. Cap is now a parameter (`max_rows: int = 8`, same visual default).
+  2. Options beyond the cap are reachable via mouse wheel, scrollbar,
+     or keyboard nav (Up/Down auto-scrolls the viewport to keep the
+     highlighted row visible).
+  3. Dropdown auto-grows wider than the trigger when an option's
+     label exceeds the trigger width, so long labels no longer clip.
+     Clamped to the framebuffer width so a pathologically long label
+     can't paint off-screen.
+  4. Opens with the currently-selected value highlighted (and the
+     viewport scrolled to it), matching native combobox / popup-
+     button behaviour — first-time / unmatched value still lands at
+     row 0.
+  5. Several interaction fixes that fell out: scrollbar grab works
+     (mouse_pressed consume deferred until after the scroll widget
+     builds), row hover/commit suppressed during scrollbar drag (so
+     a drag-release-on-row doesn't pick the row), and the keyboard
+     auto-scroll only fires on a real highlight change so wheel /
+     drag scrolling isn't snapped back to the highlight.
 
-- **`combobox` `max_rows` parameter + scrollable overflow.** The
-  dropdown previously hard-capped at 8 visible rows and silently
-  dropped anything past index 7 — visible only via filter-as-you-
-  type, which most users wouldn't discover. Two changes: the cap is
-  now a parameter (`max_rows: int = 8`, same visual default), and
-  options beyond it are reachable via mouse wheel, scrollbar, or
-  keyboard nav (Up/Down auto-scrolls the viewport to keep the
-  highlighted row visible). Reset to top on open and on filter-
-  driven highlight reset. Reported via the cross-agent thread by an
-  app with a 15-entry model picker.
+  Reported via the cross-agent thread by an app with a 15-entry
+  model picker; subsequent reports caught the scrollbar grab, text
+  overlap, and drag side-effect issues during testing.
 
 ### Fixed
 
