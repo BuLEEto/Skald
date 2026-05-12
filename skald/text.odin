@@ -485,8 +485,8 @@ wrap_text :: proc(
 	// reset every frame_begin, so the values' []string backing slices
 	// (also in temp) remain valid for the rest of the frame and are
 	// collected together.
+	use_cache := r != nil && r.frame_valid
 	key: Wrap_Key
-	use_cache := r != nil && r.wrap_cache != nil
 	if use_cache {
 		key = Wrap_Key{
 			text_ptr  = rawptr(raw_data(text)),

@@ -68,10 +68,28 @@ CRLF_SEED ::
 	"as a hard break.\r\n" +
 	"Third paragraph, shorter."
 
+// big_message synthesises a ~30 KB body of plausible English-ish text
+// so the bench exercises wrap_text on something that takes real work.
+// Mirrors the bug-class string size Archon saw in boc-next.
+big_message :: proc() -> string {
+	chunk := "Lorem ipsum dolor sit amet, consectetur adipiscing elit, " +
+		"sed do eiusmod tempor incididunt ut labore et dolore magna " +
+		"aliqua. Ut enim ad minim veniam, quis nostrud exercitation. "
+	sb := strings.builder_make()
+	for i in 0..<160 { strings.write_string(&sb, chunk) }
+	return strings.to_string(sb)
+}
+
 init :: proc() -> State {
 	out := State{}
 	append(&out.messages, "Welcome to the chat_input smoke test.")
 	append(&out.messages, "Type below and hit Enter. Shift+Enter for a newline.")
+	// One ~30 KB message exercises the wrap_text cost path during the
+	// bench, mirroring the boc-next repro. Toggle off if you just want
+	// to test the chat_input controls without the perf trace.
+	when #config(BENCH_BIG_MSG, false) {
+		append(&out.messages, big_message())
+	}
 	return out
 }
 
@@ -108,7 +126,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		bg := th.color.surface
 		if i % 2 == 1 { bg = th.color.elevated }
 		append(&rows, skald.row(
-			skald.text(msg, th.color.fg, th.font.size_md),
+			skald.text(msg, th.color.fg, th.font.size_md, max_width = 580),
 			width   = 600,
 			padding = th.spacing.sm,
 			bg      = bg,
