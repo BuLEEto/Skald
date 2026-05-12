@@ -476,6 +476,27 @@ wrap_text :: proc(
 	}
 
 	f := font == 0 ? r.text.default_font : font
+
+	// Per-frame memoisation. View_Text widgets get measured (view_size)
+	// and rendered (render_view) on the same instance every frame —
+	// without this cache the wrap work runs twice per text widget per
+	// frame, which dominates frame time for chat-style UIs with long
+	// pasted content. The cache map lives in the temp arena and is
+	// reset every frame_begin, so the values' []string backing slices
+	// (also in temp) remain valid for the rest of the frame and are
+	// collected together.
+	key: Wrap_Key
+	use_cache := r != nil && r.wrap_cache != nil
+	if use_cache {
+		key = Wrap_Key{
+			text_ptr  = rawptr(raw_data(text)),
+			text_len  = len(text),
+			max_width = max_width,
+			size      = size,
+			font      = f,
+		}
+		if cached, ok := r.wrap_cache[key]; ok { return cached }
+	}
 	scale := r.scale
 	if scale <= 0 { scale = 1 }
 	// wrap_text measures candidate lines against `max_width` (logical). To
@@ -547,5 +568,7 @@ wrap_text :: proc(
 	if len(lines) == 0 {
 		append(&lines, "")
 	}
-	return lines[:]
+	out := lines[:]
+	if use_cache { r.wrap_cache[key] = out }
+	return out
 }

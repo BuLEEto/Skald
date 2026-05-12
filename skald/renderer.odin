@@ -165,6 +165,21 @@ Window_Target :: struct {
 // that reads `r.surface` / `r.swapchain` / `r.batch` etc. resolving
 // through the pointer, so single-window code flows unchanged and
 // multi-window just means updating `cur` before each frame.
+// Wrap_Key identifies a `wrap_text` call uniquely within a single
+// frame. Pointer + length pin the string identity (within-frame the
+// app's strings don't move under us), and (max_width, size, font)
+// covers the rest of the wrap arguments. Used as the key in
+// `Renderer.wrap_cache` so the view_size + render_view double-walk
+// over the same View_Text doesn't repeat the O(rune-count) measure
+// work the second time.
+Wrap_Key :: struct {
+	text_ptr:  rawptr,
+	text_len:  int,
+	max_width: f32,
+	size:      f32,
+	font:      Font,
+}
+
 Renderer :: struct {
 	instance:         vk.Instance,
 	phys_device:      vk.PhysicalDevice,
@@ -172,6 +187,15 @@ Renderer :: struct {
 	queue:            vk.Queue,
 	queue_family_idx: u32,
 	mem_props:        vk.PhysicalDeviceMemoryProperties,
+	// wrap_cache memoises `wrap_text` results for the current frame.
+	// Allocated fresh in frame_begin against the temp arena, so it's
+	// auto-collected at frame_end with the rest of the frame's
+	// temp_allocator allocations. Layout's view_size pass and render's
+	// render_view pass walk the same View_Text instances; without this
+	// cache, a wide message body is shaped twice per frame per visible
+	// row (and once more by virtual_list_variable's height cache
+	// refresh). With it, the second + third calls are O(1) lookups.
+	wrap_cache:       map[Wrap_Key][]string,
 	// device_cmd_pool backs the one-shot uploads used by `vk_begin_one_shot`
 	// (text atlas grows, image decode uploads, anything that needs a
 	// command buffer outside the per-frame window loop). Lives on the
@@ -403,6 +427,7 @@ frame_begin :: proc(r: ^Renderer, w: ^Window, clear: Color) -> (ok: bool) {
 	r.scale       = w.scale
 	r.frame_valid      = true
 	r.overlays         = make([dynamic]Overlay_Entry, context.temp_allocator)
+	r.wrap_cache       = make(map[Wrap_Key][]string, allocator = context.temp_allocator)
 	r.alpha_multiplier = 1
 
 	batch_reset(&r.batch)

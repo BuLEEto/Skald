@@ -19,6 +19,22 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`wrap_text` is now memoised per frame.** `View_Text` gets walked
+  twice every frame — once in `view_size` (layout measure) and once
+  in `render_view` (paint) — and each walk previously re-ran the
+  full word-wrap pass for every text widget. `virtual_list_variable`
+  adds a third call per visible row when refreshing its height
+  cache. For chat-style UIs displaying long pasted content (e.g.
+  a 30 KB message body in the visible window) this dominated frame
+  time. Reported via the cross-agent thread: boc-next saw avg frame
+  time go from 8.5 ms (empty chat) to 208 ms (single 30 KB visible
+  message) — almost entirely double-shape work. Fix: a per-frame
+  cache lives in `Renderer.wrap_cache`, keyed by
+  `(text_ptr, text_len, max_width, size, font)`. Allocated against
+  the temp arena in `frame_begin` so it collects automatically at
+  frame boundaries. View_size's call populates the cache; the
+  subsequent render_view / virtual_list height-cache calls hit it
+  in O(1).
 - **Open/closed layout asymmetry on overlay-anchored widgets.**
   Affected `combobox`, `select`, `date_picker`, `time_picker`,
   `color_picker`, and `context_menu`. Pre-fix: when closed each
