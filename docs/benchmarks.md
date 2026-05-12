@@ -124,6 +124,38 @@ SKALD_BENCH_STATS frames=599 avg_ms=1.223 p50_ms=1.211 p95_ms=1.286
 One line, key=value, so you can pipe into a CSV or grep into a results
 file. RSS is Linux-only (`/proc/self/statm`); other platforms emit -1.
 
+## Stress test: long-text word-wrap
+
+The canonical examples above measure normal UI density — short labels,
+short button text, dozens of small widgets per frame. They don't hit
+the `wrap_text` path with a 30 KB paragraph in one bubble, which is
+exactly what a chat / log / commit-message viewer does to it.
+
+`examples/43_chat_input` ships a `-define:BENCH_BIG_MSG=true` flag
+that seeds one ~28 KB synthetic message into the list. Message rows
+have `max_width = 580` so word-wrap runs. Numbers on the Linux box
+(RX 7600 XT, Inter at 14 px, lazy redraw bypassed):
+
+| | avg ms | p99 ms | fps |
+|---|---|---|---|
+| pre-cache | 195.3 | 201.1 | 5.1 |
+| current   |  65.4 |  67.0 | 15.3 |
+
+The 3× cliff comes from a per-frame cache (`Renderer.wrap_cache`)
+that short-circuits the second + third `wrap_text` calls layout
+makes per visible text widget (`view_size`, `render_view`, plus
+`virtual_list_variable` if used). Repro:
+
+```bash
+RELEASE=1 odin build examples/43_chat_input -collection:gui=. \
+  -define:BENCH_BIG_MSG=true -o:speed -out:build/43_chat_input_bench
+SKALD_BENCH_FRAMES=300 SKALD_BENCH_UNCAP=1 ./build/43_chat_input_bench
+```
+
+The cache eliminates duplicate measure work, not the underlying
+per-line measure cost — a 14-px text widget at this width word-wraps
+~28 KB to ~360 lines, and every visible line still costs a measure.
+
 ## Why these numbers are what they are
 
 Skald is built for speed as a *consequence* of its design, not as a
@@ -163,3 +195,10 @@ goal. The shape of the framework produces these numbers:
 - **Vsync on** (the default — `SKALD_BENCH_UNCAP` off) caps frame
   time at the display period (8.3 ms on 120 Hz, 16.6 ms on 60 Hz).
   Real-world users see that number, not the uncapped one.
+- **A single visible text widget with tens of KB of content** still
+  costs ~65 ms / frame on the Linux box even with the wrap cache. The
+  cache kills the double-shape; it doesn't shrink the underlying
+  O(rune-count) per-line measure. Apps that surface logs / chat /
+  large paste targets should consider a display cap with an explicit
+  "show full" expand — see `examples/43_chat_input
+  -define:BENCH_BIG_MSG=true` for the repro.
