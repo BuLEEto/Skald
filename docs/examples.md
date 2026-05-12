@@ -42,6 +42,8 @@ meant to exercise — the one-liners below are a jumping-off point.
 | `22_form_extras`| `divider`, `link`, `number_input`, `segmented`, toggle, plus misc. |
 | `20_image`      | `image` widget: Cover / Contain / Fill / None fit modes, tints. |
 | `21_split`      | Nested `split` panes (row + column), drag dividers resize. |
+| `43_chat_input` | `chat_input` composer: Enter=submit, Shift+Enter=newline, paste normalisation, auto-grow, Ctrl+Enter, disabled state. |
+| `44_rich_text`  | `rich_text` / `rich_text_links`: mixed weight + italic + colour + size spans, word-wrap across span seams, inline-code chip, clickable links with cursor swap. |
 
 ### Composition and identity
 

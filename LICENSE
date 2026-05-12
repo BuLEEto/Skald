@@ -24,9 +24,11 @@ freely, subject to the following restrictions:
 Third-party components bundled or required at runtime
 ----------------------------------------------------------------------
 
-Skald bundles the Inter Variable font as an embedded asset. The font
-is licensed separately under the SIL Open Font License 1.1; its full
-license text travels with the repository at:
+Skald bundles four faces of the Inter typeface family as embedded
+assets — InterVariable plus the static-weight Inter-Bold,
+Inter-Italic, and Inter-BoldItalic faces. All four ship under the
+same SIL Open Font License 1.1; the full licence text travels with
+the repository at:
 
     skald/assets/InterVariable-OFL.txt
 

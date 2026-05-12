@@ -210,8 +210,10 @@ fine, with three light restrictions (don't misrepresent origin, mark
 altered versions, keep the notice). Matches Odin's own license for
 zero ecosystem friction.
 
-The bundled Inter Variable font ships under the SIL Open Font License
-1.1; its full text travels alongside the font at
+The bundled Inter typeface — InterVariable plus the static-weight
+Inter-Bold, Inter-Italic, and Inter-BoldItalic faces used by
+`rich_text` for emphasis — ships under the SIL Open Font License
+1.1; the full text travels alongside the fonts at
 [`skald/assets/InterVariable-OFL.txt`](skald/assets/InterVariable-OFL.txt).
 
 ## Acknowledgments
@@ -221,8 +223,10 @@ Skald stands on good shoulders. Credit and thanks to:
 - **[Odin](https://odin-lang.org)** (Ginger Bill) — the amazing language itself.
 - **[SDL3](https://libsdl.org)** (Sam Lantinga and the SDL contributors) —
   windowing, input, clipboard, file dialogs, drag-and-drop.
-- **[Inter Variable](https://rsms.me/inter/)** (The Inter Project
-  Authors) — the bundled default UI font.
+- **[Inter](https://rsms.me/inter/)** (The Inter Project Authors) —
+  the bundled UI typeface. InterVariable is the default; the
+  static-weight Bold / Italic / BoldItalic faces ship alongside it
+  for `rich_text`'s emphasis spans.
 - **[fontstash](https://github.com/memononen/fontstash)**
   (Mikko Mononen) — glyph atlas management, shipped via
   `vendor:fontstash`.
