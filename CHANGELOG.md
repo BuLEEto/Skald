@@ -84,6 +84,17 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Scroll content no longer flickers on sub-pixel offsets.** `View_Scroll`
+  applied its `offset_y` directly as a fractional render origin —
+  `content_h` is a sum of float per-row heights, so any sticky-bottom
+  or growing-content scenario produced sub-pixel scroll positions
+  frame-to-frame. Anti-aliased glyphs rasterised to different pixels
+  per frame on rows near the viewport's clip edges → visible jitter
+  during streaming. Now snap `off` to physical-pixel boundaries
+  (`floor(off * scale) / scale`) before it becomes the render origin
+  *and* before being written back to widget state, so the snap
+  persists across frames. Reported via the cross-agent thread —
+  surfaced as "top 3 chat rows flicker while assistant streams reply."
 - **`widget_get` no longer leaves the store holding freed pointers.**
   The cleanup branch (kind-mismatch or stale-frame) freed the prior
   occupant's heap state (`undo`, `virtual_heights`, `text_buffer`)

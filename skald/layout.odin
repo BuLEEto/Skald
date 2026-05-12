@@ -1011,6 +1011,18 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		off := vv.offset_y
 		if off < 0        { off = 0 }
 		if off > max_off  { off = max_off }
+		// Snap the scroll offset to physical-pixel boundaries before
+		// it becomes the render origin's negative-y. Without this
+		// `off` carries the fractional component of `child_h` (a sum
+		// of float per-row heights), and during streaming or any
+		// continuously-growing content the rendered y of every glyph
+		// shifts by sub-pixel amounts per frame — anti-aliased
+		// glyphs rasterise to different pixels, producing the flicker
+		// boc-next reported on chat rows near the viewport top while
+		// the assistant streams. Rounding to physical px (rather than
+		// logical) keeps the snap correct on HiDPI too.
+		scale := r.scale if r.scale > 0 else 1
+		off = math.floor(off * scale) / scale
 
 		// When the bar will render, shrink the child layout width so
 		// right-aligned content clears the gutter.
