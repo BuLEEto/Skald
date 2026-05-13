@@ -21,7 +21,8 @@ You'll need:
   (which includes MoltenVK) on macOS.
 - First-time on Linux only: `make -C $ODIN_ROOT/vendor/stb/src` once
   per machine. Skald's bundled fontstash links against `stb_truetype.a`
-  which Odin ships as C source.
+  which Odin ships as C source. (Skipped if you build with the
+  pure-Odin runa backend instead — see below.)
 
 Then:
 
@@ -29,6 +30,19 @@ Then:
 git clone <repo> skald && cd skald
 ./build.sh 07_counter run
 ```
+
+### Picking a text backend
+
+Skald ships with two text engines:
+
+- **fontstash** (default): the long-shipped path. Requires the
+  one-time `stb_truetype.a` build above.
+- **runa** (opt-in preview): a pure-Odin text engine vendored at
+  `skald/third_party/runa/`. Adds OpenType shaping (ligatures,
+  kerning), COLRv0 colour emoji, and is faster than fontstash. No
+  C dependency, so the `stb` step is skipped. Opt in via
+  `SKALD_RUNA=1 ./build.sh 07_counter run`. Becomes the default
+  in Skald 1.1.
 
 A window opens with a − / Reset / + counter. Click the buttons, the
 number changes. If that works your toolchain is healthy and you can

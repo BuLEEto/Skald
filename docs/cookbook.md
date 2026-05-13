@@ -744,13 +744,20 @@ match wins.
 extensions, symbol fonts, math. Anything whose layout is codepoint
 in → glyph out with no contextual reshaping.
 
-**What's limited**: Arabic, Hebrew, Devanagari, Thai — any script
-that needs *contextual shaping* (initial/medial/final letter
-forms, RTL reordering, conjuncts). Skald uses stb_truetype under
-fontstash, which ships glyphs but not shaping. The codepoints will
-render, but linguistically incorrectly. Correct shaping +
-bidirectional layout is a planned post-1.0 feature — contributions
-from native speakers of those scripts are welcome. See
+**What works well on the default (fontstash) backend**: CJK, Cyrillic
+extensions, symbol fonts, math — anything whose layout is codepoint
+in → glyph out.
+
+**What's limited on fontstash**: Arabic, Hebrew, Devanagari, Thai —
+scripts that need *contextual shaping* (initial/medial/final letter
+forms, RTL reordering, conjuncts). The codepoints render, but
+linguistically incorrectly.
+
+**Workaround: switch to the runa backend.** Build with `SKALD_RUNA=1`
+to get full OpenType GSUB/GPOS shaping, including ligatures and pair
+kerning. Arabic / Hebrew RTL + bidi land in a follow-up runa release
+(v0.5); Indic scripts in v1.0. See the runa source at
+[`skald/third_party/runa/`](../skald/third_party/runa/) and
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the concrete work items.
 
 ### Use an icon font (Font Awesome, Lucide, Phosphor, Material…)
@@ -782,11 +789,15 @@ are on the icon set's website; copy `\uXXXX` into your string.
 
 A working example lives in [`examples/39_icons`](../examples/39_icons).
 
-**Color emoji** (😀 with the actual yellow face) is a separate
-problem — the OS system emoji fonts ship glyphs in CBDT / sbix /
-COLR formats that fontstash doesn't decode. Tracked as a post-1.0
-item; for now Inter renders monochrome fallbacks for the few emoji
-codepoints it carries, and unmapped ones tofu.
+**Colour emoji** (😀 with the actual yellow face): on the default
+fontstash backend, emoji codepoints render monochrome or tofu —
+fontstash doesn't decode CBDT / sbix / COLR colour formats. The runa
+backend (build with `SKALD_RUNA=1`) renders COLRv0 layered colour
+glyphs natively. Register a colour-emoji font like Twemoji-Mozilla
+via `font_add_fallback` and emoji appear in every text widget. See
+[`examples/45_color_emoji`](../examples/45_color_emoji) for the
+canonical mixed-text + Twemoji demo. COLRv1 gradient fonts (current
+Noto Color Emoji) land in runa v0.5.
 
 ## Localization
 

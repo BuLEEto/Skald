@@ -8,6 +8,39 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Pure-Odin text backend (preview, opt-in).** Skald now vendors
+  `runa` — a pure-Odin text engine that does parsing, shaping, layout,
+  rasterization, and atlas management with zero C dependencies — at
+  `skald/third_party/runa/`. Build with `SKALD_RUNA=1 ./build.sh …` (or
+  `-define:SKALD_RUNA=true` directly) to route every `draw_text` /
+  `measure_text` / `wrap_text` call through it instead of fontstash.
+  Default stays on fontstash for 1.0; the runa preview is for app
+  authors who want to try it before it becomes the default in 1.1.
+
+  What runa unlocks today:
+  - **Real OpenType shaping** — ligatures (`fi`, `→`, `==`), GPOS pair
+    kerning, contextual alternates. fontstash only has basic kern-pair
+    lookup.
+  - **Colour emoji** — COLRv0 layered glyphs from fonts like
+    Twemoji-Mozilla. Register a colour-emoji font through the existing
+    `font_add_fallback` API and 🦊 renders properly in any text widget
+    (label, button, `text_input`, `rich_text`, chat bubbles).
+  - **Subpixel-x positioning** — glyphs land on the correct fractional
+    pixel via a 4-bucket bitmap variant per cache key. fontstash
+    quantises to integer pixels.
+
+  Performance: in `bench.sh`, runa is faster than fontstash on every
+  workload — 01_hello +39 % fps, virtual_list +27 %, table matches,
+  gallery 2.2× faster. The shape cache (zero-alloc on hit) is doing
+  the heavy lifting. Memory is +2.6 MB one-time overhead at startup
+  (parsed font tables + cache structures), then zero per-frame growth.
+
+  See `examples/45_color_emoji/` for the canonical mixed-text +
+  Twemoji demo. The runa source is zlib-licensed; full notice at
+  `skald/third_party/runa/LICENSE`. Two Unicode UCD data files
+  (`Scripts.txt` / `LineBreak.txt`) ship under the Unicode-DFS-2016
+  licence at `skald/third_party/runa/tools/ucd/`.
+
 - **`cmd_set_theme(Msg, theme)` — swap the active theme from
   `update`.** The runtime owns one `Theme` value across frames;
   this command writes the new theme into that slot between frames

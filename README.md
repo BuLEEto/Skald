@@ -29,8 +29,15 @@ actual numbers.
   from the app's state, so there's no retained widget graph to diff or
   keep in sync. Frame times under 1 ms on most apps on a modern desktop
   GPU (Linux); capped by display refresh on macOS.
-- **GPU rendering** — pure-Odin Vulkan 1.3 backend (`vendor:vulkan`), glyphs
-  via fontstash, one pipeline for rects + text + images.
+- **GPU rendering** — pure-Odin Vulkan 1.3 backend (`vendor:vulkan`), one
+  pipeline for rects + text + images.
+- **Two text backends** — `vendor:fontstash` ships as the default
+  (small, battle-tested, no shaping). The pure-Odin `runa` engine
+  ships vendored at `skald/third_party/runa/` as a preview: opt in
+  with `SKALD_RUNA=1 ./build.sh ...` to get OpenType shaping
+  (ligatures, GPOS kerning), COLRv0 colour emoji, and subpixel-x
+  positioning. Runa is faster than fontstash on every benched
+  workload (gallery 2.2× faster). It becomes the default in Skald 1.1.
 - **Async** — the `Command(Msg)` effect system runs file I/O, native
   dialogs, and delays through `core:nbio` on the main thread; completions
   round-trip back as regular `Msg` values. For sync libraries that aren't
@@ -234,9 +241,13 @@ Skald stands on good shoulders. Credit and thanks to:
   for `rich_text`'s emphasis spans.
 - **[fontstash](https://github.com/memononen/fontstash)**
   (Mikko Mononen) — glyph atlas management, shipped via
-  `vendor:fontstash`.
+  `vendor:fontstash`. The default text backend.
 - **[stb](https://github.com/nothings/stb)** (Sean T. Barrett) —
   `stb_truetype` (used inside fontstash) and `stb_image` (PNG loading).
+- **runa** (Lee Fry + contributors) — pure-Odin text engine vendored
+  at [`skald/third_party/runa/`](skald/third_party/runa/). zlib
+  licence. Opt-in alternative backend with full OpenType shaping +
+  colour emoji; becomes the default in Skald 1.1.
 - **Vulkan** — specification by the Khronos Group; on macOS, Vulkan
   calls are translated to Metal by **[MoltenVK](https://github.com/KhronosGroup/MoltenVK)**
   (originally by Brenwill Workshop Ltd., now maintained under
