@@ -159,8 +159,9 @@ Linux is the primary dev platform and assumed to work. Quick sanity:
 - **Vulkan loader + driver** — `libvulkan1` and `mesa-vulkan-drivers`
   (or vendor proprietary drivers). In every mainstream distro's repo.
 - **Odin's stb static libs** — Odin ships `vendor:stb/` as C source;
-  the static archives that `vendor:fontstash` (which Skald uses) links
-  against have to be built once per machine:
+  the static archives that `vendor:fontstash` (which Skald uses as
+  its default text backend) links against have to be built once per
+  machine:
 
   ```bash
   make -C $ODIN_ROOT/vendor/stb/src
@@ -168,6 +169,12 @@ Linux is the primary dev platform and assumed to work. Quick sanity:
 
   If you skip this you'll get a link-time "cannot find `stb_truetype`"
   error at the end of an otherwise-successful Odin compile.
+
+  This step is **only** needed for the default fontstash backend. If
+  you build with `SKALD_RUNA=1` (Skald's pure-Odin text engine,
+  vendored at `skald/third_party/runa/`), no C dependency is touched
+  and the `stb` build is skipped. Runa becomes the default in
+  Skald 1.1.
 
 ### Building SDL3 from source (Ubuntu 24.04 LTS or any distro
 without a packaged SDL3)

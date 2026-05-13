@@ -10,9 +10,16 @@ variables set.
 
 All examples fit inside a **1 ms** p99 frame at release build on the
 Linux box, and sustain **120 fps with heaps of headroom** on the
-Apple M4. Idle memory on Linux is ~77 MB for every app (fontstash
-atlas + Vulkan buffers dominate); steady-state growth is flat after
-warmup. RSS on macOS is blank for now — reader is Linux-only.
+Apple M4. Idle memory on Linux is ~77 MB for every app on the
+default fontstash backend (atlas + Vulkan buffers dominate);
+steady-state growth is flat after warmup. RSS on macOS is blank for
+now — reader is Linux-only.
+
+The pure-Odin runa backend (`SKALD_RUNA=1`) adds ~2.6 MB of one-time
+overhead at startup (parsed font tables + shape cache) and lands
+*faster* than fontstash on every workload — the 00_gallery ceiling
+test runs at 1.22 ms / 821 fps vs 2.92 ms / 343 fps for fontstash,
+2.4× faster. The shape cache (zero-alloc on hit) is doing the work.
 
 ### Linux (Ryzen 9 7900 + Radeon RX 7600)
 

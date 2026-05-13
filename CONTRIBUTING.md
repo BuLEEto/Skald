@@ -41,10 +41,12 @@ Landing this takes three pieces:
 1. **A shaper.** Accepts `(font, text_run, script_tag)` and returns
    positioned glyphs with correct contextual forms. For Arabic this
    means picking isolated / initial / medial / final letter forms;
-   for Indic, cluster reordering; for Thai, tone-mark stacking. See
-   `skald/text.odin` for where this hook needs to live — glyph
-   lookup today goes through `fontstash`; shaping would sit between
-   `measure_text` / `draw_text` and the atlas.
+   for Indic, cluster reordering; for Thai, tone-mark stacking. The
+   pure-Odin `runa` backend already does Latin/Cyrillic/Greek
+   shaping (GSUB / GPOS) — Arabic + Indic + Thai shapers slot into
+   `skald/third_party/runa/shape/` as new modules. The default
+   fontstash backend has no shaping path and won't get one; runa
+   becomes the default in 1.1.
 
 2. **The Unicode Bidirectional Algorithm.** So mixed-direction runs
    ("the word الكلمة here") reorder visually per Unicode Annex #9.
@@ -264,7 +266,7 @@ Before submitting a PR that touches the renderer or widgets, run
 ## Thanks
 
 Same credits as the README — Skald stands on Odin, SDL3, Vulkan,
-MoltenVK, fontstash, stb, and Inter. Any PR adding substantial
+MoltenVK, fontstash, stb, runa, and Inter. Any PR adding substantial
 new functionality should feel free to add a line to the
 Acknowledgments section of README.md noting its origin, if
 appropriate.
