@@ -11344,6 +11344,11 @@ menu_bar :: proc(
 
 		anchor := trig_rects[open_idx]
 		dropdown_rect = Rect{anchor.x, anchor.y + anchor.h, dropdown_w, dropdown_h}
+
+		// Claim the dropdown as an overlay so widgets beneath it (rendered
+		// later in the tree, gated through `rect_hovered`) don't paint
+		// hover tints under the open menu — matches select / context_menu.
+		widget_stamp_overlay_rect(ctx.widgets, dropdown_rect)
 	}
 
 	// Outside-click dismiss: a press anywhere not in the bar or dropdown.

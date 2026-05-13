@@ -25,6 +25,17 @@ bug fixes bump the patch.
   `Ctrl+=` / `Ctrl+-` (zoom) or `Ctrl+,` (preferences) no longer
   need to fall back to text-event sniffing.
 
+### Fixed
+
+- **`menu_bar` dropdowns no longer leak hover tints to widgets
+  underneath.** The open dropdown now claims the overlay rect via
+  `widget_stamp_overlay_rect`, matching `select` / `context_menu`
+  / popovers. Widgets rendered later in the tree that use
+  `rect_hovered` (almost everything) correctly gate out hover when
+  the cursor sits inside an open menu. Visible on dense desktop
+  UIs — without the fix, gliding down a File / View / Help menu
+  painted hover halos on buttons + list rows behind it.
+
 ## 1.0.0-rc4 — 2026-05-12
 
 Two new text widgets, a handful of correctness fixes uncovered by
