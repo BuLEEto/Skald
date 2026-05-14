@@ -297,6 +297,27 @@ font_add_fallback_runa :: proc(r: ^Renderer, base, fallback: Font) -> bool {
 	return true
 }
 
+// text_runa_px_size converts a Skald "logical pixel" size into the
+// equivalent runa size. The two backends disagree on what "size = N"
+// means: fontstash (via stb_truetype.ScaleForPixelHeight) scales so
+// `ascent - descent` equals N pixels; runa scales so the *em-square*
+// equals N pixels. For Inter (upem 2048, ascent 2169, descent -552)
+// that's a 1.33× discrepancy — runa would render ~33% larger at the
+// same numerical size. We rescale here so Skald apps see consistent
+// glyph dimensions regardless of which backend drives.
+//
+// Conversion: runa_px = skald_px × upem / (ascent − descent).
+// For multi-font runs the primary font's ratio is used; fallback
+// glyphs (emoji) render at the primary's effective em-size, which is
+// the typical behaviour across renderers.
+@(private)
+text_runa_px_size :: proc(fnt: ^runa.Font, skald_px: f32) -> f32 {
+	if fnt == nil { return skald_px }
+	extent := fnt.ascent - fnt.descent
+	if extent <= 0 || fnt.units_per_em == 0 { return skald_px }
+	return skald_px * f32(fnt.units_per_em) / extent
+}
+
 @(private)
 measure_text_runa :: proc(
 	r:    ^Renderer,
@@ -313,7 +334,8 @@ measure_text_runa :: proc(
 	if scale <= 0 { scale = 1 }
 
 	stack := text_runa_stack(rs, f)
-	opts  := runa.Paragraph_Opts{fonts = stack, size = size * scale}
+	px_size := text_runa_px_size(rs.fonts[int(f)], size * scale)
+	opts  := runa.Paragraph_Opts{fonts = stack, size = px_size}
 	w, h  := runa.measure_text_cached(text, opts, &rs.cache)
 	return w / scale, h / scale
 }
@@ -329,8 +351,10 @@ text_ascent_runa :: proc(r: ^Renderer, size: f32, font: Font) -> f32 {
 	if scale <= 0 { scale = 1 }
 	fnt := rs.fonts[int(f)]
 	if fnt.units_per_em == 0 { return 0 }
-	s := (size * scale) / f32(fnt.units_per_em)
-	return fnt.ascent * s / scale
+	// Match fontstash convention: ascent_px = ascent × skald_size / (ascent − descent).
+	extent := fnt.ascent - fnt.descent
+	if extent <= 0 { return 0 }
+	return fnt.ascent * (size * scale) / extent / scale
 }
 
 @(private)
@@ -350,7 +374,7 @@ draw_text_runa :: proc(
 	scale := r.scale
 	if scale <= 0 { scale = 1 }
 	inv := 1 / scale
-	px_size := size * scale
+	px_size := text_runa_px_size(rs.fonts[int(f)], size * scale)
 
 	stack := text_runa_stack(rs, f)
 	opts := runa.Paragraph_Opts{fonts = stack, size = px_size}
