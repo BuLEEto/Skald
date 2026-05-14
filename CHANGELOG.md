@@ -4,7 +4,19 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## Unreleased
+## 1.0.0-rc5 — 2026-05-14
+
+The headline of rc5 is a second text backend: Skald now vendors
+`runa`, a pure-Odin text engine, as an **opt-in** preview alongside
+`vendor:fontstash`. Set `SKALD_RUNA=1` at build time and every text
+call routes through it — OpenType shaping, COLRv0 colour emoji, and
+subpixel-x positioning land for free, and frame times improve on
+every benched workload. Fontstash stays the default for 1.0; runa
+becomes the default in 1.1 once it's been exercised in the wild.
+
+Outside of runa, rc5 picks up `cmd_set_theme` for live theme reloads
+from `update`, eleven new `Key` enum variants for punctuation
+shortcuts, and a `menu_bar` overlay fix.
 
 ### Added
 

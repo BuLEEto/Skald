@@ -20,6 +20,15 @@ model puts it in the immediate-mode performance tier rather than the
 retained-tree one. See [`docs/benchmarks.md`](docs/benchmarks.md) for
 actual numbers.
 
+> **1.0-rc5 preview — pure-Odin text backend.** Skald now ships with
+> [`runa`](skald/third_party/runa/), a pure-Odin text engine, as an
+> opt-in second backend alongside `vendor:fontstash`. It brings real
+> OpenType shaping (ligatures, GPOS kerning, contextual alternates),
+> COLRv0 colour emoji, and subpixel-x positioning — and it's faster
+> than fontstash on every benched workload (gallery 2.2× faster).
+> Build with `SKALD_RUNA=1 ./build.sh …` to try it. Becomes the
+> default in Skald 1.1.
+
 ## Highlights
 
 - **Elm architecture** — `init` / `update` / `view` with a pure `Msg` union.
