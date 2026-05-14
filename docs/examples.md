@@ -91,7 +91,7 @@ meant to exercise — the one-liners below are a jumping-off point.
 | Example | What it teaches |
 |---------|-----------------|
 | `39_icons` | Registering an icon font (Font Awesome 6 Solid) as a fallback to Inter via `font_add_fallback`, then using PUA codepoints inline in `text()` and `button()`. Same trick works for any monochrome icon font (Lucide, Phosphor, Material, …). |
-| `45_color_emoji` | Colour-emoji smoke test for the runa text backend (build with `SKALD_RUNA=1`). Loads Twemoji-Mozilla (COLRv0) via `font_add_fallback`, renders 🦊 🚀 🐛 🎉 mixed with Latin text in every widget. Under the default fontstash backend the emoji render as tofu — there's no equivalent path. |
+| `45_colour_emoji` | Colour-emoji smoke test for the runa text backend (build with `SKALD_RUNA=1`). Loads Twemoji-Mozilla (COLRv0) via `font_add_fallback`, renders 🦊 🚀 🐛 🎉 mixed with Latin text in every widget. Under the default fontstash backend the emoji render as tofu — there's no equivalent path. |
 
 ### Async work
 

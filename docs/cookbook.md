@@ -823,7 +823,7 @@ makes modern Noto Color Emoji render properly; for now use a
 COLRv0 set like Twemoji.
 
 A working example lives in
-[`examples/45_color_emoji`](../examples/45_color_emoji).
+[`examples/45_colour_emoji`](../examples/45_colour_emoji).
 
 ### Load any font from a file path
 

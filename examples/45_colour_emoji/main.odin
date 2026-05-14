@@ -1,4 +1,4 @@
-package example_color_emoji
+package example_colour_emoji
 
 import "gui:skald"
 
@@ -8,7 +8,7 @@ import "gui:skald"
 // render in full colour; under the default fontstash backend they
 // render as `.notdef` tofu (fontstash doesn't decode COLR tables).
 //
-// Run with: `SKALD_RUNA=1 ./build.sh 45_color_emoji run`
+// Run with: `SKALD_RUNA=1 ./build.sh 45_colour_emoji run`
 //
 // Apps that adopt this pattern need to add an attribution line for
 // the Twemoji artwork — CC-BY-4.0. See

@@ -35,7 +35,7 @@ bug fixes bump the patch.
   the heavy lifting. Memory is +2.6 MB one-time overhead at startup
   (parsed font tables + cache structures), then zero per-frame growth.
 
-  See `examples/45_color_emoji/` for the canonical mixed-text +
+  See `examples/45_colour_emoji/` for the canonical mixed-text +
   Twemoji demo. The runa source is zlib-licensed; full notice at
   `skald/third_party/runa/LICENSE`. Two Unicode UCD data files
   (`Scripts.txt` / `LineBreak.txt`) ship under the Unicode-DFS-2016
