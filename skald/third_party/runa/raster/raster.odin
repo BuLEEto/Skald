@@ -12,6 +12,6 @@ layered emoji.
 v0.1 (followup pass): 4-bucket subpixel positioning.
 v0.5: COLRv1 gradient brushes and compositing modes.
 
-See PROPOSAL.md §5 and §7 (why we skip hinting).
+
 */
 package raster

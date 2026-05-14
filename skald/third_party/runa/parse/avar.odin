@@ -8,9 +8,9 @@ package parse
 // against. Inter, for example, uses avar on `wght` so visual weight
 // progression looks even across 100..900.
 //
-// PROPOSAL §4 v0.1 lists avar as mandatory — without it, weight
-// targets land at the wrong perceptual position on fonts that ship
-// the table.
+// avar is mandatory for correct variable-font rendering — without
+// it, weight targets land at the wrong perceptual position on fonts
+// that ship the table.
 //
 // References: OpenType spec, "avar — Axis Variations Table".
 

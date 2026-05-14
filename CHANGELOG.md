@@ -8,6 +8,15 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Vendored runa refreshed to 0.9.2.** The bundled
+  `skald/third_party/runa/` is now the 0.9.2 release: 13 complex
+  scripts shape on canonical syllables — 9 Brahmic (Devanagari,
+  Bengali, Gujarati, Kannada, Odia, Tamil, Telugu, Malayalam,
+  Gurmukhi) + 4 SEA (Thai, Lao, Khmer, Myanmar), all verified
+  byte-for-byte against HarfBuzz. Bidi conformance corrected to
+  99.998 % (the earlier 100 % claim missed two deep-nested empty
+  RLE/PDF cases). Picks up the BD16 stack-overflow ICU-parity fix
+  and the pre-base matra reorder for multi-consonant clusters.
 - **`emoji_picker` widget.** 😀 trigger that opens a popover with a
   substring-match search bar, optional recents row, 9 Unicode CLDR
   category tabs, a paginated 8 × 6 grid of ~1150 single-codepoint

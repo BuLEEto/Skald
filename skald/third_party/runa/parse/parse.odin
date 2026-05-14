@@ -10,7 +10,7 @@ hardness is a deliberate hedge against the OpenType attack surface
 (decades of FreeType / FontConfig CVEs).
 
 Tables implemented at v0.1 ship in priority order (head, maxp, cmap, hhea,
-hmtx, loca, glyf, ...). See PROPOSAL.md §4 for the full v0.1 list and
+hmtx, loca, glyf, ...).1 list and
 §14 for the table sequence.
 */
 package parse

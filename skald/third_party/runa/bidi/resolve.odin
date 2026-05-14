@@ -614,13 +614,21 @@ resolve_bracket_pairs :: proc(runes: []rune, classes: []Bidi_Class, positions: [
 	pairs := make([dynamic][2]int, 0, 8, context.temp_allocator)
 	defer delete(pairs)
 
+	// BD16 stack overflow: per the reference implementation, once
+	// the stack saturates we abandon bracket detection for the
+	// whole ISR. Partial pairing produces visually inconsistent
+	// output, so it's safer to fall through to the neutral
+	// resolution rules — matches ICU's behaviour, which is what
+	// BidiCharacterTest is generated against.
 	BD16_STACK_LIMIT :: 63
+	overflowed := false
 	for k in 0..<n {
+		if overflowed { break }
 		r := runes[positions[k]]
 		t := bidi_paired_bracket_type(r)
 		#partial switch t {
 		case .Open:
-			if len(stack) >= BD16_STACK_LIMIT { continue }
+			if len(stack) >= BD16_STACK_LIMIT { overflowed = true; break }
 			match := bidi_paired_bracket(r)
 			append(&stack, Bracket_Frame{open_idx = k, close = match})
 		case .Close:
@@ -633,6 +641,7 @@ resolve_bracket_pairs :: proc(runes: []rune, classes: []Bidi_Class, positions: [
 			}
 		}
 	}
+	if overflowed { clear(&pairs) }
 
 	// UAX #9 N0 processes pairs in opening-position order; pairs are
 	// appended in close-discovery order, which is reverse for nested

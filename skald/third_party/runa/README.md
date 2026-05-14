@@ -5,14 +5,22 @@ line-breaking, rasterization. Built first to replace fontstash +
 stb_truetype in [Skald](https://github.com/BuLEEto/Skald), designed
 to be useful for any Odin project that needs production-quality text.
 
-**Status:** v0.9-rc1 — *"Everything except complex-script shapers."*
-UAX #9 bidi at 100 %, UAX #29 grapheme clusters at 100 %, CFF2
+**Status:** v0.9.2 — *"13 complex scripts shape."*
+UAX #9 bidi at **99.998 %**, UAX #29 graphemes at 100 %, CFF2
 variable instances, COLRv1 emoji with true linear / radial / sweep
-gradients + composite blend modes, GPOS mark-to-ligature, and a
-frozen public API ([`API.md`](API.md)). v1.0 final lands the Indic
-+ SEA shapers. DoD scoreboards per milestone live in
-[`CHANGELOG.md`](CHANGELOG.md); the design contract is in
-[`PROPOSAL.md`](PROPOSAL.md).
+gradients + composite blend modes, GPOS mark-to-ligature, frozen
+API ([`API.md`](API.md)), and per-script shaping for **Devanagari,
+Bengali, Gujarati, Kannada, Odia, Tamil, Telugu, Malayalam,
+Gurmukhi, Thai, Lao, Khmer, Myanmar** — all verified against
+HarfBuzz byte-for-byte on canonical syllables. v1.0 final remains
+the Thai word-break dictionary and a few Myanmar / Khmer cluster
+edge cases. Full scoreboard in [`CHANGELOG.md`](CHANGELOG.md).
+
+<p align="center">
+  <img src="screenshots/multiscript.png" alt="runa rendering Latin, Cyrillic, Greek, Arabic (joined RTL), Hebrew (RTL), CJK, colour emoji, and ligatures" width="80%"/>
+</p>
+
+<p align="center"><sub>Latin · Cyrillic · Greek · Arabic (joined + RTL) · Hebrew (RTL) · Chinese · Japanese · colour emoji · OpenType ligatures.</sub></p>
 
 ## What this is
 
@@ -28,19 +36,19 @@ text at small scales but cannot:
   alternates, stylistic sets).
 - Subpixel-position glyphs.
 
-`runa` is the long-term fix. Think "cosmic-text for Odin," written
-from scratch in idiomatic Odin with zero C dependencies at v1.0.
+`runa` is the long-term fix — a modern text engine in idiomatic
+Odin with zero C dependencies at v1.0.
 
-## What's planned
+## What's left for v1.0
 
-| Milestone | Scope |
-|-----------|-------|
-| **v0.1** | Latin / Cyrillic / Greek production quality. Ligatures, GPOS kerning, COLRv0 emoji, variable fonts, subpixel positioning. Skald can switch off fontstash here. |
-| **v0.5** | RTL support — UAX #9 bidi at 100 %, Arabic shaper, Hebrew. COLRv1 linear-gradient emoji. CFF2 default instance. |
-| **v0.9-rc1** | API freeze. CFF2 non-default-instance (Item Variation Store), UAX #29 grapheme clusters at 100 %, radial + sweep gradients, COLR composite modes, GPOS mark-to-ligature. |
-| **v1.0** | Indic family + Thai / Lao / Khmer / Myanmar shapers. |
+- Thai word-break dictionary (line layout needs a dictionary; current
+  Thai shaping is correct, line breaking falls back to ASCII rules).
+- Complex Khmer multi-consonant clusters with COENG-driven subscripts.
+- Full Myanmar shaping (medial reorder, asat handling, kinzi).
+- Two remaining bidi BidiCharacterTest mismatches in deep-nested empty
+  RLE/PDF cases — spec-vs-impl ambiguities that need a deeper rework.
 
-Details, rationale, and per-phase deliverables: see [`PROPOSAL.md`](PROPOSAL.md).
+Per-feature deliverables and conformance numbers live in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Building
 
@@ -62,9 +70,10 @@ odin run examples/hello_world -- \
     /tmp/hello.ppm
 ```
 
-`tests/fonts/` holds local symlinks during development;
-proper version-pinned copies of InterVariable, FiraCode, JetBrains
-Mono, and Twemoji-Mozilla arrive once the OFL sidecars are landed.
+Test fonts are not committed — fetch them into `tests/fonts/` per
+[`tests/fonts/README.md`](tests/fonts/README.md), or let CI fetch
+them. Tests that need a missing font skip with an INFO log so the
+synthetic suite still runs on a fresh clone.
 
 ## License
 
@@ -72,9 +81,11 @@ Mono, and Twemoji-Mozilla arrive once the OFL sidecars are landed.
 [`LICENSE`](LICENSE). Permissive, GPL-compatible, the same licence
 Odin's own standard library uses.
 
-Third-party data files and bundled test fonts carry their own
-licences alongside them in `third_party/` and `tests/fonts/` once
-those land. See `PROPOSAL.md` §17 for the full attribution plan.
+Embedded Unicode UCD data files (`Scripts.txt`, `LineBreak.txt`,
+`DerivedBidiClass.txt`) ship under the Unicode-DFS-2016 licence.
+Test fonts are not committed — see
+[`tests/fonts/README.md`](tests/fonts/README.md) for per-font
+sources and licences.
 
 ## Contributing
 
@@ -84,6 +95,5 @@ real, CFF2 variations real. v1.0 final work picks up the Indic
 family (Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam,
 Gurmukhi, Gujarati, Odia) and SEA scripts (Thai, Lao, Myanmar,
 Khmer) — each shaper is its own module sharing a state-core, so
-the work parallelises. Open an issue if you spot a scope problem,
-a spec inaccuracy, or have a strong opinion on the API in
-`API.md` / `PROPOSAL.md` §6.
+the work parallelises. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for build / test instructions and the open-work pointer list.

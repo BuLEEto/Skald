@@ -8,8 +8,8 @@ LB1–LB31 pair rules. The width-fit step then consumes a stream of shaped
 glyphs plus their break-after-allowed flags.
 
 Conformance gate: 100 % pass on Unicode's LineBreakTest.txt at the
-pinned Unicode version (17.0, see PROPOSAL.md §7a).
+pinned Unicode version (17.0, see the design doc).
 
-See PROPOSAL.md §5 and reference UAX #14.
+
 */
 package linebreak

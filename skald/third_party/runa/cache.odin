@@ -5,8 +5,8 @@ package runa
 // The Cache is the caller-owned mutable state for fast re-layout. It
 // stores `[]Shaped_Glyph` keyed by `(font, size, text)`. On a hit,
 // shape / measure / layout calls return without re-running GSUB / GPOS
-// and without allocating — PROPOSAL §6a rule 7 and the v0.1 DoD's
-// zero-allocation guarantee land here.
+// and without allocating — the zero-allocation-on-cache-hit
+// guarantee lands here.
 //
 // The text key is *interned* — every distinct cache key holds its own
 // string copy, so the caller may free the original buffer. Cache

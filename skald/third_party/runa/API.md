@@ -135,7 +135,7 @@ flat-fill path when the font carries a v1 BaseGlyphList.
 | `tools/deep_stress.odin`      | 2 000-iter end-to-end loop under `Tracking_Allocator` for leak detection. Also outlines every glyph of two CFF1 + one CFF2 font. |
 | `tools/bit_flip_fuzz.odin`    | Bit-flipped corpus fuzz — runs glyph extraction + shape against mangled SFNTs and asserts no panics. |
 
-## Known gaps tracked for v1.0
+## Known gaps for v1.0
 
 - **Complex-script shapers** — Indic family (Devanagari, Bengali,
   Tamil, Telugu, Kannada, Malayalam, Gurmukhi, Gujarati, Odia) and

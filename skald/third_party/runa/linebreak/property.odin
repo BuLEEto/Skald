@@ -7,7 +7,7 @@ count is ~3 000 — a 12-step bsearch per codepoint, which is fine for
 the linebreak engine's non-hot-path.
 
 v0.1 ships the runtime parser. The two-stage-trie codegen described in
-PROPOSAL §7a is the v0.2 polish — gives 5–10× lookup speedup and lets
+The codegen-baked two-stage trie is the v0.2 polish — gives 5–10× lookup speedup and lets
 the data ship as compile-time-baked Odin source instead of an embedded
 text blob.
 

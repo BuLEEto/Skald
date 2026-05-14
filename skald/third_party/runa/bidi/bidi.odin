@@ -13,7 +13,7 @@ Embedding-level resolution (the full UAX #9 X-rule pipeline plus
 BD16 bracket pairs) is the next chunk — once it lands, Arabic +
 Hebrew shaping have a logical-to-visual reorder map to consume.
 
-See PROPOSAL §4 (v0.5) and UAX #9.
+See UAX #9.
 */
 package bidi
 

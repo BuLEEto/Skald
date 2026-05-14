@@ -8,7 +8,7 @@ package parse
 // back-to-front to assemble the final colour glyph.
 //
 // COLR version 1 adds gradient brushes, glyph transforms, and
-// compositing modes; it's deferred to v0.5 per PROPOSAL.md §4.
+// compositing modes; it's deferred to v0.5
 // Every version-1 font also ships a usable version-0 fallback, so a
 // v0-only reader still renders all current emoji fonts (no gradients,
 // but the layered fill is correct).

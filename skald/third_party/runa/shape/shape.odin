@@ -116,6 +116,15 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 		}
 	}
 
+	// Stage 1c: Indic shaping. For Devanagari + sibling scripts run
+	// the syllable-aware reordering + Indic feature sequence BEFORE
+	// the script-agnostic GSUB stage so its rphf / blwf / half / etc.
+	// see the right glyph input order. The generic `liga` / `calt`
+	// stage below then composes any remaining ligatures on top.
+	if in_.gsub != nil && is_indic_script(opts.script) {
+		indic_shape(in_.gsub, &gids, &clusters, runes[:], opts.script, opts.language)
+	}
+
 	// Stage 2: GSUB. Apply v0.1 features in the canonical order. The
 	// cluster array is rewritten in parallel as ligatures collapse
 	// glyphs.

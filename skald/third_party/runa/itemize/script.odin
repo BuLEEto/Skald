@@ -11,7 +11,7 @@ they're attached to has).
 We embed `tools/ucd/Scripts.txt` and lazy-parse on first call into
 a sorted `[]Range` table, then binary-search per codepoint. Same
 pattern as `linebreak/property.odin`; the codegen-baked two-stage
-trie that PROPOSAL §7a calls for is the v0.5 polish step.
+trie is the v0.5 polish step.
 
 References: UAX #24, "Unicode Script Property",
 `https://www.unicode.org/Public/UCD/latest/ucd/Scripts.txt`.

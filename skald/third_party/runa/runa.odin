@@ -1,17 +1,12 @@
 /*
 Package runa is a pure-Odin modern text engine — parsing → itemization →
-shaping → line-breaking → rasterization. See PROPOSAL.md for the design
-doc and §6 for the public API contract.
+shaping → line-breaking → rasterization. See API.md for the public
+API contract.
 
 This file is the public facade. Internal modules live in sibling
 directories (`parse/`, `shape/`, `itemize/`, `bidi/`, `linebreak/`,
 `raster/`) and are not part of the supported API surface — consumers
 should reach into them only at their own risk.
-
-The library is in proposal-stage build-out. The API sketch below tracks
-PROPOSAL.md §6, but only procedures marked `// implemented` actually
-have bodies yet. The rest are placeholders so the contract is visible
-while the engine is built bottom-up.
 */
 package runa
 
@@ -205,7 +200,7 @@ Line :: struct {
 // first font that covers each codepoint wins.
 Font_Stack :: distinct []^Font
 
-// Paragraph_Opts is the per-call configuration. See PROPOSAL §6.
+// Paragraph_Opts is the per-call configuration. See API.md.
 //
 // At v0.1 only `fonts` and `size` are load-bearing. `align`, `direction`,
 // `max_width`, and `language` are accepted but their effects are partial

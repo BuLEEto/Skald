@@ -152,10 +152,236 @@ gsub_dispatch_lookup :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Gly
 				return 1
 			}
 		}
+	case 5:
+		for sub in info.subtable_offsets {
+			if consumed := apply_context(g, sub, glyphs, pos, depth); consumed > 0 {
+				return consumed
+			}
+		}
 	case 6:
 		for sub in info.subtable_offsets {
 			if consumed := apply_chained_context(g, sub, glyphs, pos, depth); consumed > 0 {
 				return consumed
+			}
+		}
+	}
+	return 0
+}
+
+// apply_context — GSUB lookup type 5 "Contextual Substitution",
+// formats 1 (glyph sequence), 2 (class-based), and 3 (coverage-
+// based). Type 5 is the precursor of type 6 (chaining context) but
+// without backtrack / lookahead — it matches a single forward
+// glyph sequence and triggers nested substitution lookups at
+// specific positions within that match.
+@(private)
+apply_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+	d := g.data
+	if u64(sub_off) + 2 > u64(len(d)) { return 0 }
+	format := u16(d[sub_off])<<8 | u16(d[sub_off + 1])
+
+	switch format {
+	case 1:
+		return apply_context_format_1(g, sub_off, glyphs, pos, depth)
+	case 2:
+		return apply_context_format_2(g, sub_off, glyphs, pos, depth)
+	case 3:
+		return apply_context_format_3(g, sub_off, glyphs, pos, depth)
+	}
+	return 0
+}
+
+// Type 5 format 1 — simple glyph-sequence context.
+// Layout:
+//   2  format = 1
+//   2  coverageOffset
+//   2  seqRuleSetCount
+//   2*seqRuleSetCount  seqRuleSetOffsets
+//
+// Each SequenceRuleSet:
+//   2  seqRuleCount
+//   2*seqRuleCount     seqRuleOffsets
+//
+// Each SequenceRule:
+//   2  glyphCount
+//   2  seqLookupCount
+//   2*(glyphCount - 1)  inputSequence
+//   4*seqLookupCount    seqLookupRecords (seqIdx u16, lookupIdx u16)
+@(private)
+apply_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+	d := g.data
+	if u64(sub_off) + 6 > u64(len(d)) { return 0 }
+	cov_off := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
+	cov_idx := coverage_index(d, sub_off + cov_off, glyphs[pos])
+	if cov_idx < 0 { return 0 }
+
+	rule_set_count := int(u16(d[sub_off + 4])<<8 | u16(d[sub_off + 5]))
+	if cov_idx >= rule_set_count { return 0 }
+	rs_off_pos := sub_off + 6 + u32(cov_idx) * 2
+	if u64(rs_off_pos) + 2 > u64(len(d)) { return 0 }
+	rs_rel := u32(u16(d[rs_off_pos])<<8 | u16(d[rs_off_pos + 1]))
+	if rs_rel == 0 { return 0 }
+	rs := sub_off + rs_rel
+	if u64(rs) + 2 > u64(len(d)) { return 0 }
+	rule_count := int(u16(d[rs])<<8 | u16(d[rs + 1]))
+	for i in 0..<rule_count {
+		rp := rs + 2 + u32(i) * 2
+		if u64(rp) + 2 > u64(len(d)) { break }
+		rule_rel := u32(u16(d[rp])<<8 | u16(d[rp + 1]))
+		rule := rs + rule_rel
+		if u64(rule) + 4 > u64(len(d)) { continue }
+		glyph_count := int(u16(d[rule])<<8 | u16(d[rule + 1]))
+		seq_count   := int(u16(d[rule + 2])<<8 | u16(d[rule + 3]))
+		if glyph_count < 1 { continue }
+		if pos + glyph_count > len(glyphs) { continue }
+		seq_off := rule + 4
+		matched := true
+		for k in 1..<glyph_count {
+			gp := seq_off + u32(k - 1) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if u16(glyphs[pos + k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		seq_recs := seq_off + u32(glyph_count - 1) * 2
+		return apply_seq_lookups(g, glyphs, pos, glyph_count, seq_recs, seq_count, depth)
+	}
+	return 0
+}
+
+// Type 5 format 2 — class-based context.
+@(private)
+apply_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+	d := g.data
+	if u64(sub_off) + 8 > u64(len(d)) { return 0 }
+	cov_off    := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
+	class_off  := u32(u16(d[sub_off + 4])<<8 | u16(d[sub_off + 5]))
+	class_set_count := int(u16(d[sub_off + 6])<<8 | u16(d[sub_off + 7]))
+	if coverage_index(d, sub_off + cov_off, glyphs[pos]) < 0 { return 0 }
+
+	cls := class_of(d, sub_off + class_off, glyphs[pos])
+	if cls >= u16(class_set_count) { return 0 }
+	cs_off_pos := sub_off + 8 + u32(cls) * 2
+	if u64(cs_off_pos) + 2 > u64(len(d)) { return 0 }
+	cs_rel := u32(u16(d[cs_off_pos])<<8 | u16(d[cs_off_pos + 1]))
+	if cs_rel == 0 { return 0 }
+	cs := sub_off + cs_rel
+	if u64(cs) + 2 > u64(len(d)) { return 0 }
+	rule_count := int(u16(d[cs])<<8 | u16(d[cs + 1]))
+	for i in 0..<rule_count {
+		rp := cs + 2 + u32(i) * 2
+		if u64(rp) + 2 > u64(len(d)) { break }
+		rule_rel := u32(u16(d[rp])<<8 | u16(d[rp + 1]))
+		rule := cs + rule_rel
+		if u64(rule) + 4 > u64(len(d)) { continue }
+		glyph_count := int(u16(d[rule])<<8 | u16(d[rule + 1]))
+		seq_count   := int(u16(d[rule + 2])<<8 | u16(d[rule + 3]))
+		if glyph_count < 1 { continue }
+		if pos + glyph_count > len(glyphs) { continue }
+		seq_off := rule + 4
+		matched := true
+		for k in 1..<glyph_count {
+			gp := seq_off + u32(k - 1) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want_cls := u16(d[gp])<<8 | u16(d[gp + 1])
+			if class_of(d, sub_off + class_off, glyphs[pos + k]) != want_cls { matched = false; break }
+		}
+		if !matched { continue }
+		seq_recs := seq_off + u32(glyph_count - 1) * 2
+		return apply_seq_lookups(g, glyphs, pos, glyph_count, seq_recs, seq_count, depth)
+	}
+	return 0
+}
+
+// Type 5 format 3 — coverage-array-based context. Same shape as type
+// 6 format 3 without the backtrack / lookahead arrays.
+@(private)
+apply_context_format_3 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+	d := g.data
+	if u64(sub_off) + 6 > u64(len(d)) { return 0 }
+	in_count := int(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
+	seq_count := int(u16(d[sub_off + 4])<<8 | u16(d[sub_off + 5]))
+	if in_count == 0 { return 0 }
+	if pos + in_count > len(glyphs) { return 0 }
+
+	in_offs_base := sub_off + 6
+	if u64(in_offs_base) + u64(in_count) * 2 > u64(len(d)) { return 0 }
+
+	// Wait — the seq_count is actually positioned AFTER the input
+	// coverage offsets, not before. Reparse layout per spec:
+	//   2  format
+	//   2  glyphCount     (== in_count)
+	//   2  seqLookupCount (== seq_count)
+	//   2*glyphCount  coverageOffsets
+	//   4*seqLookupCount  seqLookupRecords
+	in_offs_base = sub_off + 6
+	if u64(in_offs_base) + u64(in_count) * 2 > u64(len(d)) { return 0 }
+	for i in 0..<in_count {
+		p := in_offs_base + u32(i) * 2
+		off := u32(u16(d[p])<<8 | u16(d[p + 1]))
+		if coverage_index(d, sub_off + off, glyphs[pos + i]) < 0 { return 0 }
+	}
+	seq_recs := in_offs_base + u32(in_count) * 2
+	return apply_seq_lookups(g, glyphs, pos, in_count, seq_recs, seq_count, depth)
+}
+
+// apply_seq_lookups runs the SubstLookupRecord array shared by type
+// 5 and type 6 contextual subtables.
+@(private)
+apply_seq_lookups :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, pos, window_size: int, seq_recs_base: u32, seq_count, depth: int) -> int {
+	d := g.data
+	consumed := window_size
+	for s in 0..<seq_count {
+		p := seq_recs_base + u32(s) * 4
+		if u64(p) + 4 > u64(len(d)) { break }
+		seq_idx := int(u16(d[p])<<8 | u16(d[p + 1]))
+		lookup_idx := u16(d[p + 2])<<8 | u16(d[p + 3])
+		if seq_idx >= consumed { continue }
+
+		nested, err := gsub_get_lookup(g, lookup_idx, context.temp_allocator)
+		if err != .None { continue }
+
+		before := len(glyphs)
+		_ = gsub_dispatch_lookup(g, &nested, glyphs, pos + seq_idx, depth + 1)
+		after := len(glyphs)
+		if before > after {
+			consumed -= (before - after)
+			if consumed < 1 { consumed = 1 }
+		}
+	}
+	return consumed
+}
+
+// class_of looks up the ClassDef class for `g` in a ClassDef table at
+// `off`. Format 1 = range start + class array; format 2 = sorted range
+// records.
+@(private)
+class_of :: proc(data: []u8, off: u32, g: Glyph_ID) -> u16 {
+	if u64(off) + 2 > u64(len(data)) { return 0 }
+	format := u16(data[off])<<8 | u16(data[off + 1])
+	switch format {
+	case 1:
+		if u64(off) + 6 > u64(len(data)) { return 0 }
+		start := u16(data[off + 2])<<8 | u16(data[off + 3])
+		count := u16(data[off + 4])<<8 | u16(data[off + 5])
+		if u16(g) < start || u16(g) >= start + count { return 0 }
+		p := off + 6 + u32(u16(g) - start) * 2
+		if u64(p) + 2 > u64(len(data)) { return 0 }
+		return u16(data[p])<<8 | u16(data[p + 1])
+	case 2:
+		if u64(off) + 4 > u64(len(data)) { return 0 }
+		nr := int(u16(data[off + 2])<<8 | u16(data[off + 3]))
+		lo, hi := 0, nr
+		for lo < hi {
+			mid := (lo + hi) / 2
+			rp := off + 4 + u32(mid) * 6
+			if u64(rp) + 6 > u64(len(data)) { return 0 }
+			r_start := u16(data[rp])<<8     | u16(data[rp + 1])
+			r_end   := u16(data[rp + 2])<<8 | u16(data[rp + 3])
+			switch {
+			case u16(g) < r_start: hi = mid
+			case u16(g) > r_end:   lo = mid + 1
+			case:                  return u16(data[rp + 4])<<8 | u16(data[rp + 5])
 			}
 		}
 	}
@@ -259,7 +485,13 @@ apply_chained_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID
 	d := g.data
 	if u64(sub_off) + 2 > u64(len(d)) { return 0 }
 	format := u16(d[sub_off])<<8 | u16(d[sub_off + 1])
-	if format != 3 { return 0 }              // formats 1 and 2 deferred
+	if format == 2 {
+		return apply_chained_context_format_2(g, sub_off, glyphs, pos, depth)
+	}
+	if format == 1 {
+		return apply_chained_context_format_1(g, sub_off, glyphs, pos, depth)
+	}
+	if format != 3 { return 0 }
 
 	// Layout (relative to sub_off):
 	//   2  format
@@ -357,4 +589,180 @@ apply_chained_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID
 gsub_apply_ligature :: proc(g: ^Gsub, lookup: ^Lookup_Info, glyphs: ^[dynamic]Glyph_ID) -> (substitutions: int) {
 	if lookup.type != 4 { return 0 }
 	return gsub_apply_lookup_pass(g, lookup, glyphs, 0)
+}
+
+// apply_chained_context_format_1 — type 6 format 1 (glyph-sequence
+// chaining context).
+//
+// Layout:
+//   2  format = 1
+//   2  coverageOffset
+//   2  chainSubRuleSetCount
+//   2*chainSubRuleSetCount  chainSubRuleSetOffsets
+//
+// Each ChainSubRuleSet:
+//   2  chainSubRuleCount
+//   2*chainSubRuleCount     chainSubRuleOffsets
+//
+// Each ChainSubRule:
+//   2  backtrackGlyphCount
+//   2*backtrackGlyphCount   backtrackSequence (glyph ids)
+//   2  inputGlyphCount
+//   2*(inputGlyphCount - 1) inputSequence
+//   2  lookaheadGlyphCount
+//   2*lookaheadGlyphCount   lookaheadSequence
+//   2  substLookupCount
+//   4*substLookupCount      substLookupRecords
+@(private)
+apply_chained_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+	d := g.data
+	if u64(sub_off) + 6 > u64(len(d)) { return 0 }
+	cov_off := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
+	cov_idx := coverage_index(d, sub_off + cov_off, glyphs[pos])
+	if cov_idx < 0 { return 0 }
+	rs_count := int(u16(d[sub_off + 4])<<8 | u16(d[sub_off + 5]))
+	if cov_idx >= rs_count { return 0 }
+
+	rs_off_pos := sub_off + 6 + u32(cov_idx) * 2
+	if u64(rs_off_pos) + 2 > u64(len(d)) { return 0 }
+	rs_rel := u32(u16(d[rs_off_pos])<<8 | u16(d[rs_off_pos + 1]))
+	if rs_rel == 0 { return 0 }
+	rs := sub_off + rs_rel
+	if u64(rs) + 2 > u64(len(d)) { return 0 }
+	rule_count := int(u16(d[rs])<<8 | u16(d[rs + 1]))
+	for i in 0..<rule_count {
+		rp := rs + 2 + u32(i) * 2
+		if u64(rp) + 2 > u64(len(d)) { break }
+		rule_rel := u32(u16(d[rp])<<8 | u16(d[rp + 1]))
+		rule := rs + rule_rel
+		if u64(rule) + 2 > u64(len(d)) { continue }
+		bt_count := int(u16(d[rule])<<8 | u16(d[rule + 1]))
+		cur := rule + 2
+		// Match backtrack (in reverse order — backtrack[0] is the
+		// glyph immediately before pos).
+		matched := true
+		if pos < bt_count { continue }
+		for k in 0..<bt_count {
+			gp := cur + u32(k) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if u16(glyphs[pos - 1 - k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		cur += u32(bt_count) * 2
+		if u64(cur) + 2 > u64(len(d)) { continue }
+		in_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
+		cur += 2
+		if pos + in_count > len(glyphs) { continue }
+		for k in 1..<in_count {
+			gp := cur + u32(k - 1) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if u16(glyphs[pos + k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		cur += u32(in_count - 1) * 2
+		if u64(cur) + 2 > u64(len(d)) { continue }
+		la_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
+		cur += 2
+		la_start := pos + in_count
+		if la_start + la_count > len(glyphs) { continue }
+		for k in 0..<la_count {
+			gp := cur + u32(k) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if u16(glyphs[la_start + k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		cur += u32(la_count) * 2
+		if u64(cur) + 2 > u64(len(d)) { continue }
+		seq_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
+		return apply_seq_lookups(g, glyphs, pos, in_count, cur + 2, seq_count, depth)
+	}
+	return 0
+}
+
+// apply_chained_context_format_2 — type 6 format 2 (class-based
+// chaining context).
+//
+// Layout:
+//   2  format = 2
+//   2  coverageOffset
+//   2  backtrackClassDefOffset
+//   2  inputClassDefOffset
+//   2  lookaheadClassDefOffset
+//   2  chainSubClassSetCount
+//   2*chainSubClassSetCount  chainSubClassSetOffsets (may be 0)
+//
+// Each ChainSubClassSet / Rule shape is the same as format 1 but the
+// backtrack / input / lookahead arrays hold *class values* instead of
+// glyph IDs.
+@(private)
+apply_chained_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+	d := g.data
+	if u64(sub_off) + 12 > u64(len(d)) { return 0 }
+	cov_off    := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
+	if coverage_index(d, sub_off + cov_off, glyphs[pos]) < 0 { return 0 }
+	bt_class   := u32(u16(d[sub_off + 4])<<8 | u16(d[sub_off + 5]))
+	in_class   := u32(u16(d[sub_off + 6])<<8 | u16(d[sub_off + 7]))
+	la_class   := u32(u16(d[sub_off + 8])<<8 | u16(d[sub_off + 9]))
+	cs_count   := int(u16(d[sub_off + 10])<<8 | u16(d[sub_off + 11]))
+
+	cls0 := class_of(d, sub_off + in_class, glyphs[pos])
+	if cls0 >= u16(cs_count) { return 0 }
+	cs_off_pos := sub_off + 12 + u32(cls0) * 2
+	if u64(cs_off_pos) + 2 > u64(len(d)) { return 0 }
+	cs_rel := u32(u16(d[cs_off_pos])<<8 | u16(d[cs_off_pos + 1]))
+	if cs_rel == 0 { return 0 }
+	cs := sub_off + cs_rel
+	if u64(cs) + 2 > u64(len(d)) { return 0 }
+	rule_count := int(u16(d[cs])<<8 | u16(d[cs + 1]))
+	for i in 0..<rule_count {
+		rp := cs + 2 + u32(i) * 2
+		if u64(rp) + 2 > u64(len(d)) { break }
+		rule_rel := u32(u16(d[rp])<<8 | u16(d[rp + 1]))
+		rule := cs + rule_rel
+		if u64(rule) + 2 > u64(len(d)) { continue }
+		bt_count := int(u16(d[rule])<<8 | u16(d[rule + 1]))
+		cur := rule + 2
+		matched := true
+		if pos < bt_count { continue }
+		for k in 0..<bt_count {
+			gp := cur + u32(k) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if class_of(d, sub_off + bt_class, glyphs[pos - 1 - k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		cur += u32(bt_count) * 2
+		if u64(cur) + 2 > u64(len(d)) { continue }
+		in_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
+		cur += 2
+		if pos + in_count > len(glyphs) { continue }
+		for k in 1..<in_count {
+			gp := cur + u32(k - 1) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if class_of(d, sub_off + in_class, glyphs[pos + k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		cur += u32(in_count - 1) * 2
+		if u64(cur) + 2 > u64(len(d)) { continue }
+		la_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
+		cur += 2
+		la_start := pos + in_count
+		if la_start + la_count > len(glyphs) { continue }
+		for k in 0..<la_count {
+			gp := cur + u32(k) * 2
+			if u64(gp) + 2 > u64(len(d)) { matched = false; break }
+			want := u16(d[gp])<<8 | u16(d[gp + 1])
+			if class_of(d, sub_off + la_class, glyphs[la_start + k]) != want { matched = false; break }
+		}
+		if !matched { continue }
+		cur += u32(la_count) * 2
+		if u64(cur) + 2 > u64(len(d)) { continue }
+		seq_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
+		return apply_seq_lookups(g, glyphs, pos, in_count, cur + 2, seq_count, depth)
+	}
+	return 0
 }

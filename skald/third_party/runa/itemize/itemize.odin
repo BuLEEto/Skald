@@ -8,7 +8,7 @@ v0.1 ships script segmentation; per-codepoint font fallback is the
 caller's concern at the layout layer. v0.5 will fuse this with bidi
 embedding levels so each run is one (script, direction, font) tuple.
 
-See PROPOSAL §5.
+See README.md.
 */
 package itemize
 
