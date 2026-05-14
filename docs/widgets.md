@@ -47,7 +47,7 @@ per row" recipe walks through both styles.
 - [Small decorations](#small-decorations) — badge, chip, avatar, kbd, stepper, alert
 - [Floating and feedback](#floating-and-feedback) — overlay, tooltip, dialog, confirm_dialog, alert_dialog, toast, menu
 - [Interaction helpers](#interaction-helpers) — right_click_zone, context_menu, drop_zone, drag_over
-- [Framework helpers](#framework-helpers) — widget_tab_index, font_add_fallback, Window_State
+- [Framework helpers](#framework-helpers) — widget_tab_index, font_add_fallback, font_use_default_emoji, Window_State
 
 ---
 
@@ -1368,9 +1368,36 @@ Chain `fallback` onto `base` so codepoints missing from the base
 font fall through to the next font in the chain. Use
 `font_default(r)` as `base` to extend the framework-wide glyph
 coverage beyond Inter (Latin + Cyrillic). Up to 20 fallbacks per
-base. Handles CJK / Cyrillic extensions / symbols cleanly; complex
-scripts (Arabic, Devanagari, Thai) render glyphs but without
-contextual shaping — HarfBuzz integration is post-1.0.
+base. Handles CJK / Cyrillic extensions / symbols cleanly. Under
+the runa backend (`SKALD_RUNA=1`) full OpenType shaping (ligatures,
+GPOS kerning, contextual alternates) is applied; under fontstash
+(default) glyphs render without shaping. RTL and complex-script
+shaping (Arabic, Devanagari, Thai) arrive with runa v0.5.
+
+### font_use_default_emoji
+
+```odin
+font_use_default_emoji(r: ^Renderer) -> Font
+```
+
+One-line opt-in for colour emoji. Loads Skald's bundled
+Twemoji-Mozilla (COLRv0 layered TTF) and chains it as a fallback
+to `font_default(r)`. Idempotent — subsequent calls return the
+cached handle without re-registering. Best called once on first
+frame from inside `view` (same pattern as the icon-font setup in
+`examples/39_icons`).
+
+Backend behaviour: under runa (`SKALD_RUNA=1`) the emoji render
+as full COLRv0 colour glyphs via an RGBA atlas. Under the default
+fontstash backend they fall through to `.notdef` tofu — fontstash
+doesn't decode COLR tables. Runa becomes the default in 1.1; until
+then the helper is effectively a no-op for fontstash users but
+calling it now means no code change at the flip.
+
+Bundled artwork is Twemoji (CC-BY-4.0). Apps shipping a Skald
+binary are redistributing it — add an attribution line in your
+About / docs. Full notice at
+[`skald/assets/Twemoji-Mozilla-CCBY.txt`](../skald/assets/Twemoji-Mozilla-CCBY.txt).
 
 ### Window_State, initial_window_state, on_window_state_change
 

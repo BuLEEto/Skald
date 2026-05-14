@@ -41,6 +41,22 @@ bug fixes bump the patch.
   (`Scripts.txt` / `LineBreak.txt`) ship under the Unicode-DFS-2016
   licence at `skald/third_party/runa/tools/ucd/`.
 
+  Two follow-ups already on `main` past the initial vendor:
+  - **runa glyph size matches fontstash visually.** The two backends
+    disagreed on what `size = N` means (fontstash: ascent − descent
+    = N px; runa: em-square = N px), so flipping `SKALD_RUNA=1` made
+    text render ~33 % larger. Skald now rescales per-font at the
+    boundary so the visual size is identical across backends. Apps
+    can flip the flag with no layout surprises.
+  - **`font_use_default_emoji(r)` — one-line colour emoji opt-in.**
+    Skald now bundles Twemoji-Mozilla (COLRv0, ~1.4 MB) at
+    `skald/assets/Twemoji-Mozilla.ttf`. The helper loads it and
+    chains as a fallback to Inter — under runa the emoji render in
+    full colour, under fontstash they still tofu (until 1.1 flips
+    runa default). Idempotent. Bundled artwork is CC-BY-4.0; apps
+    shipping Skald binaries add an attribution line per the notice
+    at `skald/assets/Twemoji-Mozilla-CCBY.txt`.
+
 - **`cmd_set_theme(Msg, theme)` — swap the active theme from
   `update`.** The runtime owns one `Theme` value across frames;
   this command writes the new theme into that slot between frames
