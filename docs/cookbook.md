@@ -789,15 +789,70 @@ are on the icon set's website; copy `\uXXXX` into your string.
 
 A working example lives in [`examples/39_icons`](../examples/39_icons).
 
-**Colour emoji** (😀 with the actual yellow face): on the default
-fontstash backend, emoji codepoints render monochrome or tofu —
-fontstash doesn't decode CBDT / sbix / COLR colour formats. The runa
-backend (build with `SKALD_RUNA=1`) renders COLRv0 layered colour
-glyphs natively. Register a colour-emoji font like Twemoji-Mozilla
-via `font_add_fallback` and emoji appear in every text widget. See
-[`examples/45_color_emoji`](../examples/45_color_emoji) for the
-canonical mixed-text + Twemoji demo. COLRv1 gradient fonts (current
-Noto Color Emoji) land in runa v0.5.
+### Enable colour emoji
+
+Skald ships Twemoji-Mozilla (a COLRv0 colour-emoji TTF) as a bundled
+asset. One line opts in:
+
+```odin
+view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
+    // First-frame setup. Idempotent — safe to call every frame.
+    skald.font_use_default_emoji(ctx.renderer)
+    // ... rest of view; any text() / button() / text_input() picks
+    // up emoji glyphs automatically.
+}
+```
+
+Under the runa backend (`SKALD_RUNA=1`) the emoji render in full
+COLRv0 colour via an RGBA atlas. Under the default fontstash
+backend they fall through to `.notdef` tofu — fontstash doesn't
+decode COLR / CBDT / sbix tables. Runa becomes the default in
+Skald 1.1; until then the helper is a no-op for fontstash users.
+
+The bundled artwork is Twemoji, CC-BY-4.0. Apps shipping a Skald
+binary are redistributing it — add an attribution line in your
+app's About / docs ("Twemoji by Twitter, Inc. and contributors —
+CC-BY 4.0"). Full notice at
+[`skald/assets/Twemoji-Mozilla-CCBY.txt`](../skald/assets/Twemoji-Mozilla-CCBY.txt).
+
+If you want a different emoji set (e.g., Apple Color Emoji, Noto
+Color Emoji), load it manually instead of calling the helper —
+register it as a fallback the same way as the CJK or icon-font
+examples above. Runa v0.5 will add COLRv1 gradient support which
+makes modern Noto Color Emoji render properly; for now use a
+COLRv0 set like Twemoji.
+
+A working example lives in
+[`examples/45_color_emoji`](../examples/45_color_emoji).
+
+### Load any font from a file path
+
+Both backends accept TTF / OTF bytes via `font_load`. For "let the
+user pick a font" features (font picker in a text editor, app
+preferences, etc.) read the bytes off disk and hand them in:
+
+```odin
+data, err := os.read_entire_file_from_path("/usr/share/fonts/.../Arial.ttf", context.allocator)
+if err != nil { /* fall back, show error, etc. */ return }
+arial := skald.font_load(ctx.renderer, "arial", data)
+
+// Use as the default for some widget:
+skald.text("Hello in Arial", th.color.fg, 14, font = arial)
+```
+
+The bytes must stay alive for the lifetime of the renderer — both
+backends borrow the slice rather than copying. Allocate it once on
+load (e.g., into `context.allocator`) and keep a reference; don't
+let it free when the surrounding scope exits.
+
+**What Skald doesn't do**: enumerate the system's installed fonts.
+That's a per-OS problem (Win32 `EnumFontFamilies` on Windows,
+Core Text on macOS, fontconfig on Linux), out of scope for the
+core framework. Apps that want a "pick from system fonts" UX
+either ship a curated font list, scan a known directory
+(`/usr/share/fonts`, `~/Library/Fonts`, `C:\Windows\Fonts`) for
+TTF/OTF files, or bind to a per-OS enumeration library. Once you
+have a path, `font_load` does the rest.
 
 ## Localization
 
