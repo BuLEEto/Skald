@@ -70,9 +70,13 @@ emoji_skin_tones := [6]string{"", "🏻", "🏼", "🏽", "🏾", "🏿"}
 @(rodata, private="file")
 emoji_skin_swatches := [6]string{"✋", "✋🏻", "✋🏼", "✋🏽", "✋🏾", "✋🏿"}
 
-@(private="file") EMOJI_PICKER_COLS   :: 8
-@(private="file") EMOJI_PICKER_ROWS   :: 6
-@(private="file") EMOJI_PICKER_PER_PG :: EMOJI_PICKER_COLS * EMOJI_PICKER_ROWS
+@(private="file") EMOJI_PICKER_COLS         :: 8
+// Grid rows are chosen per-view so the overall popover height stays
+// roughly constant: full 6 rows when the tone strip is hidden, 5 rows
+// when it's shown (the dropped row roughly balances the tone strip's
+// extra height). Pagination absorbs the difference in per-page count.
+@(private="file") EMOJI_PICKER_ROWS_DEFAULT :: 6
+@(private="file") EMOJI_PICKER_ROWS_TONED   :: 5
 @(private="file") EMOJI_CELL_SIZE     :: f32(36)
 @(private="file") EMOJI_TAB_SIZE      :: f32(32)
 @(private="file") EMOJI_SEARCH_H      :: f32(32)
@@ -147,10 +151,6 @@ _emoji_picker_impl :: proc(
 		hi := emoji_group_offsets[cat + 1]
 		for i in lo..<hi { append(&results, i) }
 	}
-	total    := len(results)
-	max_page := max(0, (total - 1) / EMOJI_PICKER_PER_PG)
-	if page > max_page { page = max_page; st.drag_donor = page }
-
 	// Tones only apply to People & Body (and any future skin-tone-base
 	// emojis). Suppress the tone strip on categories / searches where
 	// none of the visible entries respond, so the swatches don't look
@@ -160,15 +160,30 @@ _emoji_picker_impl :: proc(
 		if emoji_table[idx].has_skin { tones_apply = true; break }
 	}
 
+	// Trade one grid row for the tone strip so the popover height stays
+	// constant when switching between People (tones visible) and other
+	// categories (tones hidden). Pagination absorbs the smaller per-page
+	// count automatically.
+	rows := EMOJI_PICKER_ROWS_DEFAULT
+	if tones_apply { rows = EMOJI_PICKER_ROWS_TONED }
+	per_page := EMOJI_PICKER_COLS * rows
+
+	total    := len(results)
+	max_page := max(0, (total - 1) / per_page)
+	if page > max_page { page = max_page; st.drag_donor = page }
+
 	// Popover geometry.
 	overlay_pad := th.spacing.md
 	border_w    := f32(1)
 	gap         := th.spacing.sm
 	tabs_h      := EMOJI_TAB_SIZE
-	grid_h      := f32(EMOJI_PICKER_ROWS) * EMOJI_CELL_SIZE
+	grid_h      := f32(rows) * EMOJI_CELL_SIZE
 	tone_h      := f32(28)
 	page_text_h := f32(18)
-	tone_page_gap := f32(2)
+	// 8px (not 2) so the with-tones footer is exactly 6 px taller, which
+	// matches the row removed from the grid — keeping overall popover
+	// height identical across categories.
+	tone_page_gap := f32(8)
 	footer_h    := page_text_h
 	if tones_apply { footer_h = tone_h + tone_page_gap + page_text_h }
 	header_h := EMOJI_SEARCH_H + gap
@@ -270,7 +285,7 @@ _emoji_picker_impl :: proc(
 			hi := emoji_group_offsets[cat + 1]
 			for i in lo..<hi { append(&results, i) }
 			total    = len(results)
-			max_page = max(0, (total - 1) / EMOJI_PICKER_PER_PG)
+			max_page = max(0, (total - 1) / per_page)
 		}
 	}
 
@@ -289,8 +304,8 @@ _emoji_picker_impl :: proc(
 	if st.open && ctx.input.mouse_released[.Left] && rect_contains_point(grid_rect, ctx.input.mouse_pos) {
 		col_idx := int((ctx.input.mouse_pos.x - grid_rect.x) / EMOJI_CELL_SIZE)
 		row_idx := int((ctx.input.mouse_pos.y - grid_rect.y) / EMOJI_CELL_SIZE)
-		if col_idx >= 0 && col_idx < EMOJI_PICKER_COLS && row_idx >= 0 && row_idx < EMOJI_PICKER_ROWS {
-			cell_idx := page * EMOJI_PICKER_PER_PG + row_idx * EMOJI_PICKER_COLS + col_idx
+		if col_idx >= 0 && col_idx < EMOJI_PICKER_COLS && row_idx >= 0 && row_idx < rows {
+			cell_idx := page * per_page + row_idx * EMOJI_PICKER_COLS + col_idx
 			if cell_idx < total {
 				entry := emoji_table[results[cell_idx]]
 				glyph := entry.glyph
@@ -429,12 +444,13 @@ _emoji_picker_impl :: proc(
 		tabs_view = row(..tab_cells, spacing = 0, width = tabs_rect.w, height = tabs_h)
 	}
 
-	// Grid — N pages of 48, optionally short on the last page.
-	row_views := make([]View, EMOJI_PICKER_ROWS, context.temp_allocator)
-	for r in 0..<EMOJI_PICKER_ROWS {
+	// Grid — `per_page` cells per page (48 without tones, 40 with),
+	// optionally short on the last page.
+	row_views := make([]View, rows, context.temp_allocator)
+	for r in 0..<rows {
 		cell_views := make([]View, EMOJI_PICKER_COLS, context.temp_allocator)
 		for cc in 0..<EMOJI_PICKER_COLS {
-			cell_idx := page * EMOJI_PICKER_PER_PG + r * EMOJI_PICKER_COLS + cc
+			cell_idx := page * per_page + r * EMOJI_PICKER_COLS + cc
 			if cell_idx < total {
 				cell_x := grid_rect.x + f32(cc) * EMOJI_CELL_SIZE
 				cell_y := grid_rect.y + f32(r)  * EMOJI_CELL_SIZE
