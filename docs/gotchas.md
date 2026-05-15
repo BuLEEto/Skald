@@ -212,7 +212,7 @@ inside a worker terminates the whole process, with no chance for
 
 ## `odin doc` and widget builder signatures
 
-Widget builders like `button(ctx, label, msg, width = ..., color = ...)`
+Widget builders like `button(ctx, label, msg, width = ..., bg = ...)`
 have lots of optional named parameters. `odin doc ./skald` is the
 fastest way to see the full signature of any builder when you've
 forgotten which parameter does what. `widgets.md` covers the common

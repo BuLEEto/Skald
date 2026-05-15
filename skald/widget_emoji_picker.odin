@@ -87,9 +87,9 @@ emoji_skin_swatches := [6]string{"✋", "✋🏻", "✋🏼", "✋🏽", "✋�
 
 // One-shot warning when the picker is built under fontstash. Twemoji-
 // Mozilla ships COLR layers only — its `glyf` outlines are empty — so
-// fontstash renders every emoji cell as a blank rect, which is
-// effectively unusable. Remove this whole gate once runa becomes the
-// default backend (1.x) — there's no longer a path that hits it.
+// fontstash renders every emoji cell as a blank rect. Runa is now the
+// default backend so this only fires for apps that explicitly opted
+// out with `-define:SKALD_RUNA=false`.
 @(private="file") emoji_picker_warned_no_runa: bool
 
 @(private)
@@ -102,7 +102,7 @@ _emoji_picker_impl :: proc(
 	th := ctx.theme
 
 	if !emoji_picker_warned_no_runa && ctx.renderer != nil && ctx.renderer.text.runa_state == nil {
-		fmt.eprintln("[skald] emoji_picker: running under fontstash — emoji cells will render blank. Build with SKALD_RUNA=1 for colour emoji.")
+		fmt.eprintln("[skald] emoji_picker: running under fontstash — emoji cells will render blank. Remove `-define:SKALD_RUNA=false` to get colour emoji (runa is the default backend).")
 		emoji_picker_warned_no_runa = true
 	}
 

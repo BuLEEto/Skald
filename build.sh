@@ -17,8 +17,9 @@
 #
 # Runa is the pure-Odin text engine that ships vendored at
 # skald/third_party/runa/ — Skald imports it via a relative path so
-# clones build standalone without any extra collection flag.
-# Pass SKALD_RUNA=1 to route text through runa instead of fontstash.
+# clones build standalone without any extra collection flag. Runa is
+# the default backend; pass SKALD_RUNA=0 to force the legacy fontstash
+# path instead (no colour emoji, no complex-script shaping).
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -34,8 +35,8 @@ if [[ "${RELEASE:-0}" == "1" ]]; then
 fi
 
 RUNA_DEFINE=""
-if [[ "${SKALD_RUNA:-0}" == "1" ]]; then
-    RUNA_DEFINE="-define:SKALD_RUNA=true"
+if [[ "${SKALD_RUNA:-}" == "0" ]]; then
+    RUNA_DEFINE="-define:SKALD_RUNA=false"
 fi
 
 odin build "examples/${EXAMPLE}" \

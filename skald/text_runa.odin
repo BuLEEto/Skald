@@ -6,9 +6,9 @@ import vk "vendor:vulkan"
 import runa "third_party/runa"
 
 // Text_Runa carries the runa-backed text state. Allocated once per
-// Renderer when the `SKALD_RUNA` build define is true *and*
-// `text_init_runa` succeeds; otherwise `Text.runa_state` stays nil
-// and the renderer transparently falls back to fontstash.
+// Renderer when the `SKALD_RUNA` build define is true (default since
+// 1.0) *and* `text_init_runa` succeeds; otherwise `Text.runa_state`
+// stays nil and the renderer transparently falls back to fontstash.
 //
 // Phase 1a: mono (alpha) glyph path. The runa atlas is sized 1024×1024
 // to match Skald's existing GPU image; alpha-page dirty rects flow into
@@ -106,11 +106,14 @@ text_runa_color_key :: proc(idx: int) -> string {
 	return fmt.tprintf("%s%d", COLOR_ATLAS_KEY_PREFIX, idx)
 }
 
-// RUNA_BACKEND_DEFAULT is true when the build was passed
-// `-define:SKALD_RUNA=true`. text_init reads this to decide whether
-// to even attempt the runa init path.
+// RUNA_BACKEND_DEFAULT controls whether the runa backend is attempted
+// at init time. Defaults to true since 1.0; runa renders colour emoji
+// (COLR/CPAL) and shapes complex scripts (Arabic, Indic, SEA), which
+// fontstash can't. Build with `-define:SKALD_RUNA=false` to fall back
+// to the legacy fontstash path. text_init also falls back automatically
+// if runa init fails for any reason, so apps stay running either way.
 @(private)
-RUNA_BACKEND_DEFAULT :: #config(SKALD_RUNA, false)
+RUNA_BACKEND_DEFAULT :: #config(SKALD_RUNA, true)
 
 // text_init_runa allocates the Text_Runa state, opens the four bundled
 // Inter faces against runa's parser, sizes the atlas to match Skald's
@@ -325,6 +328,28 @@ text_runa_px_size :: proc(fnt: ^runa.Font, skald_px: f32) -> f32 {
 	return skald_px * f32(fnt.units_per_em) / extent
 }
 
+// Per-side horizontal padding added to colour-emoji glyphs (as a
+// fraction of the glyph's typographic advance). Twemoji-Mozilla's
+// emoji glyphs are designed to fill their entire em-square — bbox
+// xMin..xMax sits flush against advance 0..N with zero right-side-
+// bearing. Two consequences without padding:
+//   1. The rasterized bitmap's pixel width ceils to one pixel more
+//      than the fractional advance, so adjacent emojis overlap by a
+//      pixel at any non-integer scale.
+//   2. Even at integer scale, emojis butt right up against each other
+//      with no visible gap — every other emoji renderer (Slack,
+//      Discord, iOS, Noto) adds breathing room here.
+// 8 % of advance ≈ 1.2 px at size 18, which both eliminates the
+// rounding overlap and gives the eye a faint gap between emojis.
+@(private) EMOJI_SIDE_PAD_FRAC :: f32(0.15)
+
+@(private)
+text_runa_glyph_advance :: proc(fnt: ^runa.Font, gid: u16, base_advance: f32) -> f32 {
+	if fnt == nil { return base_advance }
+	if !runa.font_has_color_layers(fnt, runa.Glyph_ID(gid)) { return base_advance }
+	return base_advance + base_advance * EMOJI_SIDE_PAD_FRAC
+}
+
 @(private)
 measure_text_runa :: proc(
 	r:    ^Renderer,
@@ -343,7 +368,25 @@ measure_text_runa :: proc(
 	stack := text_runa_stack(rs, f)
 	px_size := text_runa_px_size(rs.fonts[int(f)], size * scale)
 	opts  := runa.Paragraph_Opts{fonts = stack, size = px_size}
-	w, h  := runa.measure_text_cached(text, opts, &rs.cache)
+
+	// Use `layout_paragraph` (not `measure_text_cached`) so we can apply
+	// the colour-emoji side-padding per glyph — the cached fast-path
+	// just sums raw `x_advance` values and would diverge from
+	// `draw_text_runa`'s padded layout, throwing off cursor placement
+	// in text_input. Both still hit the same shape cache, so the cost
+	// versus the fast-path is the extra bidi + line-break work.
+	lines, err := runa.layout_paragraph(text, opts, &rs.cache, context.temp_allocator)
+	if err != .None { return }
+	w: f32 = 0
+	h: f32 = 0
+	for line in lines {
+		line_w: f32 = 0
+		for g in line.glyphs {
+			line_w += text_runa_glyph_advance(g.font, u16(g.glyph_id), g.x_advance)
+		}
+		if line_w > w { w = line_w }
+		if line.height > h { h = line.height }
+	}
 	return w / scale, h / scale
 }
 
@@ -399,8 +442,9 @@ draw_text_runa :: proc(
 
 	for line in lines {
 		for g in line.glyphs {
+			adv := text_runa_glyph_advance(g.font, u16(g.glyph_id), g.x_advance)
 			text_runa_emit_glyph(rs, r, g.font, u16(g.glyph_id),
-				g.x_advance, g.x_offset, g.y_advance, g.y_offset,
+				adv, g.x_offset, g.y_advance, g.y_offset,
 				px_size, inv, &pen_x, &pen_y, color)
 		}
 	}

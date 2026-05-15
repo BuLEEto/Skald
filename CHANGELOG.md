@@ -4,7 +4,34 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## Unreleased
+## 1.0.0-rc6 — 2026-05-15
+
+### Changed
+
+- **Runa is now the default text backend.** `RUNA_BACKEND_DEFAULT`
+  flips from `false` to `true`, so a plain `./build.sh …` routes text
+  through runa: OpenType shaping, COLRv0 + COLRv1 colour emoji
+  (including skin-tone modifier sequences via ccmp ligatures), Indic
+  + SEA + RTL bidi shaping, and faster text on every benched
+  workload. The fontstash path is retained as a fallback (build with
+  `-define:SKALD_RUNA=false` or `SKALD_RUNA=0 ./build.sh …` to opt
+  back in). `text_init` keeps the existing safety net: a runa init
+  failure logs a warning and falls back to fontstash automatically,
+  so apps keep running. The `emoji_picker` warning, the
+  `font_use_default_emoji` "no-op on fontstash" caveat, and every
+  doc/example that previously instructed users to set `SKALD_RUNA=1`
+  have been inverted.
+- **API consistency sweep (1.0 prep).** `button` renames its
+  background colour param from `color` to `bg`, matching every other
+  filled widget (`badge`, `chip`, `text_input`, `list_frame`, …);
+  callers using `button(color = …)` need to switch to
+  `button(bg = …)`. `split` moves its `id` param from position 9 to
+  position 6 (right after the `on_resize` callback), so positional
+  callers — there are none in the tree — would need to reorder.
+  Keyword callers are unaffected. View.odin's public-API conventions
+  comment is rewritten to match what the framework actually does
+  (flag toggles last, `width = 0` is intrinsic not fill,
+  `padding = -1` is "widget default" on styled wrappers).
 
 ### Added
 
@@ -23,13 +50,32 @@ bug fixes bump the patch.
   emojis, and a Fitzpatrick skin-tone toolbar. Picked emojis fire
   `on_pick(emoji_string)`; people / hand emojis with a non-default
   tone selected get the modifier codepoint appended. Recents are
-  app-owned (pass a `[]string`). Renders properly under runa
-  (`SKALD_RUNA=1`); under fontstash the cells render blank because
-  Twemoji's `glyf` outlines are empty (only COLR layers ship), so
-  the widget prints a one-shot stderr warning the first time it runs
-  under fontstash. Both the warning and the fontstash code path go
-  away when runa becomes the default backend. See
-  `examples/46_emoji_picker` + the cookbook recipe.
+  app-owned (pass a `[]string`). Renders properly under runa (the
+  new default backend); if you've opted into fontstash the cells
+  render blank because Twemoji's `glyf` outlines are empty (only
+  COLR layers ship), so the widget prints a one-shot stderr warning
+  the first time it runs under fontstash. See `examples/46_emoji_picker`
+  + the cookbook recipe.
+
+### Fixed
+
+- **Grapheme-cluster cursor stepping in `text_input`.** Backspace,
+  Delete, and the Left/Right arrows now step by one UAX #29 grapheme
+  cluster instead of one codepoint, via runa's grapheme iterator. The
+  user-visible change: skin-tone-modified emoji (👋🏽 = base + Fitzpatrick
+  modifier, 2 codepoints / 1 cluster), regional-indicator flag pairs,
+  and emoji ZWJ sequences now delete in a single keystroke. Pre-rc6,
+  one backspace on 👋🏽 removed only the modifier and left the default
+  yellow 👋 behind, requiring a second keystroke.
+- **Colour-emoji glyphs no longer overlap.** Twemoji-Mozilla emojis
+  have zero side-bearing inside their advance and the COLR raster
+  bitmap rounds up to the nearest pixel — at non-integer font sizes
+  the bitmap was one pixel wider than the advance, so adjacent
+  emojis overlapped by ~1 px. Skald now pads colour-glyph advances
+  by 15 % in both `draw_text` and `measure_text` (so cursor placement
+  stays accurate), which eliminates the rounding overlap and gives
+  the eye a faint gap between emojis — the breathing room every
+  other UI emoji renderer (Slack, Discord, iOS) applies.
 
 ## 1.0.0-rc5 — 2026-05-14
 

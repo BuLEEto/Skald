@@ -448,12 +448,12 @@ pass. Same `Image_Fit` semantics as the widget.
 
 ```odin
 button(ctx, label: string, on_click: Msg,
-       color = {}, fg = {}, radius = 0, padding = {0, 0},
+       bg = {}, fg = {}, radius = 0, padding = {0, 0},
        font_size = 0, width = 0, text_align = .Center)
 ```
 
 Clickable rectangle. `on_click` is the Msg value (not a proc) that
-Skald enqueues when the button is clicked. Color and fg fall back to
+Skald enqueues when the button is clicked. `bg` and `fg` fall back to
 theme neutrals — pass `th.color.primary` / `th.color.on_primary` for
 a call-to-action.
 
@@ -810,15 +810,13 @@ Setting it to `nil` (the default) hides the row entirely.
 The picked emoji string lives in the temp arena — clone it before
 storing on persistent state, same convention as any Msg-borne string.
 
-Backend: colour emoji renders properly only under runa
-(`SKALD_RUNA=1`). Under the default fontstash backend cells still
-hit-test, but glyphs render **completely blank** — Twemoji-Mozilla
-ships COLR colour layers only; its `glyf` outlines are empty, so
-fontstash has nothing to draw. The widget prints a one-time stderr
-warning the first time it runs under fontstash so devs notice
-during testing. Apps that adopt this widget should set `SKALD_RUNA=1`
-at build time; the warning + fontstash fallback both disappear once
-runa becomes the default backend in the 1.x line.
+Backend: colour emoji renders properly only under runa, which is the
+default backend since 1.0. If you've opted back into fontstash with
+`-define:SKALD_RUNA=false` the cells still hit-test, but glyphs render
+**completely blank** — Twemoji-Mozilla ships COLR colour layers only;
+its `glyf` outlines are empty, so fontstash has nothing to draw. The
+widget prints a one-time stderr warning the first time it runs under
+fontstash so devs notice during testing.
 
 **Example: `examples/46_emoji_picker`.**
 
@@ -1408,10 +1406,10 @@ font fall through to the next font in the chain. Use
 `font_default(r)` as `base` to extend the framework-wide glyph
 coverage beyond Inter (Latin + Cyrillic). Up to 20 fallbacks per
 base. Handles CJK / Cyrillic extensions / symbols cleanly. Under
-the runa backend (`SKALD_RUNA=1`) full OpenType shaping (ligatures,
-GPOS kerning, contextual alternates) is applied; under fontstash
-(default) glyphs render without shaping. RTL and complex-script
-shaping (Arabic, Devanagari, Thai) arrive with runa v0.5.
+runa (the default backend since 1.0) full OpenType shaping (ligatures,
+GPOS kerning, contextual alternates, RTL + bidi, Indic shaping) is
+applied. If you've opted into fontstash with `-define:SKALD_RUNA=false`
+glyphs render without shaping.
 
 ### font_use_default_emoji
 
@@ -1426,12 +1424,11 @@ cached handle without re-registering. Best called once on first
 frame from inside `view` (same pattern as the icon-font setup in
 `examples/39_icons`).
 
-Backend behaviour: under runa (`SKALD_RUNA=1`) the emoji render
-as full COLRv0 colour glyphs via an RGBA atlas. Under the default
-fontstash backend they fall through to `.notdef` tofu — fontstash
-doesn't decode COLR tables. The plan is to flip runa on by default
-before 1.0 final; until then the helper is effectively a no-op for
-fontstash users but calling it now means no code change at the flip.
+Backend behaviour: under runa (the default since 1.0) the emoji
+render as full COLRv0 colour glyphs via an RGBA atlas. If you've
+opted into fontstash with `-define:SKALD_RUNA=false` they fall
+through to `.notdef` tofu — fontstash doesn't decode COLR tables, so
+the helper is effectively a no-op on that path.
 
 Bundled artwork is Twemoji (CC-BY-4.0). Apps shipping a Skald
 binary are redistributing it — add an attribution line in your

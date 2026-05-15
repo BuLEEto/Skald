@@ -235,14 +235,14 @@ attribute. That keeps draw-call count low and sidesteps a sort — the view
 tree already emits commands in the correct order.
 
 Text runs through one of two backends, selected at build time via
-the `SKALD_RUNA` define. The default (`fontstash`) is the long-shipped
-path: glyphs atlased to a GPU R8 texture on demand, basic kern-pair
-lookup, no shaping. The alternative (`runa`, vendored at
+the `SKALD_RUNA` define. The default (`runa`, vendored at
 `skald/third_party/runa/`) is a pure-Odin text engine with OpenType
 GSUB/GPOS shaping (ligatures, contextual alternates, mark
 positioning), COLRv0 + COLRv1 colour emoji (with linear / radial /
-sweep gradients), subpixel-x positioning, and a
-shape cache that hits per-frame redraws. Both share the public
+sweep gradients), subpixel-x positioning, and a shape cache that
+hits per-frame redraws. The fallback (`fontstash`, opted in with
+`-define:SKALD_RUNA=false`) is the long-shipped path: glyphs atlased
+to a GPU R8 texture on demand, basic kern-pair lookup, no shaping. Both share the public
 `draw_text` / `measure_text` / `wrap_text` / `text_ascent` /
 `font_load` / `font_add_fallback` API — `skald/text.odin` dispatches
 at runtime via a `runa_state` field on the renderer. `measure_text`

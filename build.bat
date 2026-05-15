@@ -26,10 +26,11 @@ if "%ACTION%"=="" set ACTION=build
 if not exist build mkdir build
 
 REM Runa ships vendored at skald\third_party\runa and is imported via
-REM a relative path, so no extra collection flag is needed.
-REM Set SKALD_RUNA=1 to route text through runa instead of fontstash.
+REM a relative path, so no extra collection flag is needed. Runa is
+REM the default backend; set SKALD_RUNA=0 to force the legacy fontstash
+REM path instead (no colour emoji, no complex-script shaping).
 set RUNA_DEFINE=
-if "%SKALD_RUNA%"=="1" set RUNA_DEFINE=-define:SKALD_RUNA=true
+if "%SKALD_RUNA%"=="0" set RUNA_DEFINE=-define:SKALD_RUNA=false
 
 odin build "examples\%EXAMPLE%" -collection:gui=. %RUNA_DEFINE% -out:"build\%EXAMPLE%.exe"
 if errorlevel 1 exit /b 1

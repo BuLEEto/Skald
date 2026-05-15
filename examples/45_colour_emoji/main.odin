@@ -4,11 +4,12 @@ import "gui:skald"
 
 // Colour-emoji smoke test — calls `skald.font_use_default_emoji(r)`
 // to register Skald's bundled Twemoji-Mozilla (COLRv0) as a fallback
-// to Inter. Under the runa text backend (`SKALD_RUNA=1`) the emoji
-// render in full colour; under the default fontstash backend they
-// render as `.notdef` tofu (fontstash doesn't decode COLR tables).
+// to Inter. Under runa (the default text backend since 1.0) the
+// emoji render in full colour; if you opt into fontstash with
+// `-define:SKALD_RUNA=false` they fall through to `.notdef` tofu
+// (fontstash doesn't decode COLR tables).
 //
-// Run with: `SKALD_RUNA=1 ./build.sh 45_colour_emoji run`
+// Run with: `./build.sh 45_colour_emoji run`
 //
 // Apps that adopt this pattern need to add an attribution line for
 // the Twemoji artwork — CC-BY-4.0. See

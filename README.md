@@ -20,15 +20,14 @@ model puts it in the immediate-mode performance tier rather than the
 retained-tree one. See [`docs/benchmarks.md`](docs/benchmarks.md) for
 actual numbers.
 
-> **1.0-rc5 preview — pure-Odin text backend.** Skald now ships with
-> [`runa`](skald/third_party/runa/), a pure-Odin text engine, as an
-> opt-in second backend alongside `vendor:fontstash`. It brings real
-> OpenType shaping (ligatures, GPOS kerning, contextual alternates),
-> COLRv0 + COLRv1 colour emoji (with linear / radial / sweep
-> gradients), and subpixel-x positioning — and it's faster than
-> fontstash on every benched workload (gallery 2.2× faster). Build
-> with `SKALD_RUNA=1 ./build.sh …` to try it. Aiming to flip on by
-> default before Skald 1.0 final if the rc soak goes well.
+> **Pure-Odin text backend (runa) is now the default.** Skald ships
+> [`runa`](skald/third_party/runa/) as the default text engine, with
+> `vendor:fontstash` retained as a fallback (build with
+> `-define:SKALD_RUNA=false` to opt out). Runa brings real OpenType
+> shaping (ligatures, GPOS kerning, contextual alternates), COLRv0 +
+> COLRv1 colour emoji (with linear / radial / sweep gradients), and
+> subpixel-x positioning — and it's faster than fontstash on every
+> benched workload (gallery 2.2× faster).
 
 ## Highlights
 
@@ -41,14 +40,14 @@ actual numbers.
   GPU (Linux); capped by display refresh on macOS.
 - **GPU rendering** — pure-Odin Vulkan 1.3 backend (`vendor:vulkan`), one
   pipeline for rects + text + images.
-- **Two text backends** — `vendor:fontstash` ships as the default
-  (small, battle-tested, no shaping). The pure-Odin `runa` engine
-  ships vendored at `skald/third_party/runa/` as a preview: opt in
-  with `SKALD_RUNA=1 ./build.sh ...` to get OpenType shaping
-  (ligatures, GPOS kerning), COLRv0 + COLRv1 colour emoji (with
-  linear / radial / sweep gradients), and subpixel-x positioning.
-  Runa is faster than fontstash on every benched workload (gallery
-  2.2× faster). Aiming to flip on by default before 1.0 final.
+- **Two text backends** — the pure-Odin `runa` engine ships vendored
+  at `skald/third_party/runa/` and is the default since 1.0: full
+  OpenType shaping (ligatures, GPOS kerning), COLRv0 + COLRv1 colour
+  emoji (with linear / radial / sweep gradients), and subpixel-x
+  positioning. Runa is faster than fontstash on every benched
+  workload (gallery 2.2× faster). `vendor:fontstash` is retained as a
+  smaller, no-shaping fallback — opt back in with
+  `-define:SKALD_RUNA=false` if you need it.
 - **Async** — the `Command(Msg)` effect system runs file I/O, native
   dialogs, and delays through `core:nbio` on the main thread; completions
   round-trip back as regular `Msg` values. For sync libraries that aren't
@@ -142,7 +141,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
         skald.row(
             skald.button(ctx, "−", Msg.Dec, width = 64),
             skald.button(ctx, "+", Msg.Inc, width = 64,
-                color = th.color.primary, fg = th.color.on_primary),
+                bg = th.color.primary, fg = th.color.on_primary),
             spacing = th.spacing.md,
         ),
         padding     = th.spacing.xl,
@@ -194,7 +193,7 @@ See `examples/07_counter` for the annotated version.
 
 ```
 skald/          the framework package (pure Odin; imports vendor:vulkan/sdl3)
-examples/       NN_topic/main.odin — runnable demos (44 of them)
+examples/       NN_topic/main.odin — runnable demos (48 of them)
 docs/           tutorial, cookbook, widget reference, benchmarks
 build.sh/.bat   build one example into ./build/ (use RELEASE=1 to strip -debug)
 bench.sh        run the canonical bench suite
@@ -250,16 +249,17 @@ Skald stands on good shoulders. Credit and thanks to:
   the bundled UI typeface. InterVariable is the default; the
   static-weight Bold / Italic / BoldItalic faces ship alongside it
   for `rich_text`'s emphasis spans.
-- **[fontstash](https://github.com/memononen/fontstash)**
-  (Mikko Mononen) — glyph atlas management, shipped via
-  `vendor:fontstash`. The default text backend.
-- **[stb](https://github.com/nothings/stb)** (Sean T. Barrett) —
-  `stb_truetype` (used inside fontstash) and `stb_image` (PNG loading).
 - **runa** (Lee Fry + contributors) — pure-Odin text engine vendored
   at [`skald/third_party/runa/`](skald/third_party/runa/). zlib
-  licence. Opt-in alternative backend with full OpenType shaping +
-  COLRv0 / COLRv1 colour emoji; aiming to flip on by default before
-  Skald 1.0 final.
+  licence. Default text backend since 1.0; full OpenType shaping
+  (GSUB / GPOS), Arabic / Indic / SEA shaping, RTL + bidi, and
+  COLRv0 / COLRv1 colour emoji.
+- **[fontstash](https://github.com/memononen/fontstash)**
+  (Mikko Mononen) — glyph atlas management, shipped via
+  `vendor:fontstash`. Legacy text backend retained as a fallback
+  (`-define:SKALD_RUNA=false`).
+- **[stb](https://github.com/nothings/stb)** (Sean T. Barrett) —
+  `stb_truetype` (used inside fontstash) and `stb_image` (PNG loading).
 - **Vulkan** — specification by the Khronos Group; on macOS, Vulkan
   calls are translated to Metal by **[MoltenVK](https://github.com/KhronosGroup/MoltenVK)**
   (originally by Brenwill Workshop Ltd., now maintained under

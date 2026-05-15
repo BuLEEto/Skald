@@ -170,11 +170,11 @@ Linux is the primary dev platform and assumed to work. Quick sanity:
   If you skip this you'll get a link-time "cannot find `stb_truetype`"
   error at the end of an otherwise-successful Odin compile.
 
-  This step is **only** needed for the default fontstash backend. If
-  you build with `SKALD_RUNA=1` (Skald's pure-Odin text engine,
-  vendored at `skald/third_party/runa/`), no C dependency is touched
-  and the `stb` build is skipped. Runa becomes the default in
-  Skald 1.1.
+  This step is **only** needed if you opt back into the legacy
+  fontstash backend with `-define:SKALD_RUNA=false`. The default
+  backend since 1.0 is the pure-Odin `runa` engine (vendored at
+  `skald/third_party/runa/`), which touches no C dependency and lets
+  you skip the `stb` build entirely.
 
 ### Building SDL3 from source (Ubuntu 24.04 LTS or any distro
 without a packaged SDL3)

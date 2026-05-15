@@ -31,10 +31,18 @@ layout, rasterization, atlas) — at:
 
 Runa is licensed under the zlib license; its own LICENSE file ships
 alongside the source at `skald/third_party/runa/LICENSE`. The
-vendored tree also includes two Unicode UCD data files
-(`Scripts.txt` for UAX #24, `LineBreak.txt` for UAX #14) at
-`skald/third_party/runa/tools/ucd/` — covered by the Unicode-DFS-2016
-licence. Both notices are preserved with the vendored copy.
+vendored tree also includes a set of Unicode UCD reference files at
+`skald/third_party/runa/tools/ucd/` — script/category/property data
+used to build runa's internal tables, plus a few conformance test
+fixtures (ArabicShaping, BidiBrackets, BidiCharacterTest,
+DerivedBidiClass, DerivedCoreProperties, DerivedGeneralCategory,
+EastAsianWidth, emoji-data, GraphemeBreakProperty, GraphemeBreakTest,
+IndicPositionalCategory, IndicSyllabicCategory, LineBreak,
+LineBreakTest, Scripts). Each file is © Unicode, Inc. and ships with
+its own copyright + "for terms of use and license, see
+https://www.unicode.org/terms_of_use.html" header preserved at the
+top — that header satisfies the redistribution obligation under
+Unicode's licence.
 
 Skald also depends on a number of third-party libraries; none impose
 additional obligations on Skald consumers, but they are gratefully

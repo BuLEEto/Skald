@@ -7,6 +7,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
+import grapheme "third_party/runa/itemize"
 
 // Public widget builder API conventions — locked in for 1.0 semver:
 //
@@ -3462,7 +3463,7 @@ _text_input_impl :: proc(
 				anchor = cursor
 				edit_kind = .Other
 			} else if cursor > 0 {
-				_, step := decode_last_rune_in_prefix(new_value, cursor)
+				step := grapheme_prev_step(new_value, cursor)
 				new_value = string_remove_range(new_value, cursor - step, cursor)
 				cursor -= step
 				anchor = cursor
@@ -3475,7 +3476,7 @@ _text_input_impl :: proc(
 				anchor = cursor
 				edit_kind = .Other
 			} else if cursor < len(new_value) {
-				_, step := decode_first_rune_in_suffix(new_value, cursor)
+				step := grapheme_next_step(new_value, cursor)
 				new_value = string_remove_range(new_value, cursor, cursor + step)
 				edit_kind = .Del
 			}
@@ -3490,8 +3491,7 @@ _text_input_impl :: proc(
 				lo, _ := sel_range(anchor, cursor)
 				cursor = lo
 			} else if cursor > 0 {
-				_, step := decode_last_rune_in_prefix(new_value, cursor)
-				cursor -= step
+				cursor -= grapheme_prev_step(new_value, cursor)
 			}
 			if !shift { anchor = cursor }
 		}
@@ -3500,8 +3500,7 @@ _text_input_impl :: proc(
 				_, hi := sel_range(anchor, cursor)
 				cursor = hi
 			} else if cursor < len(new_value) {
-				_, step := decode_first_rune_in_suffix(new_value, cursor)
-				cursor += step
+				cursor += grapheme_next_step(new_value, cursor)
 			}
 			if !shift { anchor = cursor }
 		}
@@ -4258,6 +4257,42 @@ decode_last_rune_in_prefix :: proc(s: string, end: int) -> (rune, int) {
 @(private)
 decode_first_rune_in_suffix :: proc(s: string, start: int) -> (rune, int) {
 	return utf8.decode_rune_in_string(s[start:])
+}
+
+// grapheme_prev_step returns how many bytes Backspace / Left-arrow
+// should step back from `end` to land on the previous grapheme-cluster
+// boundary (UAX #29). Multi-codepoint clusters — skin-tone-modified
+// emoji (👋🏽 = U+1F44B + U+1F3FD), regional-indicator flag pairs,
+// emoji ZWJ sequences — collapse to a single visible glyph, so one
+// keystroke must remove the whole cluster instead of just trimming
+// the trailing codepoint and leaving a "default-tone" base behind.
+@(private)
+grapheme_prev_step :: proc(s: string, end: int) -> int {
+	if end <= 0 { return 0 }
+	it := grapheme.grapheme_iter_make(s[:end])
+	last_lo := 0
+	for {
+		lo, _, ok := grapheme.grapheme_iter_next(&it)
+		if !ok { break }
+		last_lo = lo
+	}
+	step := end - last_lo
+	if step <= 0 { step = 1 }   // pathological fallback — never zero-step
+	return step
+}
+
+// grapheme_next_step is Delete / Right-arrow's counterpart: how many
+// bytes to advance from `start` to land on the next grapheme-cluster
+// boundary.
+@(private)
+grapheme_next_step :: proc(s: string, start: int) -> int {
+	if start >= len(s) { return 0 }
+	it := grapheme.grapheme_iter_make(s[start:])
+	_, hi, ok := grapheme.grapheme_iter_next(&it)
+	if !ok { return len(s) - start }
+	step := hi
+	if step <= 0 { step = 1 }
+	return step
 }
 
 // mask_byte_to_real_byte maps a byte offset in a password field's

@@ -139,14 +139,15 @@ text_init :: proc(t: ^Text, r: ^Renderer) -> (ok: bool) {
 	// image.
 	text_upload_region(t, r, 0, 0, int(t.atlas_w), int(t.atlas_h))
 
-	// Optionally try the runa backend. When the SKALD_RUNA build define
-	// is true, `text_init_runa` attempts to bring up the pure-Odin text
-	// engine; on success it allocates the Text_Runa state and assigns
-	// it to t.runa_state, flipping every public API to the runa path.
-	// On failure we keep fontstash. Phase 1a stub always returns false.
+	// Bring up the runa backend (the default since 1.0). `text_init_runa`
+	// attempts to initialise the pure-Odin text engine; on success it
+	// allocates the Text_Runa state and assigns it to t.runa_state,
+	// flipping every public API to the runa path. On failure we keep
+	// fontstash so the app stays running. Build with
+	// `-define:SKALD_RUNA=false` to skip this and stay on fontstash.
 	when RUNA_BACKEND_DEFAULT {
 		if !text_init_runa(t, r) {
-			fmt.eprintln("skald: SKALD_RUNA requested but runa init failed; falling back to fontstash")
+			fmt.eprintln("skald: runa init failed; falling back to fontstash")
 		}
 	}
 
@@ -409,11 +410,11 @@ font_add_fallback :: proc(r: ^Renderer, base, fallback: Font) -> bool {
 // real cost (one extra cmap lookup per missing-from-Inter character
 // per shape). Apps that don't show emoji avoid it by not calling.
 //
-// Backend support: the runa backend (`SKALD_RUNA=1`) renders the
-// glyphs as full COLRv0 colour via the RGBA atlas — what you'd
-// expect from "colour emoji". The default fontstash backend doesn't
-// decode COLR / CBDT / sbix at all, so emoji fall through to
-// fontstash's missing-glyph tofu the same as before; this helper is
+// Backend support: under runa (the default backend) the glyphs render
+// as full COLRv0 colour via the RGBA atlas — what you'd expect from
+// "colour emoji". The legacy fontstash backend (opted into with
+// `-define:SKALD_RUNA=false`) doesn't decode COLR / CBDT / sbix at
+// all, so emoji fall through to fontstash's missing-glyph tofu; this helper is
 // effectively a no-op there. Becomes useful by default in 1.1 when
 // runa is the default backend.
 //

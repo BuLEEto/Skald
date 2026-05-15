@@ -742,23 +742,21 @@ match wins.
 
 **What works well**: CJK (Chinese / Japanese / Korean), Cyrillic
 extensions, symbol fonts, math. Anything whose layout is codepoint
-in → glyph out with no contextual reshaping.
+in → glyph out with no contextual reshaping — handled on both
+backends.
 
-**What works well on the default (fontstash) backend**: CJK, Cyrillic
-extensions, symbol fonts, math — anything whose layout is codepoint
-in → glyph out.
+**What's limited on the fontstash fallback**: Arabic, Hebrew,
+Devanagari, Thai — scripts that need *contextual shaping*
+(initial/medial/final letter forms, RTL reordering, conjuncts). The
+codepoints render, but linguistically incorrectly. Only relevant if
+you've explicitly opted into fontstash with
+`-define:SKALD_RUNA=false`; the default runa backend shapes them
+properly.
 
-**What's limited on fontstash**: Arabic, Hebrew, Devanagari, Thai —
-scripts that need *contextual shaping* (initial/medial/final letter
-forms, RTL reordering, conjuncts). The codepoints render, but
-linguistically incorrectly.
-
-**Workaround: switch to the runa backend.** Build with `SKALD_RUNA=1`
-to get full OpenType GSUB/GPOS shaping, including ligatures and pair
-kerning. Arabic / Hebrew RTL + bidi land in a follow-up runa release
-(v0.5); Indic scripts in v1.0. See the runa source at
+See the runa source at
 [`skald/third_party/runa/`](../skald/third_party/runa/) and
-[`CONTRIBUTING.md`](../CONTRIBUTING.md) for the concrete work items.
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) for the concrete work items
+behind the shaping coverage.
 
 ### Use an icon font (Font Awesome, Lucide, Phosphor, Material…)
 
@@ -803,12 +801,11 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 }
 ```
 
-Under the runa backend (`SKALD_RUNA=1`) the emoji render in full
-COLRv0 colour via an RGBA atlas. Under the default fontstash
-backend they fall through to `.notdef` tofu — fontstash doesn't
-decode COLR / CBDT / sbix tables. The plan is to flip runa on by
-default before Skald 1.0 final; until then the helper is a no-op
-for fontstash users.
+Under runa (the default backend since 1.0) the emoji render in full
+COLRv0 colour via an RGBA atlas. If you've opted back into fontstash
+with `-define:SKALD_RUNA=false` they fall through to `.notdef` tofu —
+fontstash doesn't decode COLR / CBDT / sbix tables, so this helper is
+effectively a no-op on that path.
 
 The bundled artwork is Twemoji, CC-BY-4.0. Apps shipping a Skald
 binary are redistributing it — add an attribution line in your
@@ -875,11 +872,10 @@ The `recents` slice is app-owned — persist it however you persist
 the rest of the state. JSON to disk on `on_window_state_change`,
 embedded in `settings.db`, whatever fits.
 
-Backend: under runa (`SKALD_RUNA=1`) the picker renders Twemoji's
-colour glyphs. Under fontstash the popover still works but cells
-render as tofu — pair this widget with the colour-emoji recipe above
-and tell users to flip the env var, or wait for the default flip in
-the 1.x line.
+Backend: runa (the default since 1.0) renders Twemoji's colour glyphs
+through the picker. If you've opted into fontstash with
+`-define:SKALD_RUNA=false`, the popover still works but cells render
+as tofu — drop the flag to get colour back.
 
 A working example lives in
 [`examples/46_emoji_picker`](../examples/46_emoji_picker).
