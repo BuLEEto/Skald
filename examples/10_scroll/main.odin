@@ -87,7 +87,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 
 		label := fmt.tprintf("%s  ·  %s", msg.from, msg.subject)
 		append(&items, skald.button(ctx, label, Select_Message(i),
-			color     = row_bg,
+			bg     = row_bg,
 			fg        = th.color.fg,
 			radius    = th.radius.sm,
 			padding   = {th.spacing.md, th.spacing.sm},

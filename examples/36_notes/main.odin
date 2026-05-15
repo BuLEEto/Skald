@@ -168,7 +168,7 @@ note_row :: proc(
 	}
 
 	return skald.button(ctx, title, Note_Selected(index),
-		color      = bg_color,
+		bg      = bg_color,
 		fg         = title_color,
 		text_align = .Start,
 		width      = 0,

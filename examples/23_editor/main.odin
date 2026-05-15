@@ -261,7 +261,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		skald.button(ctx, "New",     New_Clicked{},     width = 80),
 		skald.button(ctx, "Open",    Open_Clicked{},    width = 80),
 		skald.button(ctx, "Save",    Save_Clicked{},    width = 80,
-			color = th.color.primary, fg = th.color.fg),
+			bg = th.color.primary, fg = th.color.fg),
 		skald.button(ctx, "Save As…", Save_As_Clicked{}, width = 120),
 		skald.spacer(th.spacing.md),
 		skald.text(title_text(s), th.color.fg, th.font.size_md),

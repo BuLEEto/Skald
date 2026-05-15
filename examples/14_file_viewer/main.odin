@@ -175,7 +175,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			"No file loaded",
 			"Enter a path above and hit Load to read it asynchronously.",
 			action = skald.button(ctx, "Load /etc/hostname", Load_Clicked{},
-				color = th.color.primary, fg = th.color.on_primary),
+				bg = th.color.primary, fg = th.color.on_primary),
 		)
 		body_view = skald.col(
 			empty,
@@ -204,7 +204,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 				"Absolute or relative path to a text file"),
 			skald.tooltip(ctx,
 				skald.button(ctx, "Load", Load_Clicked{},
-					color = th.color.primary, fg = th.color.fg, width = 140),
+					bg = th.color.primary, fg = th.color.fg, width = 140),
 				"Read the file asynchronously via nbio"),
 			spacing = th.spacing.md,
 		),

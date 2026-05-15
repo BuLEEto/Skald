@@ -76,7 +76,7 @@ row :: proc(ctx: ^skald.Ctx(Msg), s: ^State, i: int) -> skald.View {
 		skald.spacer(0),
 		skald.button(ctx, star, Fav_Toggled(i),
 			id    = fav_id,
-			color = color,
+			bg = color,
 			fg    = th.color.fg,
 			width = 40),
 		width       = 560,

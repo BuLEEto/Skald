@@ -118,7 +118,7 @@ row :: proc(ctx: ^skald.Ctx(Msg), s: ^State, i: int) -> skald.View {
 		skald.spacer(th.spacing.md),
 		skald.button(ctx, star, Fav_Toggled(i),
 			id    = fav_id,
-			color = star_bg,
+			bg = star_bg,
 			fg    = th.color.fg,
 			width = 48),
 		width       = ROW_WIDTH,

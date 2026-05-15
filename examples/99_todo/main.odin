@@ -53,7 +53,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			skald.text(item, th.color.fg, th.font.size_md),
 			skald.flex(1, skald.spacer(0)),
 			skald.button(ctx, "×", remove_msg, width = 32,
-				color = th.color.danger, fg = th.color.on_primary),
+				bg = th.color.danger, fg = th.color.on_primary),
 			spacing     = th.spacing.sm,
 			cross_align = .Center,
 		))
@@ -65,7 +65,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			skald.flex(1, skald.text_input(ctx, s.draft, on_draft,
 				placeholder = "What needs doing?")),
 			skald.button(ctx, "Add", Add_Clicked{}, width = 80,
-				color = th.color.primary, fg = th.color.on_primary),
+				bg = th.color.primary, fg = th.color.on_primary),
 			spacing = th.spacing.sm,
 		),
 		skald.col(..rows[:], spacing = th.spacing.xs),

@@ -43,11 +43,11 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 
 		skald.row(
 			skald.button(ctx, "−", Msg.Dec,
-				color = th.color.surface, fg = th.color.fg, width = 64),
+				bg = th.color.surface, fg = th.color.fg, width = 64),
 			skald.button(ctx, "Reset", Msg.Reset,
-				color = th.color.surface, fg = th.color.fg_muted, width = 96),
+				bg = th.color.surface, fg = th.color.fg_muted, width = 96),
 			skald.button(ctx, "+", Msg.Inc,
-				color = th.color.primary, fg = th.color.on_primary, width = 64),
+				bg = th.color.primary, fg = th.color.on_primary, width = 64),
 			spacing     = th.spacing.md,
 			cross_align = .Center,
 		),

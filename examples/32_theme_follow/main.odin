@@ -128,7 +128,7 @@ swatch_button :: proc(ctx: ^skald.Ctx(Msg), p: Palette, current: Palette) -> ska
 	// active palette stands out as the only primary-coloured chip.
 	return skald.button(
 		ctx, palette_name(p), Palette_Picked(p),
-		color = th.color.surface,
+		bg = th.color.surface,
 		fg    = th.color.fg,
 	)
 }

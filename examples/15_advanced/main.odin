@@ -159,9 +159,9 @@ file_row :: proc(ctx: ^skald.Ctx(Msg), it: Item) -> skald.View {
 		skald.text(it.name, th.color.fg, th.font.size_md),
 		skald.spacer(0),
 		skald.button(ctx, "↑", Item_Moved{key = it.key, dir = -1},
-			id = up_id, color = th.color.surface, fg = th.color.fg, width = 32),
+			id = up_id, bg = th.color.surface, fg = th.color.fg, width = 32),
 		skald.button(ctx, "↓", Item_Moved{key = it.key, dir = 1},
-			id = down_id, color = th.color.surface, fg = th.color.fg, width = 32),
+			id = down_id, bg = th.color.surface, fg = th.color.fg, width = 32),
 		width       = 520,
 		padding     = th.spacing.sm,
 		spacing     = th.spacing.xs,
@@ -183,7 +183,7 @@ files_panel :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 
 	rows := make([dynamic]skald.View, 0, len(s.items) + 2, context.temp_allocator)
 	append(&rows, skald.button(ctx, "+ Add file", Add_Clicked{},
-		color = th.color.primary, fg = th.color.fg))
+		bg = th.color.primary, fg = th.color.fg))
 	append(&rows, skald.spacer(th.spacing.sm))
 	for it in s.items {
 		append(&rows, file_row(ctx, it))
@@ -220,7 +220,7 @@ trash_panel :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			skald.spacer(0),
 			skald.button(ctx, "Restore", Restore_Clicked(it.key),
 				id    = skald.hash_id(strings.concatenate({it.key, ":restore"}, context.temp_allocator)),
-				color = th.color.surface,
+				bg = th.color.surface,
 				fg    = th.color.fg),
 			width       = 520,
 			padding     = th.spacing.sm,

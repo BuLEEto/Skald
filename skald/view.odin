@@ -16,8 +16,17 @@ import "core:unicode/utf8"
 //        selected, on, options, rows, …)   — the thing the widget displays.
 //     3. `on_<event>` callback(s)         — user-triggered event handlers.
 //     4. `id: Widget_ID = 0`              — identity override; 0 = positional.
-//     5. feature/behavior params          — step, min_value, disabled, etc.
-//     6. sizing + style params            — width, padding, font_size, colors.
+//     5. domain/feature params            — step, min_value, max_value,
+//                                            options, placeholder, etc.
+//                                            (the widget's "what does it do"
+//                                            knobs that aren't visual styling).
+//     6. sizing + style params            — width, height, padding, font_size,
+//                                            colors, radius.
+//     7. behavior/flag toggles            — disabled, multiline, password,
+//                                            wrap, clear_button, etc.
+//                                            (booleans grouped at the end so
+//                                            the common case — set a width
+//                                            or color — stays scannable).
 //
 //   Naming:
 //     - `value` for the primary state (text, number, time, date, color).
@@ -34,17 +43,34 @@ import "core:unicode/utf8"
 //     - Range bounds: `min_value`/`max_value` (matches number_input and
 //       slider). HTML-style `min`/`max` was rejected to avoid shadowing
 //       Odin's builtin identifiers inside the widget body.
-//     - Sentinel `width = 0` (and `height = 0` where applicable) means
-//       "fill the parent's cross-axis allocation." Same convention on
-//       View_Rect, View_Image, containers, and every form control.
-//     - Sentinel `font_size = 0` / `padding = 0` / bare `Color{}` means
-//       "inherit from theme." Widgets resolve these at build time against
-//       `ctx.theme`.
+//     - Sentinel `font_size = 0` and bare `Color{}` mean "inherit from
+//       theme." Widgets resolve these at build time against `ctx.theme`.
+//     - Padding has two shapes, chosen by the widget category:
+//         - Containers + wrappers use `padding: f32` (uniform). The
+//           common case for layout primitives is symmetric padding,
+//           so a single number stays ergonomic.
+//         - Inputs (button, text_input, search_field, chat_input)
+//           use `padding: [2]f32 = {0, 0}` (x, y). Asymmetric padding
+//           is part of input styling — buttons want horizontal
+//           breathing room without growing vertically.
+//       Padding sentinels are widget-dependent:
+//         - Bare containers (col, row, wrap_row, grid): `padding = 0`
+//           is literal 0 — no implicit theme spacing.
+//         - Styled wrappers (list_frame, collapsible, accordion,
+//           radio_group, etc.): `padding/spacing = -1` means "use the
+//           widget's designed default"; `0` means literally none.
+//     - `width = 0` means "intrinsic" by default — the widget sizes to
+//       its content (or collapses if its content is zero-sized). A few
+//       widgets explicitly fall back to the previous frame's laid-out
+//       width when 0 is passed (text_input does); those widgets call
+//       this out in their own docstring. To stretch a fixed-size widget
+//       across a row, wrap it in `flex(1, …)` rather than relying on
+//       `width = 0`.
 //
 //   Siblings vs flags:
 //     - Prefer flags on the canonical widget over near-duplicates. e.g.
 //       `text_input(multiline = true)` instead of a separate `text_area`;
-//       `button(color = ...)` instead of `primary_button` / `danger_button`.
+//       `button(bg = ..., fg = ...)` instead of `primary_button` / `danger_button`.
 //     - Separate builders only when the model differs materially
 //       (tree vs table vs virtual_list all have different state shapes).
 //
@@ -2750,7 +2776,7 @@ button :: proc(
 	label:      string,
 	on_click:   Msg,
 	id:         Widget_ID   = 0,
-	color:      Color       = {},
+	bg:         Color       = {},
 	fg:         Color       = {},
 	radius:     f32         = 0,
 	padding:    [2]f32      = {0, 0},
@@ -2761,7 +2787,7 @@ button :: proc(
 ) -> View {
 	th := ctx.theme
 
-	c   := color;     if c[3]  == 0 { c  = th.color.primary    }
+	c   := bg;        if c[3]  == 0 { c  = th.color.primary    }
 	fc  := fg;        if fc[3] == 0 { fc = th.color.on_primary }
 	rr  := radius;    if rr    == 0 { rr = th.radius.md         }
 	fs  := font_size; if fs    == 0 { fs = th.font.size_md      }
@@ -8069,7 +8095,7 @@ tabs :: proc(
 
 		items[i] = col(
 			button(ctx, label, on_change(i),
-				color     = bg,
+				bg     = bg,
 				fg        = fg,
 				radius    = th.radius.sm,
 				padding   = {th.spacing.md, th.spacing.sm},
@@ -8144,7 +8170,7 @@ menu :: proc(
 	rows := make([dynamic]View, 0, len(labels), context.temp_allocator)
 	for label, i in labels {
 		append(&rows, button(ctx, label, on_select(i),
-			color     = th.color.elevated,
+			bg     = th.color.elevated,
 			fg        = th.color.fg,
 			radius    = th.radius.sm,
 			padding   = {th.spacing.md, th.spacing.sm},
@@ -8611,10 +8637,10 @@ confirm_dialog :: proc(
 		row(
 			flex(1, spacer(0)),
 			button(ctx, cancel_label, on_cancel(),
-				color = th.color.surface, fg = th.color.fg),
+				bg = th.color.surface, fg = th.color.fg),
 			spacer(th.spacing.sm),
 			button(ctx, confirm_label, on_confirm(),
-				color = confirm_color, fg = th.color.on_primary),
+				bg = confirm_color, fg = th.color.on_primary),
 			spacing = 0,
 		),
 		spacing     = 0,
@@ -8650,7 +8676,7 @@ alert_dialog :: proc(
 		row(
 			flex(1, spacer(0)),
 			button(ctx, ok_label, on_ok(),
-				color = th.color.primary, fg = th.color.on_primary),
+				bg = th.color.primary, fg = th.color.on_primary),
 			spacing = 0,
 		),
 		spacing     = 0,
@@ -8727,11 +8753,11 @@ split :: proc(
 	second:             View,
 	first_size:         f32,
 	on_resize:          proc(new_first_size: f32) -> Msg,
+	id:                 Widget_ID       = 0,
 	direction:          Stack_Direction = .Row,
 	divider_thickness:  f32             = 6,
 	min_first:          f32             = 40,
 	min_second:         f32             = 40,
-	id:                 Widget_ID       = 0,
 	color_divider:          Color = {},
 	color_divider_hover:    Color = {},
 	color_divider_pressed:  Color = {},
@@ -8924,7 +8950,7 @@ _segmented_impl :: proc(
 				opt,
 				msg,
 				id        = seg_id,
-				color     = bg,
+				bg     = bg,
 				fg        = fg,
 				radius    = th.radius.sm,
 				padding   = {pad_x, pad_y},
@@ -9470,7 +9496,7 @@ toast :: proc(
 	append(&children,
 		button(ctx, "\u00d7", on_close(),
 			id        = close_id,
-			color     = th.color.surface,
+			bg     = th.color.surface,
 			fg        = th.color.fg_muted,
 			radius    = th.radius.sm,
 			padding   = {th.spacing.sm, th.spacing.xs},
@@ -9530,7 +9556,7 @@ select_option_row :: proc(
 	th:    ^Theme,
 ) -> View {
 	return button(ctx, label, msg,
-		color      = bg,
+		bg      = bg,
 		fg         = th.color.fg,
 		radius     = 0, // rows sit flush — no row-level rounding; overlay rounds the outer edge
 		padding    = {th.spacing.md, th.spacing.sm},

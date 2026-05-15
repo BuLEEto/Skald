@@ -192,10 +192,10 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			proc(v: bool) -> Msg { return Disabled_Toggled(v) }),
 		skald.spacer(th.spacing.lg),
 		skald.button(ctx, "Clear all", Msg(Clear_All_Pressed{}),
-			color = th.color.surface, fg = th.color.fg_muted),
+			bg = th.color.surface, fg = th.color.fg_muted),
 		skald.spacer(th.spacing.md),
 		skald.button(ctx, "Seed CRLF", Msg(Seed_CRLF_Pressed{}),
-			color = th.color.surface, fg = th.color.fg_muted),
+			bg = th.color.surface, fg = th.color.fg_muted),
 		spacing     = th.spacing.md,
 		cross_align = .Center,
 	)

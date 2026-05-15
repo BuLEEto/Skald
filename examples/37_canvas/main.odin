@@ -257,7 +257,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			skald.text("drag mouse or pen to stroke • pen carries pressure",
 				th.color.fg_muted, th.font.size_md),
 			skald.flex(1, skald.spacer(0)),
-			skald.button(ctx, "Clear", Clear{}, color = th.color.surface, fg = th.color.fg),
+			skald.button(ctx, "Clear", Clear{}, bg = th.color.surface, fg = th.color.fg),
 			padding     = th.spacing.md,
 			spacing     = th.spacing.md,
 			cross_align = .Center,

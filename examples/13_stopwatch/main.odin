@@ -98,9 +98,9 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		skald.spacer(th.spacing.xl),
 		skald.row(
 			skald.button(ctx, toggle_label, Msg.Toggle,
-				color = toggle_color, fg = th.color.fg, width = 140),
+				bg = toggle_color, fg = th.color.fg, width = 140),
 			skald.button(ctx, "Reset", Msg.Reset,
-				color = th.color.surface, fg = th.color.fg_muted, width = 140),
+				bg = th.color.surface, fg = th.color.fg_muted, width = 140),
 			spacing = th.spacing.md,
 		),
 		padding     = th.spacing.xl,

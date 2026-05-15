@@ -142,7 +142,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 
 		skald.row(
 			skald.button(ctx, "Clear", Clear_Clicked{},
-				color = th.color.surface, fg = th.color.fg_muted, width = 120),
+				bg = th.color.surface, fg = th.color.fg_muted, width = 120),
 			spacing = th.spacing.md,
 		),
 
