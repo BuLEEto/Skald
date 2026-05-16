@@ -787,25 +787,24 @@ are on the icon set's website; copy `\uXXXX` into your string.
 
 A working example lives in [`examples/39_icons`](../examples/39_icons).
 
-### Enable colour emoji
+### Colour emoji
 
 Skald ships Twemoji-Mozilla (a COLRv0 colour-emoji TTF) as a bundled
-asset. One line opts in:
+asset and **registers it as a fallback to Inter automatically during
+`text_init`** — no setup needed. Any `text()` / `button()` /
+`text_input()` that contains an emoji codepoint renders it in full
+colour:
 
 ```odin
-view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
-    // First-frame setup. Idempotent — safe to call every frame.
-    skald.font_use_default_emoji(ctx.renderer)
-    // ... rest of view; any text() / button() / text_input() picks
-    // up emoji glyphs automatically.
-}
+skald.text("Status: 🚀 shipped · 🐛 fixed · 🎉 celebrated",
+    th.color.fg, th.font.size_lg)
 ```
 
 Under runa (the default backend since 1.0) the emoji render in full
 COLRv0 colour via an RGBA atlas. If you've opted back into fontstash
 with `-define:SKALD_RUNA=false` they fall through to `.notdef` tofu —
-fontstash doesn't decode COLR / CBDT / sbix tables, so this helper is
-effectively a no-op on that path.
+fontstash doesn't decode COLR / CBDT / sbix tables, so the
+auto-registration is silently a no-op on that path.
 
 The bundled artwork is Twemoji, CC-BY-4.0. Apps shipping a Skald
 binary are redistributing it — add an attribution line in your

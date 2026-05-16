@@ -4,6 +4,46 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## 1.0.0-rc7 — 2026-05-17
+
+### Changed
+
+- **Vendored runa refreshed to 1.0.0.** Bumps from runa 0.9.2 to runa
+  1.0.0 — UAX #9 bidi at 100 % (was 99.998 %), UAX #14 line break at
+  99.91 % (was 99.4 %), all 28 COLR composite blend modes lit up,
+  new UAX #29 word + sentence boundary iterators (100 %
+  conformance), and a new `normalize` package shipping NFC / NFD /
+  NFKC / NFKD Unicode normalisation. Facade re-exports the
+  segmentation iterators directly from the runa package root, so
+  `runa.grapheme_iter_make` etc work without reaching into
+  `runa/itemize`. No API breaks for Skald callers.
+- **Colour emoji works with zero setup.** `text_init` now auto-registers
+  Twemoji-Mozilla as a fallback to Inter, so `skald.text("hi 😀")`
+  renders colour emoji without any app-side wiring. The existing
+  `font_use_default_emoji(r)` helper is now redundant for most apps —
+  it stays in the public API as an idempotent way to grab the Font
+  handle (for chaining further fallbacks, replacing the emoji font,
+  or querying metrics). Apps still on the legacy fontstash backend
+  (`-define:SKALD_RUNA=false`) see identical behaviour to before:
+  emoji cells render blank because fontstash doesn't decode COLR.
+  Existing explicit calls in `examples/45_colour_emoji` and
+  `examples/46_emoji_picker` have been removed since they're no-ops.
+
+### Removed
+
+- **Thai word-break dictionary deliberately not vendored.** Upstream
+  runa 1.0.0 embeds the PyThaiNLP `words_th.txt` corpus (CC-BY-SA)
+  to drive longest-match Thai word segmentation. Skald replaces
+  `linebreak/thai_dict.odin` with a stubbed no-op so every Skald
+  binary stays permissively licensed by default — apps shipping
+  commercial products don't have to add a CC-BY-SA attribution line
+  for a feature most apps don't need. Thai paragraphs fall back to
+  UAX #14's default SA-class behaviour (one unbreakable run), the
+  same behaviour Skald shipped on runa 0.9.2. Apps that genuinely
+  need Thai word-break can replace the stubbed file with the
+  upstream version (plus the corpus) and add the corresponding
+  attribution line.
+
 ## 1.0.0-rc6 — 2026-05-15
 
 ### Changed

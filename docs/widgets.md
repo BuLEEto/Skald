@@ -1417,18 +1417,21 @@ glyphs render without shaping.
 font_use_default_emoji(r: ^Renderer) -> Font
 ```
 
-One-line opt-in for colour emoji. Loads Skald's bundled
-Twemoji-Mozilla (COLRv0 layered TTF) and chains it as a fallback
-to `font_default(r)`. Idempotent — subsequent calls return the
-cached handle without re-registering. Best called once on first
-frame from inside `view` (same pattern as the icon-font setup in
-`examples/39_icons`).
+Returns the Font handle for Skald's bundled Twemoji-Mozilla
+(COLRv0 layered TTF). **Twemoji is already registered as a fallback
+to `font_default(r)` automatically during `text_init`**, so plain
+`text("hi 😀")` already renders colour emoji with zero app-side
+setup — most apps never need to call this helper. Idempotent: when
+called, it returns the cached handle.
+
+Reasons you might still call it: you want the explicit handle to
+chain a further fallback, replace the emoji font, or query metrics.
 
 Backend behaviour: under runa (the default since 1.0) the emoji
 render as full COLRv0 colour glyphs via an RGBA atlas. If you've
 opted into fontstash with `-define:SKALD_RUNA=false` they fall
 through to `.notdef` tofu — fontstash doesn't decode COLR tables, so
-the helper is effectively a no-op on that path.
+the auto-registration is a silent no-op on that path.
 
 Bundled artwork is Twemoji (CC-BY-4.0). Apps shipping a Skald
 binary are redistributing it — add an attribution line in your

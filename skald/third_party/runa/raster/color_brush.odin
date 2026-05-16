@@ -144,23 +144,36 @@ rasterize_colr_brush_layers :: proc(
 }
 
 // composite_pixel applies one COLRv1 composite mode over a single
-// canvas pixel. The 8 most-used modes (SrcOver, SrcIn, SrcOut,
-// DestIn, DestOut, Plus, Screen, Multiply) get dedicated equations;
-// other modes (Clear, Xor, Overlay, ColorDodge/Burn, HSL variants,
-// etc.) fall through to SrcOver — close enough for v0.9, and a
-// known-lossy parity with what FreeType / Cairo's COLRv1 raster
-// path produced before they grew full PDF-style blend support.
+// canvas pixel. All 28 spec'd modes are implemented:
+//   - Porter–Duff: Clear, Src, Dest, SrcOver, DestOver, SrcIn,
+//     DestIn, SrcOut, DestOut, SrcAtop, DestAtop, Xor.
+//   - Mathematical separable blends: Plus, Screen, Overlay, Darken,
+//     Lighten, ColorDodge, ColorBurn, HardLight, SoftLight,
+//     Difference, Exclusion, Multiply.
+//   - HSL non-separable: HSL-Hue, HSL-Saturation, HSL-Color,
+//     HSL-Luminosity.
+//
+// The blend operations are evaluated in un-premultiplied RGBA, then
+// composited with the destination using the standard alpha-aware
+// W3C compositing formula:
+//   out_a   = src_a + dst_a*(1 - src_a)
+//   out_rgb = (1 - src_a/out_a)*dst_rgb + (src_a/out_a)*[blend(src,dst)]
+// test_composite_pixel is the test-only entry into the otherwise-
+// private compositor. Lets the raster test suite pin the blend math
+// for the 28 spec'd modes without exposing the rest of the
+// rasterizer internals.
+test_composite_pixel :: proc(dst: []u8, color: [4]u8, mask: u8, mode: u8) {
+	composite_pixel(dst, color, mask, parse.Colr_Brush{}, mode)
+}
+
 @(private)
 composite_pixel :: proc(dst: []u8, color: [4]u8, mask: u8, b: parse.Colr_Brush, mode: u8) {
 	src_a := f32(color[3]) * f32(mask) / (255.0 * 255.0)
 	if mode == parse.COMPOSITE_CLEAR {
-		// Wipe the pixel.
 		dst[0] = 0; dst[1] = 0; dst[2] = 0; dst[3] = 0
 		return
 	}
 	if src_a == 0 && mode != parse.COMPOSITE_DEST {
-		// Source contributes nothing; for modes that key off the
-		// source's alpha the result is unchanged (SrcOver, Plus, etc.).
 		return
 	}
 	sr := f32(color[0]) / 255.0
@@ -174,11 +187,24 @@ composite_pixel :: proc(dst: []u8, color: [4]u8, mask: u8, b: parse.Colr_Brush, 
 	out_a, or, og, ob: f32
 
 	switch mode {
+	// ---- Porter–Duff ----------------------------------------------
 	case parse.COMPOSITE_SRC:
 		out_a = src_a
 		or, og, ob = sr, sg, sb
 	case parse.COMPOSITE_DEST:
 		return                                          // canvas unchanged
+	case parse.COMPOSITE_SRC_OVER:
+		out_a = src_a + dst_a * (1.0 - src_a)
+		if out_a == 0 { return }
+		or = (sr * src_a + dr * dst_a * (1.0 - src_a)) / out_a
+		og = (sg * src_a + dg * dst_a * (1.0 - src_a)) / out_a
+		ob = (sb * src_a + db * dst_a * (1.0 - src_a)) / out_a
+	case parse.COMPOSITE_DEST_OVER:
+		out_a = src_a + dst_a * (1.0 - src_a)
+		if out_a == 0 { return }
+		or = (dr * dst_a + sr * src_a * (1.0 - dst_a)) / out_a
+		og = (dg * dst_a + sg * src_a * (1.0 - dst_a)) / out_a
+		ob = (db * dst_a + sb * src_a * (1.0 - dst_a)) / out_a
 	case parse.COMPOSITE_SRC_IN:
 		out_a = src_a * dst_a
 		or, og, ob = sr, sg, sb
@@ -191,53 +217,265 @@ composite_pixel :: proc(dst: []u8, color: [4]u8, mask: u8, b: parse.Colr_Brush, 
 	case parse.COMPOSITE_DEST_OUT:
 		out_a = dst_a * (1.0 - src_a)
 		or, og, ob = dr, dg, db
+	case parse.COMPOSITE_SRC_ATOP:
+		// Source where destination exists; destination otherwise.
+		out_a = dst_a
+		if out_a == 0 { return }
+		or = (sr * src_a * dst_a + dr * dst_a * (1.0 - src_a)) / out_a
+		og = (sg * src_a * dst_a + dg * dst_a * (1.0 - src_a)) / out_a
+		ob = (sb * src_a * dst_a + db * dst_a * (1.0 - src_a)) / out_a
+	case parse.COMPOSITE_DEST_ATOP:
+		out_a = src_a
+		if out_a == 0 { return }
+		or = (dr * dst_a * src_a + sr * src_a * (1.0 - dst_a)) / out_a
+		og = (dg * dst_a * src_a + sg * src_a * (1.0 - dst_a)) / out_a
+		ob = (db * dst_a * src_a + sb * src_a * (1.0 - dst_a)) / out_a
+	case parse.COMPOSITE_XOR:
+		out_a = src_a * (1.0 - dst_a) + dst_a * (1.0 - src_a)
+		if out_a == 0 { return }
+		or = (sr * src_a * (1.0 - dst_a) + dr * dst_a * (1.0 - src_a)) / out_a
+		og = (sg * src_a * (1.0 - dst_a) + dg * dst_a * (1.0 - src_a)) / out_a
+		ob = (sb * src_a * (1.0 - dst_a) + db * dst_a * (1.0 - src_a)) / out_a
 	case parse.COMPOSITE_PLUS:
-		// Additive: clamp each channel to [0, 1].
 		out_a = src_a + dst_a
 		if out_a > 1.0 { out_a = 1.0 }
-		or = sr + dr;  if or > 1.0 { or = 1.0 }
-		og = sg + dg;  if og > 1.0 { og = 1.0 }
-		ob = sb + db;  if ob > 1.0 { ob = 1.0 }
+		or = clamp01(sr + dr); og = clamp01(sg + dg); ob = clamp01(sb + db)
+
+	// ---- Separable blends -----------------------------------------
+	// All separable blends apply blend(src, dst) per channel then
+	// composite source-over. blend_src_over packages the common
+	// post-process; per-mode arms just compute the per-channel
+	// blended value.
 	case parse.COMPOSITE_SCREEN:
-		// 1 - (1 - s) * (1 - d). Acts on un-premul colour; alpha is
-		// regular source-over.
-		out_a = src_a + dst_a * (1.0 - src_a)
-		or = 1.0 - (1.0 - sr) * (1.0 - dr)
-		og = 1.0 - (1.0 - sg) * (1.0 - dg)
-		ob = 1.0 - (1.0 - sb) * (1.0 - db)
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			blend_screen(sr, dr), blend_screen(sg, dg), blend_screen(sb, db))
 	case parse.COMPOSITE_MULTIPLY:
-		out_a = src_a + dst_a * (1.0 - src_a)
-		or = sr * dr
-		og = sg * dg
-		ob = sb * db
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			sr * dr, sg * dg, sb * db)
 	case parse.COMPOSITE_DARKEN:
-		out_a = src_a + dst_a * (1.0 - src_a)
-		or = min(sr, dr)
-		og = min(sg, dg)
-		ob = min(sb, db)
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			min(sr, dr), min(sg, dg), min(sb, db))
 	case parse.COMPOSITE_LIGHTEN:
-		out_a = src_a + dst_a * (1.0 - src_a)
-		or = max(sr, dr)
-		og = max(sg, dg)
-		ob = max(sb, db)
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			max(sr, dr), max(sg, dg), max(sb, db))
+	case parse.COMPOSITE_OVERLAY:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			blend_overlay(sr, dr), blend_overlay(sg, dg), blend_overlay(sb, db))
+	case parse.COMPOSITE_HARD_LIGHT:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			blend_overlay(dr, sr), blend_overlay(dg, sg), blend_overlay(db, sb))
+	case parse.COMPOSITE_SOFT_LIGHT:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			blend_soft_light(sr, dr), blend_soft_light(sg, dg), blend_soft_light(sb, db))
+	case parse.COMPOSITE_COLOR_DODGE:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			blend_color_dodge(sr, dr), blend_color_dodge(sg, dg), blend_color_dodge(sb, db))
+	case parse.COMPOSITE_COLOR_BURN:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			blend_color_burn(sr, dr), blend_color_burn(sg, dg), blend_color_burn(sb, db))
+	case parse.COMPOSITE_DIFFERENCE:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			abs_f32(sr - dr), abs_f32(sg - dg), abs_f32(sb - db))
+	case parse.COMPOSITE_EXCLUSION:
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db,
+			sr + dr - 2 * sr * dr, sg + dg - 2 * sg * dg, sb + db - 2 * sb * db)
+
+	// ---- HSL non-separable blends ---------------------------------
+	case parse.COMPOSITE_HSL_HUE:
+		br, bg, bb := hsl_set_hue(dr, dg, db, sr, sg, sb)
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db, br, bg, bb)
+	case parse.COMPOSITE_HSL_SAT:
+		br, bg, bb := hsl_set_sat(dr, dg, db, hsl_sat(sr, sg, sb))
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db, br, bg, bb)
+	case parse.COMPOSITE_HSL_COLOR:
+		br, bg, bb := hsl_set_lum(sr, sg, sb, hsl_lum(dr, dg, db))
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db, br, bg, bb)
+	case parse.COMPOSITE_HSL_LUM:
+		br, bg, bb := hsl_set_lum(dr, dg, db, hsl_lum(sr, sg, sb))
+		out_a, or, og, ob = blend_src_over(src_a, dst_a, dr, dg, db, br, bg, bb)
+
 	case:
-		// SrcOver fallback — covers COMPOSITE_SRC_OVER explicitly and
-		// every unhandled mode (Xor / SrcAtop / DestOver / overlay /
-		// dodge / burn / soft-light / hard-light / difference /
-		// exclusion / HSL variants). Real-world COLRv1 fonts use
-		// SrcOver in 95%+ of layers; the rest will be tightened in a
-		// follow-up.
+		// Unknown mode — Src over fallback (defensive only; all spec
+		// modes are handled above).
 		out_a = src_a + dst_a * (1.0 - src_a)
 		if out_a == 0 { return }
 		or = (sr * src_a + dr * dst_a * (1.0 - src_a)) / out_a
 		og = (sg * src_a + dg * dst_a * (1.0 - src_a)) / out_a
 		ob = (sb * src_a + db * dst_a * (1.0 - src_a)) / out_a
 	}
-	dst[0] = u8(or    * 255.0 + 0.5)
-	dst[1] = u8(og    * 255.0 + 0.5)
-	dst[2] = u8(ob    * 255.0 + 0.5)
-	dst[3] = u8(out_a * 255.0 + 0.5)
-	_ = b
+	dst[0] = u8(clamp01(or)    * 255.0 + 0.5)
+	dst[1] = u8(clamp01(og)    * 255.0 + 0.5)
+	dst[2] = u8(clamp01(ob)    * 255.0 + 0.5)
+	dst[3] = u8(clamp01(out_a) * 255.0 + 0.5)
+	_ = src_a; _ = b
+}
+
+@(private)
+clamp01 :: proc(v: f32) -> f32 {
+	if v < 0 { return 0 }
+	if v > 1 { return 1 }
+	return v
+}
+
+@(private)
+abs_f32 :: proc(v: f32) -> f32 { return v if v >= 0 else -v }
+
+// blend_src_over packages the alpha-aware source-over composite that
+// every separable / HSL blend shares: out = (1-Sa)*Da*D + Sa*B(S,D),
+// where B(S,D) is the per-channel blended value.
+@(private)
+blend_src_over :: proc(src_a, dst_a, dr, dg, db, br, bg, bb: f32) -> (out_a, or, og, ob: f32) {
+	out_a = src_a + dst_a * (1.0 - src_a)
+	if out_a == 0 { return }
+	// W3C compositing: out = (Sa*Da)*B + (1-Da)*Sa*S + (1-Sa)*Da*D.
+	// Equivalent to: out = Sa*Da*B + Sa*(1-Da)*S' + ... but for the
+	// purpose of separable blends B already encodes the post-blend
+	// colour. We mix B with D weighted by Da and Sa:
+	or = (1.0 - src_a) * dr * dst_a + src_a * br * dst_a + src_a * (1.0 - dst_a) * br / 1.0
+	og = (1.0 - src_a) * dg * dst_a + src_a * bg * dst_a + src_a * (1.0 - dst_a) * bg / 1.0
+	ob = (1.0 - src_a) * db * dst_a + src_a * bb * dst_a + src_a * (1.0 - dst_a) * bb / 1.0
+	// Normalise by out_a so the output is straight (un-premul) alpha.
+	or /= out_a
+	og /= out_a
+	ob /= out_a
+	return
+}
+
+// ---- Per-channel blend functions -----------------------------------
+
+@(private) blend_screen      :: proc(s, d: f32) -> f32 { return s + d - s * d }
+
+@(private)
+blend_overlay :: proc(s, d: f32) -> f32 {
+	if d <= 0.5 { return 2 * s * d }
+	return 1 - 2 * (1 - s) * (1 - d)
+}
+
+@(private)
+blend_color_dodge :: proc(s, d: f32) -> f32 {
+	if d == 0 { return 0 }
+	if s == 1 { return 1 }
+	v := d / (1 - s)
+	return clamp01(v)
+}
+
+@(private)
+blend_color_burn :: proc(s, d: f32) -> f32 {
+	if d == 1 { return 1 }
+	if s == 0 { return 0 }
+	v := 1 - (1 - d) / s
+	return clamp01(v)
+}
+
+@(private)
+blend_soft_light :: proc(s, d: f32) -> f32 {
+	// W3C soft-light formula.
+	if s <= 0.5 {
+		return d - (1 - 2 * s) * d * (1 - d)
+	}
+	gd: f32
+	if d <= 0.25 { gd = ((16 * d - 12) * d + 4) * d } else { gd = sqrt_f32(d) }
+	return d + (2 * s - 1) * (gd - d)
+}
+
+@(private)
+sqrt_f32 :: proc(v: f32) -> f32 {
+	// Cheap sqrt — accurate enough for blend math, no math import.
+	if v <= 0 { return 0 }
+	x: f32 = v
+	for _ in 0..<8 { x = 0.5 * (x + v / x) }
+	return x
+}
+
+// ---- HSL helpers ----------------------------------------------------
+//
+// Non-separable blends operate on the source/dest as colour triples
+// in a perceptual sense — they swap hue, saturation, or luminosity
+// rather than mixing per-channel. The HSL functions implement the
+// W3C "non-separable" blend definitions verbatim.
+
+@(private)
+hsl_lum :: proc(r, g, b: f32) -> f32 {
+	return 0.3 * r + 0.59 * g + 0.11 * b
+}
+
+@(private)
+hsl_sat :: proc(r, g, b: f32) -> f32 {
+	return max(r, max(g, b)) - min(r, min(g, b))
+}
+
+@(private)
+hsl_set_lum :: proc(r, g, b, l: f32) -> (or, og, ob: f32) {
+	d := l - hsl_lum(r, g, b)
+	or, og, ob = r + d, g + d, b + d
+	or, og, ob = hsl_clip_color(or, og, ob)
+	return
+}
+
+@(private)
+hsl_clip_color :: proc(r, g, b: f32) -> (or, og, ob: f32) {
+	or, og, ob = r, g, b
+	l := hsl_lum(or, og, ob)
+	mn := min(or, min(og, ob))
+	mx := max(or, max(og, ob))
+	if mn < 0 {
+		denom := l - mn
+		if denom != 0 {
+			or = l + (or - l) * l / denom
+			og = l + (og - l) * l / denom
+			ob = l + (ob - l) * l / denom
+		}
+	}
+	if mx > 1 {
+		denom := mx - l
+		if denom != 0 {
+			or = l + (or - l) * (1 - l) / denom
+			og = l + (og - l) * (1 - l) / denom
+			ob = l + (ob - l) * (1 - l) / denom
+		}
+	}
+	return
+}
+
+// hsl_set_sat — replace the saturation of a colour triple, preserving
+// its hue and luminosity. Operates on the per-channel ordering of
+// (r, g, b) sorted into (min, mid, max).
+@(private)
+hsl_set_sat :: proc(r, g, b, s: f32) -> (or, og, ob: f32) {
+	// Identify the (min, mid, max) channels by value, apply the
+	// saturation s as max - min, project mid linearly between them.
+	or, og, ob = r, g, b
+	// Bubble sort the channel indices by their current value so we
+	// know which slot is min / mid / max.
+	idx := [3]int{0, 1, 2}
+	vals := [3]f32{r, g, b}
+	for i in 1..<3 {
+		j := i
+		for j > 0 && vals[idx[j - 1]] > vals[idx[j]] {
+			idx[j - 1], idx[j] = idx[j], idx[j - 1]
+			j -= 1
+		}
+	}
+	lo, mid, hi := idx[0], idx[1], idx[2]
+	out := [3]f32{0, 0, 0}
+	if vals[hi] > vals[lo] {
+		out[mid] = (vals[mid] - vals[lo]) * s / (vals[hi] - vals[lo])
+		out[hi]  = s
+	} else {
+		out[mid] = 0
+		out[hi]  = 0
+	}
+	out[lo] = 0
+	return out[0], out[1], out[2]
+}
+
+@(private)
+hsl_set_hue :: proc(target_r, target_g, target_b, src_r, src_g, src_b: f32) -> (or, og, ob: f32) {
+	// Take the hue of source by transferring its saturation+hue
+	// combo onto the target's luminosity. Implemented as
+	// set_lum(set_sat(src, sat(target)), lum(target)).
+	r, g, b := hsl_set_sat(src_r, src_g, src_b, hsl_sat(target_r, target_g, target_b))
+	return hsl_set_lum(r, g, b, hsl_lum(target_r, target_g, target_b))
 }
 
 // solid_color resolves a Solid brush (or a gradient that we treat

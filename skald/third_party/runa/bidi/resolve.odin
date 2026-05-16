@@ -356,12 +356,23 @@ resolve_isolating_runs :: proc(runes: []rune, classes: []Bidi_Class, levels: []u
 	if len(runs) == 0 { return }
 
 	// Step 2: group level runs into ISRs per UAX #9 BD13: a level run
-	// continues an existing ISR iff it begins with a matched PDI that
-	// closes a valid isolate initiator at the end of an earlier run.
-	// Embedding push/pop (RLE / LRE / PDF) splits level runs but
-	// does *not* join them into one ISR — the inner content is at a
-	// different level and the outer continuation begins with a BN
-	// (PDF), not a matched PDI.
+	// continues an existing ISR iff it begins with a matched PDI
+	// that closes a valid isolate initiator at the end of an
+	// earlier run. Embedding push/pop (RLE / LRE / PDF) normally
+	// splits level runs *without* joining them.
+	//
+	// Exception: when the intervening level runs are *all-BN* (i.e.
+	// completely X9-removed — empty RLE+PDF chains), they don't
+	// contribute any visible content. Two same-level non-BN runs
+	// separated only by all-BN runs effectively share their
+	// surroundings and should belong to the same ISR. This matches
+	// the reference impl's behaviour for the deeply-nested empty
+	// embedding cases in BidiCharacterTest.
+	is_all_bn_run :: proc(classes: []Bidi_Class, lo, hi: int) -> bool {
+		for k in lo..<hi { if classes[k] != .BN { return false } }
+		return true
+	}
+
 	isr_runs := make([dynamic][dynamic]int, 0, 8, context.temp_allocator)
 	defer {
 		for &lst in isr_runs { delete(lst) }
@@ -370,19 +381,56 @@ resolve_isolating_runs :: proc(runes: []rune, classes: []Bidi_Class, levels: []u
 	isolate_stack := make([dynamic]int, 0, 8, context.temp_allocator)
 	defer delete(isolate_stack)
 
+	// Track the most recent non-all-BN run's level + ISR ID. To
+	// "tunnel" through empty embeddings (all-BN intervening runs),
+	// require them to be at a *higher* level than the surrounding
+	// real runs — i.e. they represent deeper nesting, not a
+	// neighbouring scope. The minimum level seen across intervening
+	// all-BN runs since the last real run captures this.
+	prev_real_level: u8 = 0
+	prev_real_isr   := -1
+	prev_real_seen  := false
+	intervening_min_bn_level: u8 = 0
+	saw_bn_gap := false
+
 	for r in 0..<len(runs) {
 		run := runs[r]
 		first_class := classes[run.lo]
 
+		if is_all_bn_run(classes, run.lo, run.hi) {
+			if saw_bn_gap {
+				if run.level < intervening_min_bn_level { intervening_min_bn_level = run.level }
+			} else {
+				intervening_min_bn_level = run.level
+				saw_bn_gap = true
+			}
+			continue
+		}
+
 		isr_id: int
+		joined := false
 		if first_class == .PDI && valid_isolate[run.lo] && len(isolate_stack) > 0 {
 			isr_id = pop(&isolate_stack)
-		} else {
+			joined = true
+		} else if prev_real_seen && saw_bn_gap &&
+		          prev_real_level == run.level &&
+		          intervening_min_bn_level > run.level {
+			// Same outer level, only deeper-nested empty embeddings
+			// between us → rejoin the previous real run's ISR.
+			isr_id = prev_real_isr
+			joined = true
+		}
+		if !joined {
 			isr_id = len(isr_runs)
 			new_isr := make([dynamic]int, 0, 4, context.temp_allocator)
 			append(&isr_runs, new_isr)
 		}
 		append(&isr_runs[isr_id], r)
+
+		prev_real_level = run.level
+		prev_real_isr   = isr_id
+		prev_real_seen  = true
+		saw_bn_gap      = false
 
 		last_class := classes[run.hi - 1]
 		if (last_class == .LRI || last_class == .RLI || last_class == .FSI) && valid_isolate[run.hi - 1] {

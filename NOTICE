@@ -11,9 +11,9 @@ the repository at:
 
 Skald also bundles Twemoji-Mozilla — a COLRv0 colour-emoji TTF
 built from Twitter's Twemoji artwork (CC-BY-4.0) using Mozilla's
-twemoji-colr tooling (Apache-2.0). It powers
-`skald.font_use_default_emoji(r)`, the one-line helper apps call
-to opt into colour emoji rendering under the runa text backend.
+twemoji-colr tooling (Apache-2.0). It's registered as a default
+fallback to Inter during `text_init`, so `skald.text("hi 😀")`
+renders colour emoji with zero app-side setup.
 Attribution + full notice at:
 
     skald/assets/Twemoji-Mozilla-CCBY.txt
@@ -33,16 +33,31 @@ Runa is licensed under the zlib license; its own LICENSE file ships
 alongside the source at `skald/third_party/runa/LICENSE`. The
 vendored tree also includes a set of Unicode UCD reference files at
 `skald/third_party/runa/tools/ucd/` — script/category/property data
-used to build runa's internal tables, plus a few conformance test
-fixtures (ArabicShaping, BidiBrackets, BidiCharacterTest,
-DerivedBidiClass, DerivedCoreProperties, DerivedGeneralCategory,
-EastAsianWidth, emoji-data, GraphemeBreakProperty, GraphemeBreakTest,
+that runa `#load`s at compile time to build its internal tables,
+plus a few conformance test fixtures (ArabicShaping, BidiBrackets,
+BidiCharacterTest, DerivedBidiClass, DerivedCoreProperties,
+DerivedGeneralCategory, DerivedNormalizationProps, EastAsianWidth,
+emoji-data, GraphemeBreakProperty, GraphemeBreakTest,
 IndicPositionalCategory, IndicSyllabicCategory, LineBreak,
-LineBreakTest, Scripts). Each file is © Unicode, Inc. and ships with
-its own copyright + "for terms of use and license, see
-https://www.unicode.org/terms_of_use.html" header preserved at the
-top — that header satisfies the redistribution obligation under
-Unicode's licence.
+LineBreakTest, Scripts, SentenceBreakProperty, SentenceBreakTest,
+UnicodeData, WordBreakProperty, WordBreakTest). Each file is
+© Unicode, Inc. and ships with its own copyright + "for terms of
+use and license, see https://www.unicode.org/terms_of_use.html"
+header preserved at the top — that header satisfies the
+redistribution obligation under Unicode's licence.
+
+Note: Skald's vendored runa intentionally omits the PyThaiNLP
+Thai word-break corpus (`thai_words.txt`, CC-BY-SA) that upstream
+runa embeds via `linebreak/thai_dict.odin`. Skald replaces that
+file with a stub that no-ops the segmenter so every Skald binary
+stays permissively licensed by default — apps shipping commercial
+products don't have to add a CC-BY-SA attribution line for a
+feature most apps don't need. Thai paragraphs fall back to
+UAX #14's default SA-class behaviour (one unbreakable run). Apps
+that genuinely need Thai word-break segmentation can replace
+`skald/third_party/runa/linebreak/thai_dict.odin` with the
+upstream version (plus the corpus file) and add the corresponding
+CC-BY-SA attribution to their About / docs.
 
 Skald also depends on a number of third-party libraries; none impose
 additional obligations on Skald consumers, but they are gratefully

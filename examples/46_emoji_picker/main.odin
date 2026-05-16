@@ -20,8 +20,6 @@ Msg :: union {
 Pick_Emoji    :: struct { emoji: string }
 Draft_Changed :: struct { value: string }
 
-@(private) fonts_ready: bool
-
 init :: proc() -> State { return {} }
 
 update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) {
@@ -62,11 +60,6 @@ on_change :: proc(v: string) -> Msg { return Draft_Changed{value = v} }
 
 view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	th := ctx.theme
-
-	if !fonts_ready && ctx.renderer != nil {
-		skald.font_use_default_emoji(ctx.renderer)
-		fonts_ready = true
-	}
 
 	hint: string
 	if len(s.last_copied) > 0 {

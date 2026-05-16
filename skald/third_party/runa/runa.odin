@@ -18,6 +18,7 @@ import "shape"
 import "linebreak"
 import "itemize"
 import "bidi"
+import "normalize"
 
 // ---- Re-exported types from the raster package -----------------------
 
@@ -33,6 +34,39 @@ atlas_destroy     :: raster.atlas_destroy
 atlas_pack_alpha  :: raster.atlas_pack_alpha
 atlas_pack_rgba   :: raster.atlas_pack_rgba
 atlas_flush_dirty :: raster.atlas_flush_dirty
+
+// ---- UAX #29 segmentation iterators (re-exported from itemize) -------
+//
+// Yield `(byte_lo, byte_hi, ok)` per cluster / word / sentence. Each
+// `*_iter_next` returns `ok=false` once the input is exhausted; the
+// caller drives the loop. See `itemize/grapheme.odin`, `itemize/word.odin`,
+// `itemize/sentence.odin` for the conformance details.
+
+Grapheme_Iter      :: itemize.Grapheme_Iter
+grapheme_iter_make :: itemize.grapheme_iter_make
+grapheme_iter_next :: itemize.grapheme_iter_next
+
+Word_Iter      :: itemize.Word_Iter
+word_iter_make :: itemize.word_iter_make
+word_iter_next :: itemize.word_iter_next
+
+Sentence_Iter      :: itemize.Sentence_Iter
+sentence_iter_make :: itemize.sentence_iter_make
+sentence_iter_next :: itemize.sentence_iter_next
+
+// ---- UAX #15 normalization (re-exported from normalize) --------------
+//
+// Each `to_nfX` returns a freshly-allocated UTF-8 string in the
+// requested form; callers own the result and should `delete` it
+// when done (or pass a scoped allocator).
+
+to_nfc  :: normalize.to_nfc
+to_nfd  :: normalize.to_nfd
+to_nfkc :: normalize.to_nfkc
+to_nfkd :: normalize.to_nfkd
+is_nfc  :: normalize.is_nfc
+is_nfd  :: normalize.is_nfd
+ccc     :: normalize.ccc
 
 // Error is the single public error type. Returns from every fallible
 // procedure as `(T, Error)`. `Error.None` is the zero value and means
@@ -395,6 +429,12 @@ wrap_glyphs :: proc(text: string, all_glyphs: []Paragraph_Glyph, max_width, line
 		}
 		if next_i <= i { i += 1 } else { i = next_i }
 	}
+
+	// Thai word-break: UAX #14 alone treats SA-class Thai chars as
+	// AL — i.e. one giant unbreakable word. The dictionary-driven
+	// segmenter inserts soft break opportunities at Thai word
+	// boundaries inside each Thai run.
+	linebreak.thai_segment_breaks(runes, allowed[:])
 
 	// Convert byte-cluster on a Paragraph_Glyph back to a codepoint
 	// index for break testing.

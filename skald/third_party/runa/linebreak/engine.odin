@@ -51,6 +51,10 @@ next_break :: proc(text: []rune, start: int) -> (idx: int, mandatory: bool) {
 	}
 
 	prev := resolve(line_break_class(text[start]), text[start])
+	// LB8a: a ZWJ at any position (including sot) suppresses break
+	// before the next char. We track that here so the LB10
+	// fall-back-to-AL below doesn't erase the ZWJ × X rule.
+	prev_was_zwj := prev == .ZWJ
 	// LB10: a CM / ZWJ at start-of-text has no base to attach to.
 	// Treat it as AL for rule-matching purposes.
 	if prev == .CM || prev == .ZWJ { prev = .AL }
@@ -74,6 +78,17 @@ next_break :: proc(text: []rune, start: int) -> (idx: int, mandatory: bool) {
 	// open through NU / SY / IS / CL / CP and lets `(CL|CP) × (PO|PR)`
 	// fire. Anything outside that set breaks the chain.
 	in_num_chain := prev == .NU
+	// LB20a state: HH or HY immediately preceded by sot or one of
+	// (BK | CR | LF | NL | OP | QU | SP | ZW). When set and the next
+	// char is AL or HL, no break is allowed. At `start` the previous
+	// position is `sot`, so a leading HH/HY qualifies.
+	prev_is_hh_hy_after_breaker := prev == .HH || prev == .HY
+	// LB28a state: prev is VI and the char before prev was an Aksara
+	// base (AK / dotted-circle / AS) — primes the "(AK|◌|AS) VI ×
+	// (AK|◌)" no-break.
+	prev_is_vi_after_ak := false
+	prev_rune_for_ak := text[start]
+	prev_was_ak := is_ak_base(prev, prev_rune_for_ak)
 
 	for i := start + 1; i < len(text); i += 1 {
 		cur_raw := line_break_class(text[i])
@@ -89,28 +104,72 @@ next_break :: proc(text: []rune, start: int) -> (idx: int, mandatory: bool) {
 			lb10_applies := prev == .BK || prev == .CR || prev == .LF ||
 			                prev == .NL || prev == .SP || prev == .ZW
 			if !lb10_applies {
+				// LB8a state: a ZWJ propagates the no-break to the
+				// next non-skip char; a CM (even one absorbed via
+				// LB9) consumes any pending ZWJ × — once a CM has
+				// been processed the break-after-cluster rules
+				// resume.
+				if cur == .ZWJ { prev_was_zwj = true } else { prev_was_zwj = false }
 				continue
 			}
 			cur = .AL
 		}
 
-		op := classify(prev, non_sp, cur, ri_run, text[i], prev_rune, in_num_chain)
+		op := classify(prev, non_sp, cur, ri_run, text[i], prev_rune, in_num_chain, prev_is_vi_after_ak)
+
+		// LB8a: ZWJ × (no break after ZWJ). LB10 absorbs the ZWJ into
+		// AL for rule classification, so we track the original ZWJ
+		// state separately and override the result here.
+		if prev_was_zwj { op = .None }
+
+		// LB8 wins outright: a break after ZW (or after any SPs that
+		// follow ZW) is mandatory by the rule's number — UAX #14
+		// applies LB1–LB31 in order. The LB15 / LB20a overrides below
+		// only apply when LB8 didn't trigger.
+		lb8_break := prev == .ZW || (prev == .SP && non_sp == .ZW)
+
+		// LB20a override: (sot | BK | CR | LF | NL | OP | QU | SP | ZW)
+		// (HH | HY) × (AL | HL). Stops a hyphen + word from breaking
+		// when used in spell-out names. (LB20a also covers the literal
+		// codepoints U+002D, U+00AD, U+058A; those resolve to HY / BB
+		// / similar via property lookup and reach this rule through
+		// the HH/HY arm.)
+		if !lb8_break && op == .Allow && prev_is_hh_hy_after_breaker && (cur == .AL || cur == .HL) {
+			op = .None
+		}
 
 		// LB15a override: × (anything) when the most-recent non-SP is
 		// a Pi-QU and that Pi-QU was preceded by sot or an LB15a
 		// "opener" class.
-		if op == .Allow && non_sp_is_pi_after_opener {
+		if !lb8_break && op == .Allow && non_sp_is_pi_after_opener {
 			op = .None
 		}
 
 		// LB15b override: × Pf-QU when Pf-QU is followed by SP / ZW /
 		// CL / CP / EX / IS / SY / BK / CR / LF / NL or eot. The
 		// lookahead skips SPs that follow Pf-QU.
-		if op == .Allow && cur == .QU && is_pf_punctuation(text[i]) {
+		if !lb8_break && op == .Allow && cur == .QU && is_pf_punctuation(text[i]) {
 			next_cls := next_nonsp_class(text, i + 1)
 			if lb15b_closer(next_cls) {
 				op = .None
 			}
+		}
+
+		// LB15c override: SP ÷ IS NU — allow a break between SP and
+		// an IS that's immediately followed by a digit, so the "."
+		// in "amount .5" starts a fresh line.
+		if op == .None && prev == .SP && cur == .IS && i + 1 < len(text) {
+			next_cls := line_break_class(text[i + 1])
+			if next_cls == .NU { op = .Allow }
+		}
+
+		// LB25: (PR | PO) × (OP | HY) when the following codepoint
+		// is a digit — covers the start of "$-5", "€(123)", etc.
+		// Single-glyph lookahead keeps the rule from binding
+		// non-numeric (PR | PO) (OP | HY) pairs.
+		if op == .Allow && (prev == .PR || prev == .PO) && (cur == .OP || cur == .HY) && i + 1 < len(text) {
+			next_cls := line_break_class(text[i + 1])
+			if next_cls == .NU { op = .None }
 		}
 
 		switch op {
@@ -148,6 +207,23 @@ next_break :: proc(text: []rune, start: int) -> (idx: int, mandatory: bool) {
 			prev_non_sp_before_cur_non_sp = non_sp
 			non_sp = cur
 		}
+		// LB20a tracking: HH or HY positioned after a break-causing
+		// class (or sot) qualifies for the no-break-before-AL/HL
+		// override.
+		if cur == .HH || cur == .HY {
+			prev_is_hh_hy_after_breaker = lb20a_breaker(prev)
+		} else {
+			prev_is_hh_hy_after_breaker = false
+		}
+		// LB8a state — set when we just processed (or absorbed) a
+		// ZWJ. Cleared once any non-CM/ZWJ char comes through and
+		// claims the no-break.
+		prev_was_zwj = false
+		// LB28a state: prev_is_vi_after_ak primes the rule for the
+		// NEXT iteration. Fires when cur is VI and the position
+		// before it (prev) was an Aksara base.
+		prev_is_vi_after_ak = (cur == .VI) && prev_was_ak
+		prev_was_ak = is_ak_base(cur, text[i])
 		prev = cur
 	}
 	return len(text), true
@@ -157,6 +233,39 @@ next_break :: proc(text: []rune, start: int) -> (idx: int, mandatory: bool) {
 lb15a_opener :: proc(c: Line_Break_Class) -> bool {
 	#partial switch c {
 	case .BK, .CR, .LF, .NL, .OP, .QU, .GL, .SP, .ZW: return true
+	}
+	return false
+}
+
+// lb20a_breaker classifies whether `c` is the kind of "break-causing"
+// context that primes LB20a's HH/HY-stick rule. The sot position is
+// handled by initialisation; this proc covers BK/CR/LF/NL/OP/QU/SP/ZW.
+@(private)
+lb20a_breaker :: proc(c: Line_Break_Class) -> bool {
+	#partial switch c {
+	case .BK, .CR, .LF, .NL, .OP, .QU, .SP, .ZW: return true
+	}
+	return false
+}
+
+// is_reserved_pictographic returns true for codepoints that are both
+// Extended_Pictographic and General_Category=Cn (reserved/unassigned).
+// LB30b's second arm — [Ext_Pictographic & Cn] × EM — needs this so
+// future-emoji codepoints stay bound to a trailing skin-tone modifier
+// even before they're formally assigned. Ranges are Unicode 17.0;
+// refresh when bumping the targeted Unicode version.
+@(private)
+is_reserved_pictographic :: proc(r: rune) -> bool {
+	switch {
+	case r >= 0x1F80C && r <= 0x1F80F: return true
+	case r >= 0x1F848 && r <= 0x1F84F: return true
+	case r >= 0x1F85A && r <= 0x1F85F: return true
+	case r >= 0x1F888 && r <= 0x1F88F: return true
+	case r >= 0x1F8AE && r <= 0x1F8AF: return true
+	case r >= 0x1F8BC && r <= 0x1F8BF: return true
+	case r >= 0x1F8C2 && r <= 0x1F8CF: return true
+	case r >= 0x1F8D9 && r <= 0x1F8FF: return true
+	case r >= 0x1FC00 && r <= 0x1FFFD: return true
 	}
 	return false
 }
@@ -182,14 +291,16 @@ next_nonsp_class :: proc(text: []rune, start: int) -> Line_Break_Class {
 	return .BK
 }
 
+// is_ak_base reports whether the (class, rune) pair acts as an
+// Aksara base for LB28a. U+25CC DOTTED CIRCLE is class AL but the
+// LB28a rules treat it as a base equivalently to AK / AS.
 @(private)
-classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune, prev_rune: rune, in_num_chain: bool) -> Opportunity {
-	// Helpers for LB28a Aksara cluster rules (Indic / Brahmic).
-	// `25CC` (DOTTED CIRCLE, class AL) acts as an Aksara base for
-	// these rules.
-	is_ak_base :: proc(c: Line_Break_Class, r: rune) -> bool {
-		return c == .AK || c == .AS || r == 0x25CC
-	}
+is_ak_base :: proc(c: Line_Break_Class, r: rune) -> bool {
+	return c == .AK || c == .AS || r == 0x25CC
+}
+
+@(private)
+classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune, prev_rune: rune, in_num_chain: bool, prev_is_vi_after_ak := false) -> Opportunity {
 	// ---- LB4 / LB5: hard breaks --------------------------------------
 	if prev == .BK { return .Mandatory }
 	if prev == .CR && cur != .LF { return .Mandatory }
@@ -201,9 +312,13 @@ classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune
 	// ---- LB7: never break before SP / ZW -----------------------------
 	if cur == .SP || cur == .ZW { return .None }
 
-	// ---- LB8: break after ZW ----------------------------------------
+	// ---- LB8: break after ZW (and any SPs that follow ZW) -----------
+	// "ZW SP* ÷" — the engine's `non_sp` tracks the most recent
+	// non-space class, so a SP whose last-non-SP was ZW still
+	// allows the break.
 	// (LB8a: × ZWJ — handled by the CM/ZWJ shortcut in the walker.)
 	if prev == .ZW { return .Allow }
+	if prev == .SP && non_sp_prev == .ZW { return .Allow }
 
 	// ---- LB11: WJ × and × WJ ----------------------------------------
 	if cur == .WJ || prev == .WJ { return .None }
@@ -211,11 +326,14 @@ classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune
 	// ---- LB12 / LB12a: GL --------------------------------------------
 	if prev == .GL { return .None }
 	if cur == .GL {
-		// LB12a: × GL except when prev is SP / BA / HY. (CB is *not*
-		// an exception — LB12a fires first, before LB20 can break.)
+		// LB12a: × GL except when prev is SP / BA / HY / HH. (CB is
+		// *not* an exception — LB12a fires first, before LB20 can
+		// break.) HH was added in Unicode 16: a Hebrew hyphen acts
+		// like an ordinary hyphen for the purpose of allowing a
+		// break before a following non-breaking space.
 		#partial switch prev {
-		case .SP, .BA, .HY: // natural break — let later rules decide
-		case:               return .None
+		case .SP, .BA, .HY, .HH: // natural break — let later rules decide
+		case:                    return .None
 		}
 	}
 
@@ -268,19 +386,37 @@ classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune
 	if (prev == .PR || prev == .PO) && (cur == .AL || cur == .HL) { return .None }
 	if (prev == .AL || prev == .HL) && (cur == .PR || cur == .PO) { return .None }
 
-	// ---- LB25: numeric expressions (simplified subset) ---------------
-	// NU × (NU | SY | IS); (PR | PO) × NU; NU × (CL | CP);
-	// (CL | CP) × (PO | PR); etc.
+	// ---- LB25: numeric expressions (per-pair simplification of the
+	// LB25 regex "PR? (OP|HY)? NU (NU|SY|IS)* (CL|CP)? (PR|PO)?") ----
 	if prev == .NU && (cur == .NU || cur == .SY || cur == .IS) { return .None }
 	if (prev == .PR || prev == .PO) && cur == .NU { return .None }
 	if prev == .NU && (cur == .CL || cur == .CP) { return .None }
-	// LB25: (NU)(CL|CP) × (PO|PR) — only inside an open numeric chain.
+	// (CL|CP) × (PO|PR) — only inside an open numeric chain.
 	if in_num_chain && (prev == .CL || prev == .CP) && (cur == .PO || cur == .PR) {
 		return .None
 	}
 	if prev == .NU && cur == .NU { return .None }
-	// LB25 extension: SY/IS chains feeding into a numeric.
-	if (prev == .SY || prev == .IS) && cur == .NU { return .None }
+	// LB25: IS × NU is unconditional (the "decimal separator"
+	// interpretation — "1,000" / ",5"); SY × NU only holds inside
+	// an already-open numeric chain (the "5/3" case stays together
+	// but a sot "/3" still gets a break).
+	if prev == .IS && cur == .NU { return .None }
+	if in_num_chain && prev == .SY && cur == .NU { return .None }
+	// LB21b: SY × HL — solidus followed by a Hebrew letter stays
+	// together (used in Hebrew abbreviations like "ר' אבק").
+	if prev == .SY && cur == .HL { return .None }
+	// LB25: HY × NU — hyphen feeding a number (e.g. "-5"). OP × NU
+	// is already covered by LB14 (OP SP* ×).
+	if prev == .HY && cur == .NU { return .None }
+	// LB25: NU × PO and NU × PR — number followed by post/prefix
+	// like "5%" or "100€".
+	if prev == .NU && (cur == .PO || cur == .PR) { return .None }
+	// LB25: (PR | PO) × (OP | HY) — prefix that begins a numeric
+	// chain ("$-5", "$(123)"). Only fires when the position after
+	// the OP/HY is going to be a digit, otherwise unrelated PR + OP
+	// (like a non-numeric "% (note)") would bind. We approximate
+	// that via a single-glyph lookahead at the walker level — see
+	// `pr_op_lookahead` override below.
 
 	// ---- LB26 / LB27: Hangul -----------------------------------------
 	if prev == .JL && (cur == .JL || cur == .JV || cur == .H2 || cur == .H3) {
@@ -301,10 +437,13 @@ classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune
 	// ---- LB28a: Aksara cluster (Brahmic-script bind) -----------------
 	// (AK | 25CC | AS) × (VF | VI)
 	// AP × (AK | 25CC | AS)
-	// Subset of LB28a; the lookahead variants ("(AK|…) × (AK|…) VF"
-	// and "(AK|…) VI × (AK|…)") need state we don't yet track.
+	// (AK | 25CC | AS) VI × (AK | 25CC) — handled via the
+	// `prev_is_vi_after_ak` flag the walker maintains.
+	// The "× (AK|…) VF" lookahead variant still needs lookahead
+	// state we don't track.
 	if is_ak_base(prev, prev_rune) && (cur == .VF || cur == .VI) { return .None }
 	if prev == .AP && is_ak_base(cur, cur_rune) { return .None }
+	if prev_is_vi_after_ak && is_ak_base(cur, cur_rune) { return .None }
 
 	// ---- LB29: IS × (AL|HL) ------------------------------------------
 	if prev == .IS && (cur == .AL || cur == .HL) { return .None }
@@ -323,8 +462,13 @@ classify :: proc(prev, non_sp_prev, cur: Line_Break_Class, ri_run: int, cur_rune
 	// ---- LB30a: RI × RI but only for odd-count runs -------------------
 	if prev == .RI && cur == .RI && ri_run % 2 == 1 { return .None }
 
-	// ---- LB30b: EB × EM, ID × EM -------------------------------------
-	if (prev == .EB || prev == .ID) && cur == .EM { return .None }
+	// ---- LB30b: EB × EM ----------------------------------------------
+	// Plus the second arm — [Extended_Pictographic & Cn] × EM —
+	// which covers reserved emoji codepoints (future-emoji slots).
+	// `is_reserved_pictographic` enumerates the Unicode-17.0 ranges
+	// that satisfy both properties.
+	if prev == .EB && cur == .EM { return .None }
+	if cur == .EM && is_reserved_pictographic(prev_rune) { return .None }
 
 	// ---- LB31: default ÷ ALL -----------------------------------------
 	return .Allow

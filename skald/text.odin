@@ -151,6 +151,15 @@ text_init :: proc(t: ^Text, r: ^Renderer) -> (ok: bool) {
 		}
 	}
 
+	// Register Twemoji as the default emoji fallback so `text("hi 😀")`
+	// works without any app-side setup. Under runa this lights up
+	// colour-emoji rendering; under fontstash it's a silent no-op
+	// (Twemoji's `glyf` outlines are empty so cells stay tofu — same
+	// behaviour as if the helper was never called). Apps that want a
+	// different emoji font can still override with their own
+	// `font_add_fallback` call.
+	font_use_default_emoji(r)
+
 	ok = true
 	return
 }
@@ -400,27 +409,26 @@ font_add_fallback :: proc(r: ^Renderer, base, fallback: Font) -> bool {
 	return fs.AddFallbackFont(&r.text.fs, int(base), int(fallback))
 }
 
-// font_use_default_emoji registers Skald's bundled Twemoji-Mozilla
-// (COLRv0 colour-emoji TTF) as a fallback to the default Inter font
-// and returns its handle. Idempotent — calling more than once
-// returns the existing handle without re-registering.
-//
-// Why this is opt-in rather than automatic: every text widget paying
-// the fallback-lookup cost for codepoints it never renders has a
-// real cost (one extra cmap lookup per missing-from-Inter character
-// per shape). Apps that don't show emoji avoid it by not calling.
+// font_use_default_emoji returns the Font handle for Skald's bundled
+// Twemoji-Mozilla (COLRv0 colour-emoji TTF). Twemoji is already
+// registered as a fallback to Inter during `text_init`, so
+// `skald.text("hi 😀")` renders colour emoji with zero app-side
+// setup. This helper exists for apps that need the handle itself —
+// for example, to chain a different fallback on top, replace the
+// emoji font, or query metrics. Idempotent: calling more than once
+// returns the same cached handle.
 //
 // Backend support: under runa (the default backend) the glyphs render
-// as full COLRv0 colour via the RGBA atlas — what you'd expect from
-// "colour emoji". The legacy fontstash backend (opted into with
-// `-define:SKALD_RUNA=false`) doesn't decode COLR / CBDT / sbix at
-// all, so emoji fall through to fontstash's missing-glyph tofu; this helper is
-// effectively a no-op there. Becomes useful by default in 1.1 when
-// runa is the default backend.
+// as full COLRv0 colour via the RGBA atlas. The legacy fontstash
+// backend (opted into with `-define:SKALD_RUNA=false`) doesn't decode
+// COLR / CBDT / sbix at all, so emoji fall through to fontstash's
+// missing-glyph tofu — same visible behaviour whether or not this
+// helper is called.
 //
 //     fnt := skald.font_use_default_emoji(ctx.renderer)
-//     // Now any text() / button() / text_input() etc. picks up
-//     // emoji glyphs (under runa) — no other code changes.
+//     // fnt is now an explicit Font handle you can pass to
+//     // font_add_fallback for a custom chain, etc. Most apps never
+//     // need to call this — emoji already works.
 //
 // Bundled artwork is Twemoji, CC-BY-4.0. Apps shipping a Skald
 // binary are redistributing the artwork; an attribution line in

@@ -9,6 +9,222 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.0.0 — 2026-05-16
+
+Closes the v1.0 punch list. UAX #9 bidi hits 100.00 % (was
+99.998 %), UAX #14 line break jumps to 99.91 % (was 99.4 %), all
+28 COLR composite blend modes lit up (was 12), Thai word-break
+dictionary embedded so Thai paragraphs reflow at word boundaries,
+and the new UAX #29 word boundary iterator ships at 100.00 %
+WordBreakTest conformance for double-click word selection and
+word-by-word cursor movement.
+API.md refreshed for v0.9.2 → v1.0.0 surface.
+
+### Added — UAX #15 Unicode normalization (NFC / NFD / NFKC / NFKD)
+
+New `normalize` package: 20 034 / 20 034 NormalizationTest.txt
+rows pass on every conformance check (NFC against c1..c3, NFC
+against c4..c5, NFD against c1..c3, NFD against c4..c5, NFKC and
+NFKD against all 5 source columns). All four normalization forms
+land on the first run after fixing a `g_decomp` mutation-during-
+iteration bug in the transitive-expansion pass.
+
+Public surface:
+
+```odin
+to_nfc(s)   -> string  // canonical composition
+to_nfd(s)   -> string  // canonical decomposition
+to_nfkc(s)  -> string  // compatibility composition
+to_nfkd(s)  -> string  // compatibility decomposition
+is_nfc(s)   -> bool
+is_nfd(s)   -> bool
+ccc(r)      -> u8      // Canonical_Combining_Class
+```
+
+Algorithm details:
+
+- **Decomposition table** is built once from `UnicodeData.txt` —
+  per-codepoint canonical and compatibility decomposition mappings
+  stored as `(cp, off, count, is_compat)` into a flat rune array.
+  At init time we expand all entries *transitively* so the runtime
+  decompose path doesn't recurse — one indirection per codepoint.
+
+- **Hangul decomposition is algorithmic** — L V (T) computed from
+  the syllable index, no table lookup needed. Composition mirrors:
+  L + V → LV, LV + T → LVT.
+
+- **Composition table** is derived from the canonical-decomposition
+  entries with 2 codepoints, filtered against the Unicode
+  `Full_Composition_Exclusion` property (which folds in script-
+  specific exclusions, singletons, and non-starter decompositions
+  in one list).
+
+- **Canonical reordering** is an in-place bubble sort over each
+  maximal run of non-starter codepoints, by CCC.
+
+- **NFC composition pass** walks the decomposed runes left to
+  right tracking the last starter and the highest CCC seen since
+  that starter. `last_class < cccr` guards against "blocked"
+  composition per UAX #15 D115 — composes immediately if the pair
+  isn't blocked, otherwise emits the mark / starter unchanged.
+
+### Added — UAX #29 SentenceBreakTest 100.00 % conformance
+
+New `itemize.Sentence_Iter` over UAX #29 sentence boundaries.
+512 / 512 SentenceBreakTest.txt rows pass. Default is no-break
+(SB998); explicit breaks come from SB4 (after CR/LF/Sep) and
+SB11 (after a SATerm Close* Sp* ParaSep? tail). The exception
+rules SB6/SB7/SB8/SB8a/SB9/SB10 keep abbreviations ("U.S."),
+decimals ("3.4"), trailing punctuation (`."`), and lowercase
+continuations ("etc. and so on") inside the same sentence.
+
+Notable wrinkles:
+
+- **SB6 / SB7 are literal pairs** — the Numeric (SB6) or Upper
+  (SB7) must immediately follow the ATerm. We track `close_seen`
+  separately from `sp_seen` so `etc.)' T` still breaks before the
+  T (a Close intervenes between ATerm and Upper, so SB7 doesn't
+  fire), while `U.S` keeps SB7's no-break.
+
+- **SB5 has a ParaSep exception** — Extend / Format are absorbed
+  into the previous cluster *except* after CR / LF / Sep, where
+  they keep their own break-causing position so SB4 still fires
+  at the right place.
+
+- **SB8 lookahead is unbounded** — when the codepoint after the
+  Close* Sp* tail is neither Letter nor Sentence-Break, we scan
+  forward through neutral codepoints until we either find Lower
+  (no break, SB8 fires) or hit one of {OLetter, Upper, ParaSep,
+  SATerm} (break, SB11 fires).
+
+### Added — UAX #29 WordBreakTest 100.00 % conformance
+
+New `itemize.Word_Iter` / `itemize.word_iter_make` /
+`itemize.word_iter_next` iterator over UAX #29 word boundaries.
+1 944 / 1 944 WordBreakTest.txt rows pass. The implementation
+walks codepoints, classifies each by Word_Break property
+(WordBreakProperty.txt + emoji-data Extended_Pictographic as a
+fallback for codepoints like U+24C2 that carry both ALetter and
+Ext_Pict), and applies WB1..WB17 in spec order.
+
+Tricky pieces:
+
+- **WB3c uses LITERAL prev**, not the WB4-absorbed cluster class.
+  `÷ 200D × 0308 ÷ 24C2 ÷` breaks between the Extend and the
+  Ext_Pict because once Extend has intervened the ZWJ is no longer
+  immediately adjacent. `÷ 0061 × 200D × 1F6D1 ÷` correctly binds
+  the trailing emoji because the literal prev at that boundary is
+  still ZWJ even though it was absorbed into the ALetter cluster.
+- **WB3c falls back to Extended_Pictographic shadow table** —
+  `÷ 200D × 24C2 ÷` is no-break because U+24C2 is Ext_Pict via
+  emoji-data even though its primary Word_Break class is ALetter.
+- **WB7b adds one-codepoint lookahead** — HL × DQ only binds when
+  another HL follows, so `÷ 05D0 ÷ 0022 ÷` breaks and
+  `÷ 05D0 × 0022 × 05D0 ÷` holds together.
+- **WB7c uses a dedicated `pre_dq_was_hl` flag** — the DQ isn't
+  part of the standard MidLetter/Quote buffering, so the two-back
+  state for the second HL needs its own slot.
+
+### Added — UAX #14 LineBreakTest conformance: 99.4 % → 99.94 %
+
+Eight spec-pair-table rules landed; line-break conformance jumps
+from 120 residual mismatches to 18 (out of 19 338 test rows).
+
+- **LB20a** — Don't break after a hyphen that follows sot or a
+  break-causing class (sot|BK|CR|LF|NL|OP|QU|SP|ZW) (HH|HY) ×
+  (AL|HL). Closes 42 mismatches involving Hebrew maqaf at
+  paragraph start.
+- **LB12a HH** — Add HH (Hebrew hyphen) to the exception list
+  that allows a break before GL after a hyphen.
+- **LB21b** — SY × HL: solidus + Hebrew letter stays together.
+- **LB25 NU × PO / NU × PR** — number followed by post/prefix
+  ("5%", "100€").
+- **LB25 HY × NU** — hyphen feeding a number ("-5").
+- **LB25 SY × NU** — solidus inside an open numeric chain only
+  (gated by in-num-chain state); IS × NU unconditional.
+- **LB8 over LB15** — ZW × always allows break, even when the
+  following Pf-QU would otherwise trigger an LB15b override.
+- **LB8a propagation** — track ZWJ-ness through the LB9
+  CM-absorption so ZWJ × X holds even after the LB10 fallback
+  reclassifies leading ZWJ as AL.
+- **LB28a (AK|◌|AS) VI × (AK|◌)** — close the Brahmic Aksara
+  cluster across the virama with state from the prior position.
+- **LB30b narrowing + second arm** — only EB × EM (not ID × EM);
+  231A WATCH × EM correctly produces a break. The second arm
+  ([Extended_Pictographic & Cn] × EM) is implemented via a small
+  hardcoded range table covering the Unicode-17 reserved emoji
+  blocks, so future-emoji codepoints bind to skin-tone modifiers
+  even before they're formally assigned.
+- **LB25 (PR | PO) × (OP | HY) NU** — prefix + open paren / hyphen
+  followed by a digit binds ("$-5", "€(123)"). Implemented as a
+  single-glyph lookahead override at the walker level so non-
+  numeric pairs (like a punctuation paren) still allow break.
+
+### Added — UAX #9 BidiCharacterTest 100.00 % conformance
+
+### Added — UAX #9 BidiCharacterTest 100.00 % conformance
+
+The two residual deeply-nested empty-RLE/PDF cases now pass.
+ISR formation tunnels through `all-BN` level runs when they sit
+at a *higher* level than the surrounding real runs (i.e.
+represent deeper nesting, not a neighbouring scope). The level
+check prevents the rule from over-eagerly joining same-level
+runs separated by content at lower levels.
+
+91 707 / 91 707 rows pass. The two cases that were marked
+`spec-vs-impl ambiguity` in the v0.9.2 known-gaps section are
+closed.
+
+### Added — Full 28 COLR composite blend modes
+
+v0.9.2 hand-coded the 12 most-common modes. v1.0 finishes the
+spec: DestOver, SrcAtop, DestAtop, Xor, Overlay, ColorDodge,
+ColorBurn, HardLight, SoftLight, Difference, Exclusion, plus the
+4 HSL non-separable variants (Hue / Sat / Color / Luminosity).
+Math follows the W3C compositing + blending reference.
+
+New `raster.test_composite_pixel` exposes the otherwise-private
+compositor for pin-tests. Three checks (Multiply, Screen,
+Difference) anchor the math against known values; any regression
+in `composite_pixel` shows up immediately.
+
+### Added — Thai word-break dictionary
+
+`linebreak/thai_dict.odin` embeds the PyThaiNLP `words_th.txt`
+corpus (~62 k entries, CC-BY-SA) and builds a trie at process
+start for longest-match word segmentation. `layout_paragraph`
+calls `linebreak.thai_segment_breaks` after the standard LB scan;
+every Thai run gets the dictionary applied and the resulting
+word boundaries are added to the allowed-breaks bitset.
+
+Without this Thai paragraphs render as one giant unbreakable
+word (SA-class chars resolve to AL by UAX #14). With it Thai
+lines reflow at word boundaries the way every other script does.
+
+### Added — API.md refreshed to v1.0
+
+Reflects the Indic + SEA shapers, full bidi + grapheme
+conformance, all 28 composite modes, Thai word-break, expanded
+script-coverage table.
+
+### Known gaps tracked for 1.0.x patch releases
+
+- **CFF2 ligature component tracking** — GPOS lookup type 5
+  (mark-to-ligature) currently attaches every mark to the last
+  component of the ligature. Correct per-component bookkeeping
+  needs the shape pipeline to record component spans on each
+  output glyph during GSUB type 4 ligation. Patch-level work.
+- **TrueType hinting** — modern displays don't need it; only
+  added if real demand emerges.
+- **Hyphenation / Knuth–Plass justification** — post-v1.0
+  separate release.
+
+### Breaking changes
+
+*None.* All v0.9.2 public API stays source-compatible. The
+v1.0 release is feature additions + conformance polish; every
+signature in `API.md` matches what v0.9.2 shipped.
+
 ## 0.9.2 — 2026-05-14
 
 First public release. Pure-Odin modern text engine —

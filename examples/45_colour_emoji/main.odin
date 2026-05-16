@@ -2,37 +2,28 @@ package example_colour_emoji
 
 import "gui:skald"
 
-// Colour-emoji smoke test — calls `skald.font_use_default_emoji(r)`
-// to register Skald's bundled Twemoji-Mozilla (COLRv0) as a fallback
-// to Inter. Under runa (the default text backend since 1.0) the
-// emoji render in full colour; if you opt into fontstash with
-// `-define:SKALD_RUNA=false` they fall through to `.notdef` tofu
-// (fontstash doesn't decode COLR tables).
+// Colour-emoji smoke test — emoji codepoints inside plain `text()`
+// just render as full-colour Twemoji glyphs. Skald auto-registers
+// Twemoji-Mozilla (COLRv0) as a fallback to Inter during `text_init`,
+// so apps need zero setup. Under runa (the default text backend
+// since 1.0) the glyphs render in full colour; if you opt into
+// fontstash with `-define:SKALD_RUNA=false` they fall through to
+// `.notdef` tofu (fontstash doesn't decode COLR tables).
 //
 // Run with: `./build.sh 45_colour_emoji run`
 //
-// Apps that adopt this pattern need to add an attribution line for
-// the Twemoji artwork — CC-BY-4.0. See
-// `skald/assets/Twemoji-Mozilla-CCBY.txt` for the full notice.
+// Apps that ship a Skald binary are redistributing the Twemoji
+// artwork — CC-BY-4.0. See `skald/assets/Twemoji-Mozilla-CCBY.txt`
+// for the full attribution notice.
 
 State :: struct {}
 Msg   :: struct {}
-
-@(private)
-fonts_ready: bool
 
 init :: proc() -> State { return {} }
 update :: proc(s: State, m: Msg) -> (State, skald.Command(Msg)) { return s, {} }
 
 view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	th := ctx.theme
-
-	// One-line opt-in for colour emoji on the first frame. Idempotent —
-	// re-calling returns the cached handle.
-	if !fonts_ready && ctx.renderer != nil {
-		skald.font_use_default_emoji(ctx.renderer)
-		fonts_ready = true
-	}
 
 	return skald.col(
 		skald.text("Skald — Colour Emoji (runa)", th.color.fg, th.font.size_xl),

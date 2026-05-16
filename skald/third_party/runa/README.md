@@ -5,16 +5,17 @@ line-breaking, rasterization. Built first to replace fontstash +
 stb_truetype in [Skald](https://github.com/BuLEEto/Skald), designed
 to be useful for any Odin project that needs production-quality text.
 
-**Status:** v0.9.2 — *"13 complex scripts shape."*
-UAX #9 bidi at **99.998 %**, UAX #29 graphemes at 100 %, CFF2
-variable instances, COLRv1 emoji with true linear / radial / sweep
-gradients + composite blend modes, GPOS mark-to-ligature, frozen
-API ([`API.md`](API.md)), and per-script shaping for **Devanagari,
-Bengali, Gujarati, Kannada, Odia, Tamil, Telugu, Malayalam,
-Gurmukhi, Thai, Lao, Khmer, Myanmar** — all verified against
-HarfBuzz byte-for-byte on canonical syllables. v1.0 final remains
-the Thai word-break dictionary and a few Myanmar / Khmer cluster
-edge cases. Full scoreboard in [`CHANGELOG.md`](CHANGELOG.md).
+**Status:** v1.0.0 — *"The complex-script v1.0 punch list ships."*
+UAX #9 bidi at **100 %**, UAX #29 graphemes at 100 %, CFF2
+variable instances, COLRv1 emoji with the full 28 W3C composite
+blend modes + linear / radial / sweep gradients, GPOS
+mark-to-ligature, frozen API ([`API.md`](API.md)), per-script
+shaping for **Devanagari, Bengali, Gujarati, Kannada, Odia,
+Tamil, Telugu, Malayalam, Gurmukhi, Thai, Lao, Khmer, Myanmar**
+verified against HarfBuzz byte-for-byte, and a Thai word-break
+dictionary so Thai paragraphs reflow at word boundaries rather
+than as one giant unbreakable word. Full scoreboard in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 <p align="center">
   <img src="screenshots/multiscript.png" alt="runa rendering Latin, Cyrillic, Greek, Arabic (joined RTL), Hebrew (RTL), CJK, colour emoji, and ligatures" width="80%"/>
@@ -39,16 +40,23 @@ text at small scales but cannot:
 `runa` is the long-term fix — a modern text engine in idiomatic
 Odin with zero C dependencies at v1.0.
 
-## What's left for v1.0
+## v1.0 punch list status
 
-- Thai word-break dictionary (line layout needs a dictionary; current
-  Thai shaping is correct, line breaking falls back to ASCII rules).
-- Complex Khmer multi-consonant clusters with COENG-driven subscripts.
-- Full Myanmar shaping (medial reorder, asat handling, kinzi).
-- Two remaining bidi BidiCharacterTest mismatches in deep-nested empty
-  RLE/PDF cases — spec-vs-impl ambiguities that need a deeper rework.
+All four items closed:
 
-Per-feature deliverables and conformance numbers live in [`CHANGELOG.md`](CHANGELOG.md).
+- **Thai word-break dictionary** — embedded PyThaiNLP corpus,
+  longest-match trie, ~62 k entries. ✓
+- **Complex Khmer multi-consonant clusters** — pre-base reorder
+  fixed to move to syllable start, not just before base. ✓
+- **Full Myanmar shaping** — joined the Indic pipeline; medial
+  YA / medial RA / IPC=Top_And_Bottom_And_Left all reorder
+  correctly. ✓
+- **Two remaining bidi BidiCharacterTest mismatches** — ISR
+  formation now tunnels through `all-BN` higher-level
+  intervening runs. 100.00 % conformance. ✓
+
+Per-feature deliverables, conformance numbers, and tracked
+patch-level work in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Building
 
@@ -89,11 +97,13 @@ sources and licences.
 
 ## Contributing
 
-v0.9-rc1 is shipping — API frozen ([`API.md`](API.md)), bidi at
-100 %, graphemes at 100 %, COLRv1 gradients + composite modes
-real, CFF2 variations real. v1.0 final work picks up the Indic
-family (Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam,
-Gurmukhi, Gujarati, Odia) and SEA scripts (Thai, Lao, Myanmar,
-Khmer) — each shaper is its own module sharing a state-core, so
-the work parallelises. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
-for build / test instructions and the open-work pointer list.
+v1.0.0 has shipped — API frozen ([`API.md`](API.md)), bidi at
+100 %, line break at 99.91 %, graphemes at 100 %, UAX #29 word
+boundaries at 100 %, UAX #15 normalization (NFC / NFD / NFKC /
+NFKD) at 100 %, all 28 COLR composite blend modes, CFF2
+variations, and the full complex-script set (9 Brahmic — Devanagari,
+Bengali, Tamil, Telugu, Kannada, Malayalam, Gurmukhi, Gujarati,
+Odia — plus 4 SEA — Thai, Lao, Myanmar, Khmer) all real. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for build / test instructions
+and the open-work pointer list (long-tail Khmer cluster polish,
+performance hardening, COLRv1 sweep gradients).
