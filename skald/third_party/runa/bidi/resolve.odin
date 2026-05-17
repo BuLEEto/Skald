@@ -31,6 +31,7 @@ References: UAX #9 §3.3.
 package bidi
 
 import "core:mem"
+import "core:unicode/utf8"
 
 // MAX_LEVEL is the UAX #9 §3.3 cap. 125 even, 126 odd.
 MAX_LEVEL :: 125
@@ -71,16 +72,23 @@ resolve_levels :: proc(text: string, base_dir: Direction, allocator := context.a
 	// Bidi_Class to identify S, B, WS, isolate-formatting chars.
 	orig_classes := make([]Bidi_Class, cp_count, context.temp_allocator)
 
+	// Use the decoder's actual byte advance — `utf8_byte_len_b(r)`
+	// derives length from the rune VALUE and over-counts for invalid
+	// UTF-8 (Odin's range-over-string returns U+FFFD after consuming
+	// 1 raw byte; `utf8_byte_len_b(U+FFFD)` returns 3). Drift would
+	// corrupt `byte_indices`, which `reorder_runs` later uses to
+	// slice into `text` — out-of-bounds slice traps as SIGILL.
 	i := 0
 	off := 0
-	for r in text {
+	for off < len(text) {
+		r, byte_len := utf8.decode_rune_in_string(text[off:])
 		byte_indices[i] = off
 		runes[i] = r
 		c := bidi_class(r)
 		classes[i] = c
 		orig_classes[i] = c
 		i += 1
-		off += utf8_byte_len_b(r)
+		off += byte_len
 	}
 	if cp_count == 0 { return }
 

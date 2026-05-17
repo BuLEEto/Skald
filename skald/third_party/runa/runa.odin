@@ -11,6 +11,7 @@ should reach into them only at their own risk.
 package runa
 
 import "core:mem"
+import "core:unicode/utf8"
 
 import "parse"
 import "raster"
@@ -307,9 +308,21 @@ layout_paragraph :: proc(text: string, opts: Paragraph_Opts, cache: ^Cache = nil
 	cur_font:    ^Font
 	cur_script:  itemize.Script_Code = itemize.COMMON
 	run_start := 0
-	byte_off  := 0
-	for r in text {
-		byte_len := utf8_byte_len(r)
+	// Walk codepoints via the actual UTF-8 decoder rather than `for r
+	// in text`. The shortcut form was paired with `utf8_byte_len(r)`
+	// which derives the advance from the DECODED rune value — fine
+	// for valid input, but wrong for invalid UTF-8: the iterator
+	// returns `U+FFFD` after consuming 1 raw byte, while
+	// `utf8_byte_len(U+FFFD)` returns 3, so `byte_off` over-counts
+	// and eventually exceeds `len(text)`. The next slice that uses
+	// these offsets goes out of bounds and the runtime traps
+	// (`SIGILL` / "Illegal instruction"). Using the decoder's actual
+	// `size` return value keeps the offsets honest for any byte
+	// sequence the caller might hand us (network data, clipboard,
+	// truncated buffers, etc.).
+	byte_off := 0
+	for byte_off < len(text) {
+		r, byte_len := utf8.decode_rune_in_string(text[byte_off:])
 		picked := pick_font_for_rune(opts.fonts, r)
 		raw_script := itemize.script_of(r)
 		// UAX #24 resolution: Common / Inherited fold into the
@@ -406,11 +419,14 @@ wrap_glyphs :: proc(text: string, all_glyphs: []Paragraph_Glyph, max_width, line
 	// whose cluster is b.
 	runes_buf := make([dynamic]rune, 0, len(text), context.temp_allocator)
 	cp_byte_offsets := make([dynamic]int, 0, len(text), context.temp_allocator)
+	// Use the decoder's byte advance — `utf8_byte_len(r)` over-counts
+	// for invalid UTF-8 (see layout_paragraph for the full rationale).
 	off := 0
-	for r in text {
+	for off < len(text) {
+		r, byte_len := utf8.decode_rune_in_string(text[off:])
 		append(&runes_buf, r)
 		append(&cp_byte_offsets, off)
-		off += utf8_byte_len(r)
+		off += byte_len
 	}
 	runes := runes_buf[:]
 
@@ -541,11 +557,13 @@ measure_text :: proc(text: string, opts: Paragraph_Opts) -> (width, height: f32)
 	tmp := make([dynamic]Shaped_Glyph, 0, 32, context.temp_allocator)
 
 	// Same run-splitting as layout_paragraph, but we don't materialise
-	// glyphs into the caller's allocator.
+	// glyphs into the caller's allocator. Uses the decoder's actual
+	// byte advance so invalid UTF-8 can't desync `byte_off`.
 	byte_off := 0
 	cur_font: ^Font
 	run_start := 0
-	for r in text {
+	for byte_off < len(text) {
+		r, byte_len := utf8.decode_rune_in_string(text[byte_off:])
 		picked := pick_font_for_rune(opts.fonts, r)
 		if picked != cur_font && cur_font != nil {
 			clear(&tmp)
@@ -554,7 +572,7 @@ measure_text :: proc(text: string, opts: Paragraph_Opts) -> (width, height: f32)
 			run_start = byte_off
 		}
 		cur_font = picked
-		byte_off += utf8_byte_len(r)
+		byte_off += byte_len
 	}
 	if cur_font != nil {
 		clear(&tmp)

@@ -14,6 +14,7 @@ package runa
 // interned string and every cached glyph slice.
 
 import "core:mem"
+import "core:unicode/utf8"
 
 import "parse"
 import "shape"
@@ -101,10 +102,14 @@ shape_text_cached :: proc(font: ^Font, text: string, size: f32, c: ^Cache, scrip
 measure_text_cached :: proc(text: string, opts: Paragraph_Opts, c: ^Cache) -> (width, height: f32) {
 	if len(opts.fonts) == 0 || opts.size <= 0 { return 0, 0 }
 	// For multi-font runs, walk codepoints once to find the picks.
+	// Use the decoder's actual byte advance (not `utf8_byte_len(r)`,
+	// which derives length from the rune VALUE and over-counts for
+	// invalid UTF-8 input — see the same fix in `layout_paragraph`).
 	byte_off := 0
 	cur_font: ^Font
 	run_start := 0
-	for r in text {
+	for byte_off < len(text) {
+		r, byte_len := utf8.decode_rune_in_string(text[byte_off:])
 		picked := pick_font_for_rune(opts.fonts, r)
 		if picked != cur_font && cur_font != nil {
 			gs := shape_text_cached(cur_font, text[run_start:byte_off], opts.size, c)
@@ -112,7 +117,7 @@ measure_text_cached :: proc(text: string, opts: Paragraph_Opts, c: ^Cache) -> (w
 			run_start = byte_off
 		}
 		cur_font = picked
-		byte_off += utf8_byte_len(r)
+		byte_off += byte_len
 	}
 	if cur_font != nil {
 		gs := shape_text_cached(cur_font, text[run_start:byte_off], opts.size, c)
