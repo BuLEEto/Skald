@@ -47,6 +47,15 @@ Fixes:
 - Put the parent inside another flex layout that gives it a share.
 - Use `spacer(size)` with a real number instead of `flex`.
 
+**A second symptom to watch for:** when the collapsed child is
+interactive, part of it may still draw even at zero width — a
+`text_input` shows its left/right border rects as a thin vertical
+line, a `slider` still paints its thumb disc near the widget's
+origin. The widget *looks* like it's on screen, but its recorded hit
+region is zero-width, so it won't receive mouse clicks. If clicks
+seem to "miss" an interactive widget that you can see, suspect the
+parent layout before suspecting focus or event routing.
+
 ## My child sticks to the top/left of its container
 
 Symptom: a single child inside a `col` (or `row`) with a defined
