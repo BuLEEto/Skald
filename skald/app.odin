@@ -857,6 +857,7 @@ run :: proc(app: App($State, $Msg)) {
 			}
 
 			widget_store_frame_reset(t_widgets)
+			widget_store_blur_on_outside_press(t_widgets, t_w.input)
 
 			// Modal dialog interception. A left-press outside the card is
 			// swallowed — `mouse_pressed[.Left]` and `mouse_released[.Left]`

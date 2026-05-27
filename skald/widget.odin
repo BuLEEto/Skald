@@ -671,6 +671,34 @@ widget_store_frame_reset :: proc(ws: ^Widget_Store) {
 	}
 }
 
+// widget_store_blur_on_outside_press clears keyboard focus when a fresh
+// left-press lands outside the currently-focused widget. It runs after
+// `widget_store_frame_reset`, so `overlay_rects_prev` / `modal_rect_prev`
+// contain last frame's top-layer geometry and `Widget_State.last_rect`
+// still describes the focused widget's hit region.
+widget_store_blur_on_outside_press :: proc(ws: ^Widget_Store, input: Input) {
+	if ws == nil || ws.focused_id == 0 || !input.mouse_pressed[.Left] {
+		return
+	}
+
+	mp := input.mouse_pos
+	for rr in ws.overlay_rects_prev {
+		if rect_contains_point(rr, mp) {
+			return
+		}
+	}
+
+	mr := ws.modal_rect_prev
+	if mr.w > 0 && mr.h > 0 && !rect_contains_point(mr, mp) {
+		return
+	}
+
+	st, ok := ws.states[ws.focused_id]
+	if !ok || st.last_frame + 1 < ws.frame || !rect_contains_point(st.last_rect, mp) {
+		ws.focused_id = 0
+	}
+}
+
 // Eviction cadence for the states map. Without a sweep, a virtualized list
 // of 100 000 rows with per-row hash_ids accumulates 100 000 persistent
 // entries the moment the user scrolls through them once — even if none of
