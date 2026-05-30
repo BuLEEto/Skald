@@ -4,6 +4,29 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## Unreleased
+
+### Added
+
+- **`table` can reveal an app-driven focus row.** A new `reveal_row`
+  parameter scrolls a row into view when its value *changes* — for
+  typeahead, Backspace-to-parent, or "scroll to selection" where focus
+  moves from outside the table. Change-detected, so a steady value won't
+  fight the user's manual scrolling. In-table keyboard nav already
+  self-reveals, so this is only for app-driven moves. Defaults to `-1`
+  (no-op), so existing callers are unchanged.
+
+### Fixed
+
+- **Widgets scrolled out of view are no longer clickable.** Hit-testing
+  ignored scroll clipping: a widget clipped away by its container's
+  viewport (a table's overscan rows, a button scrolled past a scroll's
+  edge) kept a live click target where it was no longer drawn — so
+  clicking the empty strip just above a scrolled table could select an
+  off-screen row. Every widget now records a hit-rect clipped to the
+  active scissor, and `widget_hovered` tests that. `last_rect` is
+  unchanged, so popover anchoring and other geometry are unaffected.
+
 ## 1.0.0-rc10 — 2026-05-30
 
 O(n) text wrapping across `text_input`, `text`, and `rich_text` (a 1200-word

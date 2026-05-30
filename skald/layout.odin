@@ -393,7 +393,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// top edge aligns with `origin.y`, matching what view_size reports.
 		ascent := text_ascent(r, vv.size, vv.font)
 		if r.widgets != nil && vv.selectable && vv.id != 0 {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 		has_sel := vv.selectable && vv.sel_start != vv.sel_end
@@ -484,7 +484,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		sel_lo  := vv.sel_start if vv.sel_start <= vv.sel_end else vv.sel_end
 		sel_hi  := vv.sel_end   if vv.sel_end   >= vv.sel_start else vv.sel_start
 		if r.widgets != nil && vv.selectable && vv.id != 0 {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 		y := origin.y
@@ -573,7 +573,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// against it. nil when the renderer is driven outside the App
 		// loop (e.g. the imperative 02_shapes example).
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -610,7 +610,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Text_Input:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -867,7 +867,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Checkbox:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -921,7 +921,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Radio:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -971,7 +971,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Toggle:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1022,7 +1022,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Slider:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1132,7 +1132,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		vp_h := vv.size.y if vv.size.y > 0 else size.y
 		vp := Rect{origin.x, origin.y, vp_w, vp_h}
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id, vp)
+			widget_record_rect(r, vv.id, vp)
 		}
 
 		// Scrollbar gutter reservation. The bar lives in the right 8 px
@@ -1224,7 +1224,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Select:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1328,7 +1328,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// the builder hit-tests this for the next frame's hover.
 		render_view(r, vv.child^, origin, size)
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1403,7 +1403,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// builder can hit-test clicks against it.
 		render_view(r, vv.child^, origin, size)
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1460,7 +1460,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// top of the frame; setting it here re-arms those systems.
 		if r.widgets != nil {
 			r.widgets.modal_rect = Rect{card_x, card_y, card_w, card_h}
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{card_x, card_y, card_w, card_h})
 		}
 
@@ -1515,7 +1515,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// Record the container rect so next frame's builder can hit-
 		// test the divider and clamp drags against the main-axis size.
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1580,7 +1580,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Link:
 		if r.widgets != nil {
-			widget_record_rect(r.widgets, vv.id,
+			widget_record_rect(r, vv.id,
 				Rect{origin.x, origin.y, size.x, size.y})
 		}
 
@@ -1674,7 +1674,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// Record this frame's rect so next frame's view can hit-test
 		// against it via widget_last_rect(ctx, id).
 		if r.widgets != nil && vv.id != 0 {
-			widget_record_rect(r.widgets, vv.id, bounds)
+			widget_record_rect(r, vv.id, bounds)
 		}
 		// Scissor the callback's draws to the canvas rect. Without this
 		// a runaway `draw_rect` could paint over neighbour widgets.

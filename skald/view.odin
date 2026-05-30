@@ -11669,6 +11669,7 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 	sort_column:     int,
 	sort_ascending:  bool,
 	focus_row:       int,
+	reveal_row:      int,
 	id:              Widget_ID,
 	overscan:        int,
 	header_height:   f32,
@@ -11696,6 +11697,11 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 //
 // Optional: `sort_column`/`sort_ascending` draw the sort indicator;
 // `focus_row` is the keyboard-focused row (drawn with a ring);
+// `reveal_row` (default -1) scrolls a row into view when its value
+// changes — pass the row you just moved focus to (typeahead, Backspace,
+// "reveal selection") and the table reveals it without yanking the
+// viewport while the value holds steady. In-table keyboard nav already
+// self-reveals, so this is only needed for app-driven focus moves.
 // `header_height` defaults to 32 logical pixels; `overscan` is the
 // extra rows rendered outside the viewport for smooth scrolling.
 // `viewport` follows the same zero-axis fill convention as `scroll`.
@@ -11716,6 +11722,7 @@ table :: proc(
 	sort_column:     int       = -1,
 	sort_ascending:  bool      = true,
 	focus_row:       int       = -1,
+	reveal_row:      int       = -1,
 	id:              Widget_ID = 0,
 	overscan:        int       = 4,
 	header_height:   f32       = 32,
@@ -11768,6 +11775,7 @@ table :: proc(
 			sort_column     = sort_column,
 			sort_ascending  = sort_ascending,
 			focus_row       = focus_row,
+			reveal_row      = reveal_row,
 			id              = id,
 			overscan        = overscan,
 			header_height   = header_height,
@@ -11793,6 +11801,7 @@ table :: proc(
 				sort_column    = data.sort_column,
 				sort_ascending = data.sort_ascending,
 				focus_row      = data.focus_row,
+				reveal_row     = data.reveal_row,
 				id             = data.id,
 				overscan       = data.overscan,
 				header_height  = data.header_height,
@@ -12087,6 +12096,23 @@ table :: proc(
 		   focus_row >= 0 && focus_row < row_count {
 			send(ctx, on_row_activate(focus_row))
 		}
+	}
+
+	// App-driven reveal: when the caller's `reveal_row` changes, scroll
+	// the minimal amount to bring it into view. Stored as row+1 so the
+	// zero default means "nothing revealed". Gating on change (not value)
+	// lets the app pass a steady reveal_row without re-snapping the
+	// viewport every frame, so manual scroll between reveals sticks.
+	if reveal_row >= 0 && reveal_row < row_count && st.reveal_marker != reveal_row + 1 {
+		top    := f32(reveal_row) * item_height
+		bottom := top + item_height
+		if top    < scroll_y                   { scroll_y = top                      }
+		if bottom > scroll_y + body_viewport.y { scroll_y = bottom - body_viewport.y }
+		if scroll_y > max_off                  { scroll_y = max_off                  }
+		if scroll_y < 0                        { scroll_y = 0                        }
+		st.scroll_y       = scroll_y
+		st.reveal_marker  = reveal_row + 1
+		widget_set(ctx, body_id, st)
 	}
 
 	first := int(scroll_y / item_height) - overscan

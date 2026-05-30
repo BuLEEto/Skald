@@ -115,6 +115,14 @@ Widget_Kind :: enum u8 {
 Widget_State :: struct {
 	kind:        Widget_Kind,
 	last_rect:   Rect,
+	// hit_rect is last_rect intersected with the clip stack that was
+	// active when the widget rendered — i.e. the actually-visible part.
+	// `widget_hovered` point-tests against this, not last_rect, so a
+	// widget scrolled out of its container's viewport (overscan table
+	// rows, a button scrolled past a scroll's edge) is unclickable in
+	// the clipped-away region even though its full rect still lives
+	// there for geometry/anchoring. Empty when fully clipped away.
+	hit_rect:    Rect,
 	// last_frame is the frame counter value at which this state was
 	// last written by a widget builder. It disambiguates positional-ID
 	// reshuffles where a slot is inherited by a *different* widget of
@@ -148,6 +156,12 @@ Widget_State :: struct {
 	// `pressed` is true; when the handle isn't latched this is just
 	// the default 0 and is ignored.
 	drag_donor: int,
+	// reveal_marker tracks the last `reveal_row` the table acted on,
+	// stored as row+1 so the zero-value means "nothing revealed yet".
+	// The table scrolls a row into view only when the app's reveal_row
+	// changes, so app-driven focus moves (typeahead, Backspace) reveal
+	// without a steady reveal_row fighting the user's manual scroll.
+	reveal_marker: int,
 	open:        bool, // popover-style widgets (select/combo) use this to toggle their overlay
 	// anchor_pos remembers a cursor-space point for widgets whose popover
 	// position is set by the triggering gesture — context_menu stores the
@@ -1022,9 +1036,21 @@ widget_stamp_overlay_rect :: proc(ws: ^Widget_Store, r: Rect) {
 // placed in window coordinates. The rect is what hit-testing next frame
 // will check against.
 @(private)
-widget_record_rect :: proc(ws: ^Widget_Store, id: Widget_ID, rect: Rect) {
+widget_record_rect :: proc(r: ^Renderer, id: Widget_ID, rect: Rect) {
+	ws := r.widgets
+	if ws == nil { return }
 	st := ws.states[id]
 	st.last_rect = rect
+	// hit_rect is the rect clipped to whatever scissor is active right now
+	// — the intersection of every push_clip on the stack (the top entry is
+	// already that intersection). With no clip pushed it equals last_rect,
+	// so unclipped widgets behave exactly as before. A widget rendered
+	// outside its container's viewport (clipped away) gets an empty
+	// hit_rect and stops being hoverable/clickable there.
+	st.hit_rect = rect
+	if n := len(r.batch.clip_stack); n > 0 {
+		st.hit_rect = rect_intersect(rect, r.batch.clip_stack[n - 1])
+	}
 	// Stamp the overlay-frame marker so `widget_hovered` can tell which
 	// widgets are rendered ON an overlay layer vs which are behind one.
 	// `inside_overlay_depth` is non-zero only while `render_overlays` is
@@ -1135,7 +1161,10 @@ rect_hovered :: proc(ctx: ^Ctx($Msg), rect: Rect) -> bool {
 widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	st, ok := ctx.widgets.states[id]
 	if !ok { return false }
-	if !rect_contains_point(st.last_rect, ctx.input.mouse_pos) { return false }
+	// Point-test the *clipped* rect: a widget scrolled out of its
+	// container's viewport keeps a full last_rect for geometry but a
+	// clipped-away hit_rect, so it can't be clicked where it isn't drawn.
+	if !rect_contains_point(st.hit_rect, ctx.input.mouse_pos) { return false }
 
 	// `stamped` is true when this widget rendered inside an overlay subtree
 	// last frame (dialog content, or a popover spawned from one). It's the
