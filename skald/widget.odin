@@ -115,14 +115,16 @@ Widget_Kind :: enum u8 {
 Widget_State :: struct {
 	kind:        Widget_Kind,
 	last_rect:   Rect,
-	// hit_rect is last_rect intersected with the clip stack that was
-	// active when the widget rendered — i.e. the actually-visible part.
-	// `widget_hovered` point-tests against this, not last_rect, so a
-	// widget scrolled out of its container's viewport (overscan table
-	// rows, a button scrolled past a scroll's edge) is unclickable in
-	// the clipped-away region even though its full rect still lives
-	// there for geometry/anchoring. Empty when fully clipped away.
-	hit_rect:    Rect,
+	// clip_rect is the scissor that was active when the widget rendered —
+	// the running intersection of every enclosing push_clip (a scroll
+	// viewport, a clipped label, …). `widget_hovered` rejects the hover
+	// when the mouse falls outside it, so a widget scrolled out of its
+	// container's viewport (overscan table rows, a button past a scroll's
+	// edge) isn't clickable where it's no longer drawn — even though its
+	// full last_rect still lives there for geometry/anchoring. Zero means
+	// "no clip was active" → no restriction, which also leaves widgets
+	// whose state is built directly (headless tests) hoverable.
+	clip_rect:   Rect,
 	// last_frame is the frame counter value at which this state was
 	// last written by a widget builder. It disambiguates positional-ID
 	// reshuffles where a slot is inherited by a *different* widget of
@@ -1041,15 +1043,13 @@ widget_record_rect :: proc(r: ^Renderer, id: Widget_ID, rect: Rect) {
 	if ws == nil { return }
 	st := ws.states[id]
 	st.last_rect = rect
-	// hit_rect is the rect clipped to whatever scissor is active right now
-	// — the intersection of every push_clip on the stack (the top entry is
-	// already that intersection). With no clip pushed it equals last_rect,
-	// so unclipped widgets behave exactly as before. A widget rendered
-	// outside its container's viewport (clipped away) gets an empty
-	// hit_rect and stops being hoverable/clickable there.
-	st.hit_rect = rect
+	// Record the scissor active right now — the top of the clip stack
+	// already holds the running intersection of every enclosing push_clip.
+	// Zero when nothing is pushed, which widget_hovered reads as
+	// "unclipped" (no restriction).
+	st.clip_rect = {}
 	if n := len(r.batch.clip_stack); n > 0 {
-		st.hit_rect = rect_intersect(rect, r.batch.clip_stack[n - 1])
+		st.clip_rect = r.batch.clip_stack[n - 1]
 	}
 	// Stamp the overlay-frame marker so `widget_hovered` can tell which
 	// widgets are rendered ON an overlay layer vs which are behind one.
@@ -1161,10 +1161,14 @@ rect_hovered :: proc(ctx: ^Ctx($Msg), rect: Rect) -> bool {
 widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	st, ok := ctx.widgets.states[id]
 	if !ok { return false }
-	// Point-test the *clipped* rect: a widget scrolled out of its
-	// container's viewport keeps a full last_rect for geometry but a
-	// clipped-away hit_rect, so it can't be clicked where it isn't drawn.
-	if !rect_contains_point(st.hit_rect, ctx.input.mouse_pos) { return false }
+	if !rect_contains_point(st.last_rect, ctx.input.mouse_pos) { return false }
+	// Reject the hover when the mouse is outside the scissor the widget
+	// rendered under: a widget scrolled out of its container's viewport
+	// keeps a full last_rect for geometry but isn't clickable where it's
+	// clipped away. Zero clip_rect = unclipped = no restriction.
+	if st.clip_rect.w > 0 && !rect_contains_point(st.clip_rect, ctx.input.mouse_pos) {
+		return false
+	}
 
 	// `stamped` is true when this widget rendered inside an overlay subtree
 	// last frame (dialog content, or a popover spawned from one). It's the

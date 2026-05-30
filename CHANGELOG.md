@@ -23,9 +23,10 @@ bug fixes bump the patch.
   viewport (a table's overscan rows, a button scrolled past a scroll's
   edge) kept a live click target where it was no longer drawn — so
   clicking the empty strip just above a scrolled table could select an
-  off-screen row. Every widget now records a hit-rect clipped to the
-  active scissor, and `widget_hovered` tests that. `last_rect` is
-  unchanged, so popover anchoring and other geometry are unaffected.
+  off-screen row. Every widget now records the clip rect it rendered
+  under, and `widget_hovered` rejects a hover that falls outside it.
+  `last_rect` is unchanged, so popover anchoring and other geometry are
+  unaffected.
 
 ## 1.0.0-rc10 — 2026-05-30
 
