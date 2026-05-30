@@ -4,7 +4,14 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## Unreleased
+## 1.0.0-rc10 — 2026-05-30
+
+O(n) text wrapping across `text_input`, `text`, and `rich_text` (a 1200-word
+field went from ~300 ms to ~5 ms per keystroke), `text_input` decorations +
+screen↔byte mapping, and a batch of input/safety fixes — widget id namespace
+hardening (#4), focus release on outside clicks (#3), modal/popover
+click-through, runa fuzzing hardening, and long-token wrapping. No breaking
+changes.
 
 ### Added
 
