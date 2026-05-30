@@ -767,19 +767,16 @@ widget_store_evict_stale :: proc(ws: ^Widget_Store) {
 // cleanup treats them as deliberate.
 widget_auto_id :: proc(ctx: ^Ctx($Msg)) -> Widget_ID {
 	ctx.widgets.auto_id += 1
-	if ctx.widgets.auto_id_scope != 0 {
-		// Mix the per-row scope with the per-call counter through a
-		// golden-ratio multiply so two small inputs (scope=1 counter=2 vs
-		// scope=2 counter=1) don't XOR-collide into the same id. Plain
-		// XOR was fine when both inputs were already hashes, but apps
-		// passing small ints as scope keys (`row.id`) plus the
-		// inherently-small counter caused widgets to alias across rows
-		// — selects opening then immediately re-closing, number_inputs
-		// stealing each other's draft buffers, etc.
-		mixed := ctx.widgets.auto_id_scope ~ (u64(ctx.widgets.auto_id) * 0x9e3779b97f4a7c15)
-		return Widget_ID(mixed) | WIDGET_ID_EXPLICIT_BIT
-	}
-	return ctx.widgets.auto_id
+	// Fold scope (0 when unscoped) and the per-call counter through a
+	// golden-ratio multiply, not XOR: a small scope key (`row.id`) plus a
+	// small counter would XOR-collide and alias widgets across rows.
+	// The result always lands in the high (explicit) half, even unscoped,
+	// which keeps `widget_resolve_id` idempotent — wrappers (chat_input,
+	// search_field) resolve an id then re-resolve it inside text_input, and
+	// a bare low auto-id would gain the high bit on that second pass and
+	// desync the two (#4: chat_input with no id never saw focus).
+	mixed := ctx.widgets.auto_id_scope ~ (u64(ctx.widgets.auto_id) * 0x9e3779b97f4a7c15)
+	return Widget_ID(mixed) | WIDGET_ID_EXPLICIT_BIT
 }
 
 // widget_make_sub_id derives a stable child id from a parent id and a
@@ -863,11 +860,12 @@ widget_scope_pop :: proc(ctx: ^Ctx($Msg), saved: Widget_Scope_Saved) {
 	ctx.widgets.auto_id       = saved.counter
 }
 
-// WIDGET_ID_EXPLICIT_BIT marks IDs produced by `hash_id` (or any caller
-// passing an explicit key) so they can't collide with positional
-// auto-IDs. widget_auto_id increments from 1 and in practice never
-// reaches values with the high bit set, so flipping the top bit on
-// explicit IDs partitions the namespace cleanly.
+// WIDGET_ID_EXPLICIT_BIT is set on every resolved id — from `hash_id`,
+// `widget_make_sub_id`, and `widget_auto_id`'s mixed output. The low half
+// is only the transient per-frame counter before mixing; nothing is stored
+// there. Keeping all final ids high is what makes `widget_resolve_id`
+// idempotent. Raw hand-typed ids (`Widget_ID(1)`) are the exception —
+// `widget_resolve_id` normalizes them into the high half on the way in.
 WIDGET_ID_EXPLICIT_BIT :: Widget_ID(1) << 63
 
 // hash_id turns a stable string key into a Widget_ID. The returned ID
@@ -901,13 +899,14 @@ hash_id :: proc(key: string) -> Widget_ID {
 // so existing `id` references in the body stay unchanged — the local
 // shadow of the param turns into a real Widget_ID in one step.
 //
-// Explicit ids are forced into the high half of the id space
-// (WIDGET_ID_EXPLICIT_BIT) so they can NEVER collide with positional
-// auto-ids, which stay in the low half. `hash_id` already sets this bit,
-// so the OR is a no-op for the documented path; the OR exists to also cover
-// a caller passing a *raw* small-int id (e.g. `Widget_ID(1)`), which would
-// otherwise land on top of an auto-id and silently corrupt that widget's
-// state. NOTE: a raw explicit id you also pass to a direct API
+// Both branches return a high-half id, so the proc is idempotent: resolving
+// an already-resolved id is a no-op. Wrappers (chat_input, search_field)
+// rely on this — they resolve an id, then text_input resolves it again, and
+// the two must land on the same value or focus/submit desyncs (#4). A raw
+// small-int id (`Widget_ID(1)`) is normalized into the high half so it can't
+// collide with an auto-id.
+//
+// NOTE: a *raw* explicit id you also pass to a direct API
 // (`widget_get`/`widget_focus`/`text_input_offset_*`) won't match — those
 // see the raw value while the widget is stored under the normalized one, so
 // any id you reference elsewhere must come from `hash_id`.

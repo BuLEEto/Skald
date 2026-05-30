@@ -43,6 +43,15 @@ bug fixes bump the patch.
   A large prose/markdown block wraps in a few ms instead of tens of ms; the
   per-frame wrap cache still dedupes the layout+render double-walk.
 
+- **Widget id namespace hardening.** Every resolved widget id — auto,
+  `hash_id`, sub-id, and raw `Widget_ID(n)` — now lives in one explicit
+  namespace, so `widget_resolve_id` is idempotent. Wrapper widgets
+  (`chat_input`, `search_field`, …) resolve an id and pass it to an inner
+  builder that resolves it again; previously an auto-id picked up a stray
+  high bit on the second pass and desynced the two, so `chat_input` without
+  an explicit `id` never saw focus and `on_submit` never fired (#4, thanks
+  @quonic). A raw small-int `id` also no longer aliases a positional auto-id.
+
 - **Focusable widgets release focus on an outside click.** Clicking a button,
   checkbox, radio, toggle (or the table's keyboard row-nav) and then clicking
   away left it focused, so a later Space/Enter still activated it. A left-press
