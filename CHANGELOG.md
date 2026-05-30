@@ -28,6 +28,13 @@ bug fixes bump the patch.
   `last_rect` is unchanged, so popover anchoring and other geometry are
   unaffected.
 
+- **`text_input` clipping leaks closed too.** Its `×` clear button, the
+  multiline scrollbar, and wheel-to-scroll hit-tested the field's full
+  rect directly rather than through `widget_hovered`, so a field scrolled
+  out of a container's viewport could be cleared or scrolled by clicking
+  the empty space where it was no longer drawn. All three now gate on the
+  field's clip rect.
+
 ## 1.0.0-rc10 — 2026-05-30
 
 O(n) text wrapping across `text_input`, `text`, and `rich_text` (a 1200-word

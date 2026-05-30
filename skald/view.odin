@@ -3871,7 +3871,11 @@ _text_input_impl :: proc(
 			clear_w + pad.x * 0.5,
 			st.last_rect.h,
 		}
-		clear_hovered = rect_contains_point(cz, ctx.input.mouse_pos)
+		// Gate on the field's clip rect so the × isn't clickable where the
+		// field is scrolled out of a container's viewport — same rule
+		// widget_hovered applies. Zero clip_rect = unclipped = no restriction.
+		clear_hovered = rect_contains_point(cz, ctx.input.mouse_pos) &&
+			(st.clip_rect.w <= 0 || rect_contains_point(st.clip_rect, ctx.input.mouse_pos))
 		if clear_hovered && ctx.input.mouse_pressed[.Left] {
 			new_value      = ""
 			cursor         = 0
@@ -4000,10 +4004,13 @@ _text_input_impl :: proc(
 			thumb := Rect{bar_x, thumb_y, bar_w, thumb_h}
 			bar   := Rect{bar_x, bar_y, bar_w, bar_h}
 			mp := ctx.input.mouse_pos
+			// Don't let the inner scrollbar react where the field is clipped
+			// out of an outer viewport.
+			field_vis := st.clip_rect.w <= 0 || rect_contains_point(st.clip_rect, mp)
 
-			sb_hover = rect_contains_point(thumb, mp)
+			sb_hover = field_vis && rect_contains_point(thumb, mp)
 
-			if ctx.input.mouse_pressed[.Left] {
+			if field_vis && ctx.input.mouse_pressed[.Left] {
 				if rect_contains_point(thumb, mp) {
 					st.pressed = true
 					st.drag_anchor = mp.y - thumb_y
@@ -4419,7 +4426,8 @@ _text_input_impl :: proc(
 		// notch ≈ 40 px, SDL wheel units multiplied in. Read from the
 		// current-frame input; caret-driven scroll below runs after so
 		// auto-follow beats an accidental simultaneous wheel.
-		wheeling := rect_contains_point(st.last_rect, ctx.input.mouse_pos)
+		wheeling := rect_contains_point(st.last_rect, ctx.input.mouse_pos) &&
+			(st.clip_rect.w <= 0 || rect_contains_point(st.clip_rect, ctx.input.mouse_pos))
 		if wheeling && ctx.input.scroll.y != 0 {
 			st.scroll_y -= ctx.input.scroll.y * 40
 		}
