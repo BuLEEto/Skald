@@ -53,6 +53,12 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Fill-mode `table` / `virtual_list` with an empty `State`.** The state
+  snapshot ran `new`/copy on a zero-size pointee (`State = struct{}`),
+  which faulted under AddressSanitizer and snapshotted a degenerate
+  pointer. Guarded with `size_of(Elem) > 0` — a zero-size state has
+  nothing to copy.
+
 - **`context_menu` no longer blanks a self-sizing child while open.**
   Wrapping a fill-mode `table`/`grid` (or anything via `sized()`) in
   `context_menu` collapsed the child to zero height the moment the menu

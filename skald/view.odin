@@ -11167,9 +11167,13 @@ virtual_list :: proc(
 		state_snap := state
 		when intrinsics.type_is_pointer(T) {
 			Elem :: intrinsics.type_elem_type(T)
-			elem := new(Elem, context.temp_allocator)
-			elem^ = state^
-			state_snap = cast(T) elem
+			// Skip the snapshot for a zero-size pointee (State = struct{}):
+			// nothing to copy, and new/copy of a 0-size type faults ASan.
+			when size_of(Elem) > 0 {
+				elem := new(Elem, context.temp_allocator)
+				elem^ = state^
+				state_snap = cast(T) elem
+			}
 		}
 
 		P :: Virtual_List_Params(Msg, T)
@@ -11872,9 +11876,13 @@ table :: proc(
 		state_snap := state
 		when intrinsics.type_is_pointer(T) {
 			Elem :: intrinsics.type_elem_type(T)
-			elem := new(Elem, context.temp_allocator)
-			elem^ = state^
-			state_snap = cast(T) elem
+			// Skip the snapshot for a zero-size pointee (State = struct{}):
+			// nothing to copy, and new/copy of a 0-size type faults ASan.
+			when size_of(Elem) > 0 {
+				elem := new(Elem, context.temp_allocator)
+				elem^ = state^
+				state_snap = cast(T) elem
+			}
 		}
 
 		P :: Table_Params(Msg, T)
