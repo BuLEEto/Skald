@@ -21,6 +21,12 @@ bug fixes bump the patch.
   fires `on_toggle` (expand/collapse). Matches keyboard activation and
   file-manager muscle memory; single-click still selects first.
 
+- **`text_input` gains `line_spacing`.** Extra leading between visual
+  lines (multiline only; `0` = font default). Feeds the per-line stride
+  consistently, so content height, the scrollbar thumb, click
+  hit-testing and caret-follow all stay in agreement when scrolled.
+  Additive — defaults to `0`, so existing fields are unchanged.
+
 ### Fixed
 
 - **Widgets scrolled out of view are no longer clickable.** Hit-testing

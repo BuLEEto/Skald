@@ -416,6 +416,12 @@ View_Text_Input :: struct {
 	// on-right scrollbar thumb. 0 / 0 on single-line fields.
 	scroll_y:          f32,
 	content_h:         f32,
+	// line_spacing is extra leading (logical px) added *between* visual
+	// lines — the gap is empty space, so glyph-box heights (selection,
+	// caret, marks) stay `line_h`. The renderer's per-line stride is
+	// `line_h + line_spacing`, matching content_h so the scrollbar stays
+	// proportional. 0 on single-line fields.
+	line_spacing:      f32,
 	// visual_lines is the pre-computed display-line table; one entry per
 	// logical line when wrap is off, possibly more when wrap is on. Lives
 	// in the frame arena (context.temp_allocator), so it's only valid for
@@ -3753,6 +3759,11 @@ _text_input_impl :: proc(
 	// squiggles, search highlights). nil = no decorations, byte-identical
 	// to a field without the param. See Text_Mark.
 	marks:        []Text_Mark = nil,
+	// line_spacing adds extra leading between visual lines (multiline
+	// only; ignored single-line). 0 = font-default spacing. Feeds the
+	// per-line stride consistently — render, content height, scrollbar,
+	// click hit-testing and caret-follow all stay in agreement.
+	line_spacing: f32 = 0,
 ) -> (view: View, new_value: string, changed: bool) {
 	th := ctx.theme
 
@@ -3926,6 +3937,12 @@ _text_input_impl :: proc(
 	if ctx.renderer != nil {
 		_, line_h = measure_text(ctx.renderer, "Ag", fs, font)
 	}
+	// stride is the line-to-line advance. line_h is the glyph box;
+	// line_spacing is empty leading between boxes. Every vertical
+	// advance (content height, click→line, caret-follow, render)
+	// uses stride so the scrollbar stays proportional; box heights
+	// (selection, caret, marks) keep using line_h.
+	stride := line_h + line_spacing
 	// Multiline scrolls vertically against st.scroll_y. content_y0 is
 	// the y where the first line's glyphs land *after* scrolling — click
 	// hit-testing and caret positioning both go through it.
@@ -4049,7 +4066,7 @@ _text_input_impl :: proc(
 			focused = true
 			idx := resolve_click_idx(ctx.renderer, disp_text, visual_lines,
 				fs, click_rel_x,
-				ctx.input.mouse_pos.y, content_y0, line_h, multiline, font)
+				ctx.input.mouse_pos.y, content_y0, stride, multiline, font)
 			if password { idx = mask_byte_to_real_byte(new_value, idx) }
 			clicks := ctx.input.mouse_click_count[.Left]
 			// Password mode: double-click would collapse to select-all
@@ -4417,7 +4434,7 @@ _text_input_impl :: proc(
 	effective_h := h
 	if height <= 0 && st.last_rect.h > 0 { effective_h = st.last_rect.h }
 	viewport_h := effective_h - 2 * pad.y
-	content_h  := f32(len(visual_lines)) * line_h
+	content_h  := f32(len(visual_lines)) * stride
 	if multiline {
 		max_off := content_h - viewport_h
 		if max_off < 0 { max_off = 0 }
@@ -4439,7 +4456,7 @@ _text_input_impl :: proc(
 		// the user's wheel scroll.
 		if cursor != cursor_before || new_value != value_before {
 			cur_line := visual_line_of_byte(visual_lines, cursor)
-			caret_top := f32(cur_line) * line_h
+			caret_top := f32(cur_line) * stride
 			caret_bot := caret_top + line_h
 			if caret_top < st.scroll_y            { st.scroll_y = caret_top }
 			if caret_bot > st.scroll_y + viewport_h {
@@ -4546,6 +4563,7 @@ _text_input_impl :: proc(
 		multiline         = multiline,
 		scroll_y          = st.scroll_y,
 		content_h         = content_h,
+		line_spacing      = line_spacing,
 		visual_lines      = out_vls,
 		marks             = out_marks,
 		invalid           = invalid,
@@ -4628,6 +4646,7 @@ text_input_simple :: proc(
 	error:        string = "",
 	max_chars:    int    = 0,
 	marks:        []Text_Mark = nil,
+	line_spacing: f32 = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
 		ctx, value,
@@ -4651,6 +4670,7 @@ text_input_simple :: proc(
 		error         = error,
 		max_chars     = max_chars,
 		marks         = marks,
+		line_spacing  = line_spacing,
 	)
 	if changed { send(ctx, on_change(new_value)) }
 	return view
@@ -4687,6 +4707,7 @@ text_input_payload :: proc(
 	error:        string = "",
 	max_chars:    int    = 0,
 	marks:        []Text_Mark = nil,
+	line_spacing: f32 = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
 		ctx, value,
@@ -4710,6 +4731,7 @@ text_input_payload :: proc(
 		error         = error,
 		max_chars     = max_chars,
 		marks         = marks,
+		line_spacing  = line_spacing,
 	)
 	if changed { send(ctx, on_change(payload, new_value)) }
 	return view

@@ -753,6 +753,10 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 			}
 
 			base_y := iy - vv.scroll_y
+			// stride = glyph box + caller leading. Matches the stride the
+			// builder used for content_h / scroll, so lines land where the
+			// scrollbar and click hit-test expect. Box heights stay `lh`.
+			stride := lh + vv.line_spacing
 
 			if len(vv.text) == 0 {
 				// Empty buffer: show placeholder (if any) and draw the
@@ -765,7 +769,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				}
 			} else {
 				for vl, vli in vv.visual_lines {
-					line_y := base_y + f32(vli) * lh
+					line_y := base_y + f32(vli) * stride
 					i := vl.start
 					j := vl.end
 
