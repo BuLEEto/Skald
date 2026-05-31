@@ -16,6 +16,11 @@ bug fixes bump the patch.
   self-reveals, so this is only for app-driven moves. Defaults to `-1`
   (no-op), so existing callers are unchanged.
 
+- **`table` and `tree` activate on double-click.** Double-clicking a
+  table row fires `on_row_activate`; double-clicking a tree row body
+  fires `on_toggle` (expand/collapse). Matches keyboard activation and
+  file-manager muscle memory; single-click still selects first.
+
 ### Fixed
 
 - **Widgets scrolled out of view are no longer clickable.** Hit-testing

@@ -12244,6 +12244,15 @@ table :: proc(
 				// Clicking a row moves keyboard focus to the table
 				// so arrow keys Just Work without an extra Tab.
 				widget_focus(ctx, body_id)
+				// Double-click activates the row — same gesture as
+				// Enter/Space, but from the mouse. SDL reports the
+				// streak in mouse_click_count (>=2, so a fast triple
+				// still opens); the click above still fires first so
+				// selection settles on this row before it's opened.
+				if on_row_activate != nil &&
+				   ctx.input.mouse_click_count[.Left] >= 2 {
+					send(ctx, on_row_activate(i))
+				}
 			}
 			widget_set(ctx, row_id, row_st)
 			rc := new(View, context.temp_allocator)
@@ -12756,6 +12765,12 @@ tree :: proc(
 				focus_idx = i
 				widget_focus(ctx, id)
 				focused = true
+				// Double-click on the row body expands/collapses it,
+				// same as hitting the chevron — file-manager muscle
+				// memory. The select above still fires first.
+				if r.expandable && ctx.input.mouse_click_count[.Left] >= 2 {
+					send(ctx, on_toggle(i))
+				}
 			}
 		}
 	}
