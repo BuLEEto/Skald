@@ -42,7 +42,24 @@ bug fixes bump the patch.
   callback rides a separate builder so the polymorphic-`Msg` signature
   stays sound.
 
+- **`table` columns can elide overflowing text.** New
+  `Table_Column.ellipsis` truncates over-long cell content to the column
+  width with a trailing `…` instead of letting it spill into the next
+  column. The table stretches the column's cells (so the text is actually
+  width-constrained) and auto-sets `.Ellipsis` on a bare `text` cell, so
+  marking the column is usually all that's needed — flex columns re-elide
+  as they resize. Opt-in; other columns are unchanged. Ellipsis columns
+  render left-aligned.
+
 ### Fixed
+
+- **`context_menu` no longer blanks a self-sizing child while open.**
+  Wrapping a fill-mode `table`/`grid` (or anything via `sized()`) in
+  `context_menu` collapsed the child to zero height the moment the menu
+  opened: the open-state `col` offered it only its intrinsic min. The
+  child now keeps the same layout role open or closed (`flex(1, …)` so it
+  receives the full offered height), so the listing stays put under the
+  menu.
 
 - **Widgets scrolled out of view are no longer clickable.** Hit-testing
   ignored scroll clipping: a widget clipped away by its container's

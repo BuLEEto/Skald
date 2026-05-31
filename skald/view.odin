@@ -9537,9 +9537,17 @@ context_menu :: proc(
 	// (`return zoned` when not open) so a stretching parent's offered
 	// width still reaches the zone child. The overlay contributes 0
 	// cross extent to the col.
+	// `flex(1, zoned)` (not a bare `zoned`) so the child keeps the same
+	// layout role it has in the closed `return zoned` path: a self-sizing
+	// child (table/grid/anything via `sized()`) is *offered* the full
+	// main-axis height the parent gave this col, instead of collapsing to
+	// its intrinsic min and rendering blank. The overlay floats (0 extent)
+	// and `spacing = 0` keeps the flex child from being shortened by a gap
+	// against it, so open and closed lay the child out identically.
 	return col(
-		zoned,
+		flex(1, zoned),
 		overlay(anchor_rect, card, .Below, {0, 0}, anim_op),
+		spacing     = 0,
 		cross_align = .Stretch,
 	)
 }
@@ -11612,6 +11620,16 @@ Table_Column :: struct {
 	align:     Cross_Align, // horizontal alignment of cell content in the column
 	sortable:  bool,        // clicking the header fires on_sort_change
 	resizable: bool,        // right-edge drag fires on_resize; needs width > 0
+	// ellipsis truncates over-long cell content to the column width with
+	// a trailing "…" instead of letting it spill into the next column.
+	// The table stretches this column's cells to the resolved width (so
+	// the text is actually width-constrained) and, for a bare `text`
+	// cell, sets its overflow to `.Ellipsis` for you — so marking the
+	// column is usually all you need. Because the cell stretches, an
+	// ellipsis column renders left-aligned (ignores `align`); intended
+	// for name/path/title columns. Wrapped cells (e.g. icon + text) are
+	// stretched but not auto-elided — set `overflow` on the text inside.
+	ellipsis:  bool,
 	// hidden=true collapses the column entirely: the header cell, body
 	// cells, and any resize/sort hit-targets are skipped. The app's
 	// `row_builder` is still called with the full set of cells — it's
@@ -12262,13 +12280,26 @@ table :: proc(
 			if col_spec.hidden { continue }
 			cell: View
 			if ci < len(cells) { cell = cells[ci] }
+			// Ellipsis columns stretch the cell so its content is
+			// assigned the column width (a .Start/.End/.Center box hands
+			// the child its intrinsic width and just offsets it, so it
+			// would never truncate). For the common bare-`text` cell we
+			// also flip on `.Ellipsis` so callers needn't repeat it.
+			cell_cross := col_spec.align
+			if col_spec.ellipsis {
+				cell_cross = .Stretch
+				if t, ok := cell.(View_Text); ok {
+					t.overflow = .Ellipsis
+					cell = t
+				}
+			}
 			append(&wrapped, col(
 				cell,
 				width       = widths[ci],
 				height      = item_height,
 				padding     = th.spacing.sm,
 				main_align  = .Center,
-				cross_align = col_spec.align,
+				cross_align = cell_cross,
 			))
 		}
 
