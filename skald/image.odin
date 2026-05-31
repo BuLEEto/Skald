@@ -394,6 +394,10 @@ image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> 
 // already registered the existing entry is replaced (after a
 // `DeviceWaitIdle` so any in-flight frame referencing it has finished).
 //
+// Call on the main thread — it touches the GPU image cache. The async
+// pattern is: decode pixels on a worker (stb), hand the bytes back, upload
+// here. `rgba` is copied synchronously, so it needn't outlive the call.
+//
 // Returns true on success, false on size mismatch or allocation
 // failure. The image draws via `image(ctx, name, ...)` and participates
 // in LRU eviction the same as file-loaded images.
@@ -443,6 +447,19 @@ image_load_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> 
 
 	r.images.use_counter += 1
 	return image_cache_insert(r, name, w, h, rgba) != nil
+}
+
+// image_is_resident reports whether `name` currently has a GPU texture in
+// the cache. Pure query — it neither loads the image nor refreshes LRU
+// order. Use it before `image()` to skip a blocking on-demand decode for
+// an entry that may have been LRU-evicted (re-request the async thumbnail
+// instead). `name` is the same key passed to `image()` / `image_load_pixels`.
+// Call on the main thread — it reads the image cache, which the render
+// thread owns; decode pixels on a worker, query/upload here.
+image_is_resident :: proc(r: ^Renderer, name: string) -> bool {
+	if r == nil || r.images.entries == nil { return false }
+	_, ok := r.images.entries[name]
+	return ok
 }
 
 // image_update_pixels refreshes an already-registered image in place,

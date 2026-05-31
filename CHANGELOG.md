@@ -8,6 +8,11 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`image_is_resident(r, name)`.** Read-only check for whether an image
+  is currently GPU-resident — without loading it or touching LRU order.
+  Lets async-thumbnail apps detect LRU eviction and re-decode off-thread
+  instead of tripping a blocking on-demand decode through `image()`.
+
 - **`table` can reveal an app-driven focus row.** A new `reveal_row`
   parameter scrolls a row into view when its value *changes* — for
   typeahead, Backspace-to-parent, or "scroll to selection" where focus
