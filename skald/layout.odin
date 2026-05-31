@@ -366,6 +366,30 @@ draw_input_marks :: proc(
 	}
 }
 
+// elide_to_width truncates `str` to fit `max_w` on one line and appends
+// an ellipsis. Returns `str` unchanged when it already fits. Uses the
+// cumulative per-byte advance array (one shaping pass, O(n)) so it's the
+// same machinery the wrap paths ride on. The cut is snapped to a rune
+// boundary so multi-byte glyphs are never split.
+@(private="file")
+elide_to_width :: proc(r: ^Renderer, str: string, max_w: f32, size: f32, font: Font) -> string {
+	if max_w <= 0 || len(str) == 0 { return str }
+	adv := text_line_advances(r, str, size, font)
+	if len(adv) == 0 || adv[len(adv)-1] <= max_w { return str }
+	ELL :: "…"
+	ew, _ := measure_text(r, ELL, size, font)
+	if ew >= max_w { return ELL }
+	budget := max_w - ew
+	// adv is cumulative + monotonic, so scan to the last byte that fits.
+	best := 0
+	for k := 0; k < len(adv); k += 1 {
+		if adv[k] <= budget { best = k } else { break }
+	}
+	// Snap down to a rune start (skip UTF-8 continuation bytes).
+	for best > 0 && best < len(str) && (str[best] & 0xC0) == 0x80 { best -= 1 }
+	return strings.concatenate({str[:best], ELL}, context.temp_allocator)
+}
+
 // render_view walks `v` and emits draw calls. `origin` is the top-left
 // corner in window pixels; `size` is the assigned size handed down by the
 // parent (equals the view's intrinsic size for leaf nodes inside a
@@ -456,7 +480,18 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				x1, _ := measure_text(r, vv.str[:sel_hi], vv.size, vv.font)
 				draw_rect(r, Rect{origin.x + x0, origin.y, x1 - x0, lh}, vv.color_selection, 0)
 			}
-			draw_text(r, expand_tabs(vv.str), origin.x, origin.y + ascent, vv.color, vv.size, vv.font)
+			// Overflow (single-line, no-wrap). Only bites when layout
+			// assigned this node less width than its content needs; a
+			// .Start/.End/.Center parent hands over the full intrinsic
+			// width, so all three modes look identical there.
+			disp := expand_tabs(vv.str)
+			if vv.overflow == .Ellipsis && size.x > 0 {
+				disp = elide_to_width(r, disp, size.x, vv.size, vv.font)
+			}
+			clip := vv.overflow == .Clip && size.x > 0
+			if clip { push_clip(r, {origin.x, origin.y, size.x, size.y}) }
+			draw_text(r, disp, origin.x, origin.y + ascent, vv.color, vv.size, vv.font)
+			if clip { pop_clip(r) }
 		}
 
 	case View_Rich_Text:

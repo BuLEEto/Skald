@@ -175,12 +175,27 @@ View_Gradient_Rect :: struct {
 // line sized to its content; when >0, the renderer breaks the string at
 // word boundaries so no line exceeds that width, and `view_size` reports
 // the wrapped height. Embedded `\n` also forces line breaks regardless.
+// Text_Overflow controls what a single-line `text` does when layout
+// assigns it less width than its content needs. Only consulted in the
+// no-wrap case (`max_width == 0`); when `max_width > 0` the text wraps
+// as before. Elision is against the *assigned* width, so the text must
+// sit in a width-constraining parent (a `.Stretch` column, a fixed-width
+// box) to be narrowed below its natural size — a `.Start`/`.End`/
+// `.Center` parent hands the child its intrinsic width and just offsets
+// it, so nothing is clipped there.
+Text_Overflow :: enum u8 {
+	Visible,   // draw the full string even if it spills the slot (default; today's behaviour)
+	Clip,      // hard-clip to the assigned width (may cut a glyph)
+	Ellipsis,  // truncate to fit and append "…"
+}
+
 View_Text :: struct {
 	str:       string,
 	color:     Color,
 	size:      f32,
 	font:      Font,
 	max_width: f32,
+	overflow:  Text_Overflow,
 
 	// Selectable mode (opt-in via the `text` proc group's interactive
 	// form; zero-valued for the static form so existing call sites
@@ -935,6 +950,7 @@ text :: proc(
 	size:      f32  = 14,
 	font:      Font = 0,
 	max_width: f32  = 0,
+	overflow:  Text_Overflow = .Visible,
 ) -> View {
 	return View_Text{
 		str       = str,
@@ -942,7 +958,19 @@ text :: proc(
 		size      = size,
 		font      = font,
 		max_width = max_width,
+		overflow  = overflow,
 	}
+}
+
+// text_fits reports whether `str` renders within `width` on one line at
+// the given size/font. Pair it with `overflow = .Ellipsis` to show a
+// full-text `tooltip` only on the rows that were actually truncated,
+// rather than on every row. `width` is the same logical-pixel slot the
+// text is laid out in.
+text_fits :: proc(r: ^Renderer, str: string, width: f32, size: f32 = 14, font: Font = 0) -> bool {
+	if r == nil { return true }
+	w, _ := measure_text(r, str, size, font)
+	return w <= width
 }
 
 // text_selectable is `text`'s input-aware sibling: same render shape,
@@ -9122,12 +9150,46 @@ color_picker_payload :: proc(
 // selected header reads clearly. Inactive tabs: window bg + muted fg.
 // The underline is part of the tab's layout column (not floated) so
 // adjacent tabs can't visually overlap it.
-tabs :: proc(
+// tabs renders a horizontal tab strip. The plain form takes just
+// `on_change`; the closable form adds `on_close`, fired when a tab is
+// middle-clicked — the universal "close this tab" gesture (browsers,
+// terminals, editors). Two builders rather than one `on_close = nil`
+// default: a nil default on a polymorphic `proc(int) -> $Msg` doesn't
+// monomorphize in Odin, so the optional callback rides a dedicated
+// builder (same split as text_input).
+tabs :: proc{tabs_simple, tabs_closable}
+
+tabs_simple :: proc(
 	ctx:       ^Ctx($Msg),
 	labels:    []string,
 	active:    int,
 	on_change: proc(index: int) -> Msg,
 	id:        Widget_ID = 0,
+) -> View {
+	return _tabs(ctx, labels, active, on_change, nil, id)
+}
+
+// on_close fires when a tab is middle-clicked. Fired unconditionally;
+// the app decides policy (e.g. refusing to close the last tab).
+tabs_closable :: proc(
+	ctx:       ^Ctx($Msg),
+	labels:    []string,
+	active:    int,
+	on_change: proc(index: int) -> Msg,
+	on_close:  proc(index: int) -> Msg,
+	id:        Widget_ID = 0,
+) -> View {
+	return _tabs(ctx, labels, active, on_change, on_close, id)
+}
+
+@(private="file")
+_tabs :: proc(
+	ctx:       ^Ctx($Msg),
+	labels:    []string,
+	active:    int,
+	on_change: proc(index: int) -> Msg,
+	on_close:  proc(index: int) -> Msg,
+	id:        Widget_ID,
 ) -> View {
 	th := ctx.theme
 
@@ -9145,6 +9207,15 @@ tabs :: proc(
 	for label, i in labels {
 		is_active := i == active
 		btn_id := widget_make_sub_id(tabs_id, u64(i + 1))
+
+		// Middle-click closes the tab. Gated on the button's own id so
+		// the hit-test is z-aware and matches exactly the tab the
+		// pointer is over (last-frame rect, the usual immediate-mode
+		// pattern). Left-click activation stays on the button itself.
+		if on_close != nil && ctx.input.mouse_pressed[.Middle] &&
+		   widget_hovered(ctx, btn_id) {
+			send(ctx, on_close(i))
+		}
 
 		// Tabs read cleanly on any parent when active/inactive don't
 		// fight the parent's bg. Inactive: plain `surface` — blends

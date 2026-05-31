@@ -27,6 +27,21 @@ bug fixes bump the patch.
   hit-testing and caret-follow all stay in agreement when scrolled.
   Additive — defaults to `0`, so existing fields are unchanged.
 
+- **`text` gains an overflow mode.** `overflow: Text_Overflow` —
+  `.Visible` (default, today's behaviour), `.Clip` (hard-clip to the
+  slot), or `.Ellipsis` (truncate and append `…`). Only bites when layout
+  assigns the node less width than its content needs — so a `.Stretch`
+  parent or fixed-width box elides while a `.Start`/`.End`/`.Center`
+  parent is unaffected. Paired helper `text_fits(r, str, width, size,
+  font)` reports whether a string fits, so apps can show a full-text
+  tooltip only on truncated rows.
+
+- **`tabs` can be closed by middle-click.** New `tabs_closable` builder
+  takes `on_close(index)`, fired on a middle-click of a tab — the
+  universal "close tab" gesture. Plain `tabs` is unchanged; the close
+  callback rides a separate builder so the polymorphic-`Msg` signature
+  stays sound.
+
 ### Fixed
 
 - **Widgets scrolled out of view are no longer clickable.** Hit-testing
