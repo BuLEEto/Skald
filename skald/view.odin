@@ -116,6 +116,7 @@ View :: union {
 	View_Canvas,
 	View_Spinner,
 	View_Rich_Text,
+	View_Opacity,
 }
 
 // Stack_Direction picks which axis a Stack lays its children along. Row
@@ -357,6 +358,15 @@ View_Wrap_Row :: struct {
 View_Clip :: struct {
 	size:  [2]f32,
 	child: ^View,
+}
+
+// View_Opacity fades its child by multiplying the alpha of every draw it
+// emits by `factor`. Layout pass-through (measures and positions exactly
+// as the child) and input-transparent — only the painted alpha changes,
+// so the faded subtree stays fully hit-testable. Nests multiplicatively.
+View_Opacity :: struct {
+	factor: f32,
+	child:  ^View,
 }
 
 // View_Spacer takes up `size` pixels in the parent stack's main axis (the
@@ -3203,6 +3213,19 @@ clip :: proc(size: [2]f32, child: View) -> View {
 	c := new(View, context.temp_allocator)
 	c^ = child
 	return View_Clip{size = size, child = c}
+}
+
+// opacity fades `child` to `factor` alpha (0 = invisible, 1 = opaque),
+// multiplying through every draw the subtree emits. Layout and input are
+// unchanged — the faded region still lays out and hit-tests normally — so
+// it's the way to dim an inactive pane, ghost a drag preview, or fade a
+// disabled region. Nested opacities multiply. Like the other wrappers,
+// put it *inside* a flex (`flex(1, opacity(...))`), not around one, or the
+// parent stack won't see the flex weight.
+opacity :: proc(factor: f32, child: View) -> View {
+	c := new(View, context.temp_allocator)
+	c^ = child
+	return View_Opacity{factor = factor, child = c}
 }
 
 // flex wraps `child` so it claims a `weight`-proportional share of its

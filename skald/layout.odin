@@ -61,6 +61,9 @@ view_height_for_width :: proc(r: ^Renderer, v: View, width: f32) -> f32 {
 	case View_Flex:
 		return view_height_for_width(r, vv.child^, width)
 
+	case View_Opacity:
+		return view_height_for_width(r, vv.child^, width)
+
 	case View_Clip:
 		return vv.size.y
 
@@ -185,6 +188,9 @@ view_size :: proc(r: ^Renderer, v: View) -> [2]f32 {
 		return {vv.size, vv.size}
 
 	case View_Flex:
+		return view_size(r, vv.child^)
+
+	case View_Opacity:
 		return view_size(r, vv.child^)
 
 	case View_Button:
@@ -615,6 +621,15 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// Inside a Stack the parent has already accounted for the weight
 		// and put the distributed size into `size`.
 		render_view(r, vv.child^, origin, size)
+
+	case View_Opacity:
+		// Fade the subtree by multiplying the global alpha for the duration
+		// of the child render, then restore. Multiplies with any enclosing
+		// opacity/overlay alpha, matching render_overlays' save/restore.
+		saved := r.alpha_multiplier
+		r.alpha_multiplier = saved * clamp(vv.factor, 0, 1)
+		render_view(r, vv.child^, origin, size)
+		r.alpha_multiplier = saved
 
 	case View_Button:
 		// Record the rendered rect so next frame's builder can hit-test

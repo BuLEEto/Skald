@@ -56,6 +56,14 @@ bug fixes bump the patch.
   as they resize. Opt-in; other columns are unchanged. Ellipsis columns
   render left-aligned.
 
+- **`opacity(factor, child)`.** Fades a whole subtree by multiplying the
+  alpha of every draw it emits. Layout pass-through (measures and positions
+  exactly as the child) and input-transparent (the faded region still
+  hit-tests), so it's the way to dim an inactive pane, ghost a drag
+  preview, or fade a disabled region. Nests multiplicatively and is
+  theme-agnostic. Put it *inside* a flex, not around one, like the other
+  wrappers.
+
 - **`text` gains horizontal `align`.** `align: Cross_Align = .Start`
   places the (possibly-elided) single line within its assigned width,
   mirroring `button.text_align`. Lets a label be centred *and* ellipsised
