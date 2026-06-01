@@ -56,6 +56,13 @@ bug fixes bump the patch.
   as they resize. Opt-in; other columns are unchanged. Ellipsis columns
   render left-aligned.
 
+- **`text` gains horizontal `align`.** `align: Cross_Align = .Start`
+  places the (possibly-elided) single line within its assigned width,
+  mirroring `button.text_align`. Lets a label be centred *and* ellipsised
+  at once — previously mutually exclusive, since eliding needs a stretched
+  width (left-drawn) and centring needs a content-sized slot. No-op unless
+  the node is wider than its content; defaults to `.Start`.
+
 ### Fixed
 
 - **Fill-mode `table` / `virtual_list` with an empty `State`.** The state

@@ -473,13 +473,6 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				y += lh
 			}
 		} else {
-			if has_sel {
-				_, lh := measure_text(r, "", vv.size, vv.font)
-				x0: f32 = 0
-				if sel_lo > 0 { x0, _ = measure_text(r, vv.str[:sel_lo], vv.size, vv.font) }
-				x1, _ := measure_text(r, vv.str[:sel_hi], vv.size, vv.font)
-				draw_rect(r, Rect{origin.x + x0, origin.y, x1 - x0, lh}, vv.color_selection, 0)
-			}
 			// Overflow (single-line, no-wrap). Only bites when layout
 			// assigned this node less width than its content needs; a
 			// .Start/.End/.Center parent hands over the full intrinsic
@@ -488,9 +481,29 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 			if vv.overflow == .Ellipsis && size.x > 0 {
 				disp = elide_to_width(r, disp, size.x, vv.size, vv.font)
 			}
+			// Horizontal align within the assigned width. No-op unless the
+			// node was stretched wider than its content (e.g. a .Stretch
+			// cell); a content-sized slot leaves dx = 0.
+			dx: f32 = 0
+			if vv.align != .Start && size.x > 0 {
+				dw, _ := measure_text(r, disp, vv.size, vv.font)
+				if size.x > dw {
+					#partial switch vv.align {
+					case .Center: dx = (size.x - dw) / 2
+					case .End:    dx = size.x - dw
+					}
+				}
+			}
+			if has_sel {
+				_, lh := measure_text(r, "", vv.size, vv.font)
+				x0: f32 = 0
+				if sel_lo > 0 { x0, _ = measure_text(r, vv.str[:sel_lo], vv.size, vv.font) }
+				x1, _ := measure_text(r, vv.str[:sel_hi], vv.size, vv.font)
+				draw_rect(r, Rect{origin.x + dx + x0, origin.y, x1 - x0, lh}, vv.color_selection, 0)
+			}
 			clip := vv.overflow == .Clip && size.x > 0
 			if clip { push_clip(r, {origin.x, origin.y, size.x, size.y}) }
-			draw_text(r, disp, origin.x, origin.y + ascent, vv.color, vv.size, vv.font)
+			draw_text(r, disp, origin.x + dx, origin.y + ascent, vv.color, vv.size, vv.font)
 			if clip { pop_clip(r) }
 		}
 

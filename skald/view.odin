@@ -196,6 +196,7 @@ View_Text :: struct {
 	font:      Font,
 	max_width: f32,
 	overflow:  Text_Overflow,
+	align:     Cross_Align, // horizontal placement within the assigned width (single-line)
 
 	// Selectable mode (opt-in via the `text` proc group's interactive
 	// form; zero-valued for the static form so existing call sites
@@ -951,6 +952,7 @@ text :: proc(
 	font:      Font = 0,
 	max_width: f32  = 0,
 	overflow:  Text_Overflow = .Visible,
+	align:     Cross_Align = .Start,
 ) -> View {
 	return View_Text{
 		str       = str,
@@ -959,6 +961,7 @@ text :: proc(
 		font      = font,
 		max_width = max_width,
 		overflow  = overflow,
+		align     = align,
 	}
 }
 
