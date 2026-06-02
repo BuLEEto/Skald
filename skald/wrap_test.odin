@@ -343,6 +343,7 @@ offset_accessor_multiline :: proc(t: ^testing.T) {
 		tg_fs        = fs,
 		tg_pad       = {8, 8},
 		tg_line_h    = line_h,
+		tg_stride    = line_h, // line_spacing == 0 here
 		tg_multiline = true,
 		vline_cache  = cache,
 	}
@@ -361,4 +362,89 @@ offset_accessor_multiline :: proc(t: ^testing.T) {
 	off, ok3 := text_input_offset_at(&ctx, id, {r_second.x + 0.5, r_second.y + line_h * 0.5})
 	testing.expect(t, ok3, "offset_at ok")
 	testing.expectf(t, off >= nl + 1, "click on line 1 should map past the newline, got %d", off)
+}
+
+// Regression: with line_spacing > 0 the public offset accessors must stack
+// and hit-test lines by stride (line_h + line_spacing), not bare line_h.
+// Before the fix, offset_rect placed later lines too high (×line_h) and
+// offset_at divided clicks by line_h and overshot to a lower line — the
+// same spacing-blind bug as the text_input drag path.
+@(test)
+offset_accessor_multiline_spaced :: proc(t: ^testing.T) {
+	r := runa_renderer()
+	defer free_runa_renderer(r)
+	if r.text.runa_state == nil { return }
+
+	Msg :: distinct int
+	store: Widget_Store
+	widget_store_init(&store)
+	defer widget_store_destroy(&store)
+
+	id      := Widget_ID(7)
+	// Four explicit lines so an overshoot is unambiguous.
+	text    := "line zero\nline one\nline two\nline three"
+	fs:     f32 = 16
+	inner_w: f32 = 400
+	_, line_h := measure_text(r, "Ag", fs, 0)
+	spacing: f32 = 14 // loose leading — what triggers the bug
+	stride  := line_h + spacing
+
+	vls := build_visual_lines(r, text, fs, inner_w, true, 0)
+	cache := new(Visual_Line_Cache)
+	cache.lines = make([dynamic]Visual_Line)
+	append(&cache.lines, ..vls)
+
+	store.states[id] = Widget_State{
+		kind         = .Text_Input,
+		last_frame   = store.frame,
+		last_rect    = {0, 0, inner_w + 16, 400},
+		tg_text      = text,
+		tg_fs        = fs,
+		tg_pad       = {8, 8},
+		tg_line_h    = line_h,
+		tg_stride    = stride,
+		tg_multiline = true,
+		vline_cache  = cache,
+	}
+	input: Input
+	ctx := Ctx(Msg){widgets = &store, input = &input, renderer = r}
+
+	// offset_rect: consecutive lines are exactly `stride` apart, not line_h,
+	// and the caret box height stays line_h.
+	r0, ok0 := text_input_offset_rect(&ctx, id, 0)            // line 0
+	starts  := line_starts(text)                              // byte of each line start
+	r1, ok1 := text_input_offset_rect(&ctx, id, starts[1])   // line 1
+	r3, ok3 := text_input_offset_rect(&ctx, id, starts[3])   // line 3
+	testing.expect(t, ok0 && ok1 && ok3, "all offsets resolve")
+	testing.expectf(t, abs((r1.y - r0.y) - stride) < 0.01,
+		"adjacent lines should be stride=%v apart, got %v", stride, r1.y - r0.y)
+	testing.expectf(t, abs((r3.y - r0.y) - 3 * stride) < 0.01,
+		"line 3 should be 3*stride below line 0, got %v", r3.y - r0.y)
+	testing.expectf(t, abs(r0.h - line_h) < 0.01,
+		"caret box height stays line_h=%v, got %v", line_h, r0.h)
+
+	// offset_at: a click at the vertical centre of each line resolves to a
+	// byte on THAT line — no overshoot. With the old /line_h math, clicking
+	// line 3's centre (y ≈ 3*stride) would divide to line index
+	// 3*stride/line_h, landing well past the last line.
+	for li in 0 ..< len(starts) {
+		cy := stride * f32(li) + line_h * 0.5 // centre of line li, content space
+		// content space -> screen: + iy (pad.y), scroll_y is 0 here.
+		off, ok := text_input_offset_at(&ctx, id, {10, cy + 8})
+		testing.expectf(t, ok, "offset_at ok for line %d", li)
+		got_line := visual_line_of_byte(cache.lines[:], off)
+		testing.expectf(t, got_line == li,
+			"click on line %d should resolve to line %d, got line %d (off %d)",
+			li, li, got_line, off)
+	}
+}
+
+// line_starts returns the byte offset of each line's first character
+// (split on '\n'). Test helper.
+@(private = "file")
+line_starts :: proc(s: string) -> []int {
+	out := make([dynamic]int, context.temp_allocator)
+	append(&out, 0)
+	for ch, i in s { if ch == '\n' { append(&out, i + 1) } }
+	return out[:]
 }

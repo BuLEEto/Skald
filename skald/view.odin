@@ -3775,6 +3775,36 @@ button :: proc(
 // and `slider`.
 // _text_input_impl runs the full text-edit machinery and returns the
 // rendered view alongside the post-edit value and a `changed` flag.
+// resolve_click_idx maps a mouse position to a byte index in a multiline
+// text_input. `stride` is the per-visual-line advance (line_h + line_spacing)
+// and MUST match the render path, or press and drag disagree on the line.
+// Single-line is a pure x→byte hit-test; multiline walks the visual lines.
+@(private = "file")
+resolve_click_idx :: proc(
+	renderer: ^Renderer,
+	text: string,
+	vls: []Visual_Line,
+	fs: f32,
+	rel_x: f32,
+	mouse_y, content_y0, stride: f32,
+	multiline: bool,
+	font: Font,
+) -> int {
+	if renderer == nil { return 0 }
+	if !multiline {
+		return byte_index_at_x(renderer, text, fs, font, rel_x)
+	}
+	ry := mouse_y - content_y0
+	line := int(ry / stride)
+	if line < 0 { line = 0 }
+	last := len(vls) - 1
+	if last < 0 { return 0 }
+	if line > last { line = last }
+	vl := vls[line]
+	col_in_line := byte_index_at_x(renderer, text[vl.start:vl.end], fs, font, rel_x)
+	return vl.start + col_in_line
+}
+
 // Public dispatch — turning `changed` into a Msg via the caller's
 // on_change — happens in the proc-group wrappers (`text_input_simple`
 // and `text_input_payload`). Splitting the body lets one impl serve
@@ -3957,34 +3987,6 @@ _text_input_impl :: proc(
 	click_rel_x := ctx.input.mouse_pos.x - content_x0
 
 	// Multiline clicks pick the target visual line by y-offset first, then
-	// run byte_index_at_x against that line's text. Soft-wrap splits one
-	// logical line into multiple visual lines — the hit-test walks the
-	// visual-line table so clicks land where the glyph actually is.
-	resolve_click_idx :: proc(
-		renderer: ^Renderer,
-		text: string,
-		vls: []Visual_Line,
-		fs: f32,
-		rel_x: f32,
-		mouse_y, content_y0, line_h: f32,
-		multiline: bool,
-		font: Font,
-	) -> int {
-		if renderer == nil { return 0 }
-		if !multiline {
-			return byte_index_at_x(renderer, text, fs, font, rel_x)
-		}
-		ry := mouse_y - content_y0
-		line := int(ry / line_h)
-		if line < 0 { line = 0 }
-		last := len(vls) - 1
-		if last < 0 { return 0 }
-		if line > last { line = last }
-		vl := vls[line]
-		col_in_line := byte_index_at_x(renderer, text[vl.start:vl.end], fs, font, rel_x)
-		return vl.start + col_in_line
-	}
-
 	// Line height: measure once per frame so multiline clicks and caret
 	// motion agree. An empty string still returns the font's line height.
 	line_h: f32 = fs
@@ -4173,7 +4175,7 @@ _text_input_impl :: proc(
 	if st.mouse_selecting && !sb_captured && ctx.input.mouse_buttons[.Left] && ctx.renderer != nil {
 		cursor = resolve_click_idx(ctx.renderer, disp_text, visual_lines,
 			fs, click_rel_x,
-			ctx.input.mouse_pos.y, content_y0, line_h, multiline, font)
+			ctx.input.mouse_pos.y, content_y0, stride, multiline, font)
 		if password { cursor = mask_byte_to_real_byte(new_value, cursor) }
 	}
 	if ctx.input.mouse_released[.Left] {
@@ -4539,6 +4541,7 @@ _text_input_impl :: proc(
 	st.tg_font      = font
 	st.tg_pad       = pad
 	st.tg_line_h    = line_h
+	st.tg_stride    = stride
 	st.tg_multiline = multiline
 
 	widget_set(ctx, id, st)
@@ -4822,7 +4825,9 @@ text_input_offset_rect :: proc(ctx: ^Ctx($Msg), id: Widget_ID, offset: int) -> (
 		vl  := vls[li]
 		x: f32 = 0
 		if off > vl.start { x, _ = measure_text(r, text[vl.start:off], st.tg_fs, st.tg_font) }
-		line_y := iy - st.scroll_y + f32(li) * lh
+		// Stack by stride to match render; caret box stays line_h tall.
+		stride := st.tg_stride if st.tg_stride > 0 else lh
+		line_y := iy - st.scroll_y + f32(li) * stride
 		return Rect{ix + x, line_y, 0, lh}, true
 	}
 
@@ -4848,14 +4853,15 @@ text_input_offset_at :: proc(ctx: ^Ctx($Msg), id: Widget_ID, pos: [2]f32) -> (of
 	text  := st.tg_text
 	ix    := st.last_rect.x + st.tg_pad.x
 	iy    := st.last_rect.y + st.tg_pad.y
-	lh    := st.tg_line_h
 	rel_x := pos.x - ix
 
 	if st.tg_multiline {
 		if st.vline_cache == nil || len(st.vline_cache.lines) == 0 { return 0, false }
 		vls := st.vline_cache.lines[:]
 		ry  := pos.y - (iy - st.scroll_y)
-		li  := int(ry / lh)
+		// Divide by stride, not bare line_h, or spacing makes it overshoot.
+		stride := st.tg_stride if st.tg_stride > 0 else st.tg_line_h
+		li  := int(ry / stride)
 		if li < 0 { li = 0 }
 		if li > len(vls) - 1 { li = len(vls) - 1 }
 		vl  := vls[li]

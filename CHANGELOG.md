@@ -73,6 +73,16 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Multiline `text_input` hit-testing ignored `line_spacing`.** Click-press
+  resolved the cursor line by dividing mouse-y by the per-line stride
+  (`line_h + line_spacing`), but click-drag — and the public
+  `text_input_offset_at` / `text_input_offset_rect` accessors — divided by
+  bare `line_h`. With spacing on, the held-button frame overshot and flung
+  the selection several lines down, and the offset accessors mis-resolved
+  the line (so spell-check / marks hit-tests landed on the wrong row). All
+  paths now share the stride. Reported against a "Loose"-spaced markdown
+  editor.
+
 - **Fill-mode `table` / `virtual_list` with an empty `State`.** The state
   snapshot ran `new`/copy on a zero-size pointee (`State = struct{}`),
   which faulted under AddressSanitizer and snapshotted a degenerate

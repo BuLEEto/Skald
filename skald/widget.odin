@@ -278,7 +278,8 @@ Widget_State :: struct {
 	tg_fs:        f32,
 	tg_font:      Font,
 	tg_pad:       [2]f32,
-	tg_line_h:    f32,
+	tg_line_h:    f32,   // glyph box height (caret/selection box sizing)
+	tg_stride:    f32,   // per-visual-line vertical advance (line_h + line_spacing)
 	tg_multiline: bool,
 
 	// last_overlay_frame is the most recent frame on which this widget's
