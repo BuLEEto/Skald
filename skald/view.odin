@@ -476,6 +476,11 @@ View_Text_Input :: struct {
 	// hover hint to drive the tint.
 	show_clear:        bool,
 	clear_hovered:     bool,
+	// Search-affordance sibling: when `chevron` is true the renderer
+	// reserves a glyph-width column in the right padding and paints a
+	// downward `▾` there, marking the field as a dropdown trigger
+	// (combobox). Single-line only; ignored alongside `show_clear`.
+	chevron:           bool,
 }
 
 // View_Checkbox is a boolean toggle with an optional label. The builder
@@ -939,6 +944,7 @@ View_Button :: struct {
 	font_size:   f32,
 	width:       f32,
 	text_align:  Cross_Align, // .Start | .Center | .End — horizontal text placement inside the button rect
+	overflow:    Text_Overflow, // .Visible (default) | .Clip | .Ellipsis — applied to the label when it exceeds the button width
 	hover:       bool,
 	pressed:     bool,
 	focused:     bool,
@@ -3611,6 +3617,11 @@ tooltip :: proc(
 //
 // Hit-testing uses the previous frame's laid-out rect — see the note on
 // `Widget_State.last_rect` for why that's fine in practice.
+//
+// `overflow` controls a label too wide for the button: the label is always
+// clipped to the rect (so it can't punch into the next button), so
+// `.Visible` and `.Clip` look the same — only `.Ellipsis` differs, eliding
+// the label with a trailing `…`. Bites only when `width` constrains it.
 button :: proc(
 	ctx:        ^Ctx($Msg),
 	label:      string,
@@ -3623,6 +3634,7 @@ button :: proc(
 	font_size:  f32         = 0,
 	width:      f32         = 0,
 	text_align: Cross_Align = .Center,
+	overflow:   Text_Overflow = .Visible,
 	disabled:   bool        = false,
 ) -> View {
 	th := ctx.theme
@@ -3700,6 +3712,7 @@ button :: proc(
 		font_size   = fs,
 		width       = width,
 		text_align  = text_align,
+		overflow    = overflow,
 		hover       = hovered,
 		pressed     = st.pressed,
 		focused     = focused,
@@ -4977,6 +4990,7 @@ chat_input :: proc(
 	width:       f32       = 0,
 	max_lines:   int       = 8,
 	font_size:   f32       = 0,
+	line_spacing: f32      = 0,
 	padding:     [2]f32    = {0, 0},
 	bg:          Color     = {},
 	fg:          Color     = {},
@@ -5022,26 +5036,29 @@ chat_input :: proc(
 	visible_lines := nl_count + 1
 	if visible_lines < 1         { visible_lines = 1 }
 	if visible_lines > max_lines { visible_lines = max_lines }
-	height := f32(visible_lines) * line_h + 2 * pad_y
+	// Per-line stride includes the extra leading so the auto-grown box
+	// keeps every wrapped/explicit line fully visible.
+	height := f32(visible_lines) * (line_h + line_spacing) + 2 * pad_y
 
 	ph := placeholder
 	if len(ph) == 0 { ph = "Message…" }
 
 	return text_input(ctx, value, on_change,
-		id          = id,
-		placeholder = ph,
-		width       = width,
-		height      = height,
-		font_size   = font_size,
-		padding     = padding,
-		bg          = bg,
-		fg          = fg,
-		border      = border,
-		multiline   = true,
-		wrap        = true,
-		invalid     = invalid,
-		error       = error,
-		disabled    = disabled,
+		id           = id,
+		placeholder  = ph,
+		width        = width,
+		height       = height,
+		font_size    = font_size,
+		line_spacing = line_spacing,
+		padding      = padding,
+		bg           = bg,
+		fg           = fg,
+		border       = border,
+		multiline    = true,
+		wrap         = true,
+		invalid      = invalid,
+		error        = error,
+		disabled     = disabled,
 	)
 }
 
@@ -7038,6 +7055,9 @@ _combobox_impl :: proc(
 		visual_lines      = []Visual_Line{
 			Visual_Line{start = 0, end = len(disp_text), consume_space = false},
 		},
+		// Dropdown affordance — a `▾` in the right padding so the closed
+		// trigger reads as "pick from a list", not a free text field.
+		chevron           = true,
 	}
 
 	if !st.open || len(visible) == 0 {

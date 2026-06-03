@@ -8,6 +8,22 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`button` gains an `overflow` mode.** `overflow: Text_Overflow` — a label
+  too wide for the button elides with `…` under `.Ellipsis`. The label is
+  always clipped to the rect (it can't punch into the next button), so
+  `.Visible`/`.Clip` are equivalent; only `.Ellipsis` changes anything.
+  Mirrors `text`'s overflow — for a chat-list row title that should degrade
+  gracefully when squeezed. Defaults to `.Visible`.
+
+- **`combobox` shows a dropdown chevron.** A `▼` in the closed trigger's
+  right padding so it reads as "pick from a list", not a free text field.
+  Internal (`View_Text_Input.chevron`); combobox sets it. Uses the large
+  `▼` shrunk to 0.6× — the small `▾` isn't in bundled Inter (renders tofu).
+
+- **`chat_input` gains `line_spacing`.** Threads multiline leading into the
+  composer; the auto-grow height counts the full per-line stride so loose
+  spacing stays fully visible. Defaults to `0`.
+
 - **`clickable` — make any view a button.** Wraps an arbitrary child (an
   image, a card, a row) so a left-click — or Space/Enter while focused —
   fires `on_click`; a second arg adds a right-click action:

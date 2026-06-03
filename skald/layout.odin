@@ -652,7 +652,18 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				vv.radius, vv.color_focus, bg)
 		}
 
-		tw, lh := measure_text(r, vv.label, vv.font_size)
+		// Ellipsis mode: shrink the label to the available text column
+		// (button width minus horizontal padding) and append `…`. Lets a
+		// flex-constrained button — a chat-list row title, say — degrade
+		// gracefully instead of hard-clipping mid-glyph. `.Visible`/`.Clip`
+		// keep the full label; the push_clip below contains any overspill.
+		label := vv.label
+		if vv.overflow == .Ellipsis {
+			avail := size.x - 2 * vv.padding.x
+			if avail > 0 { label = elide_to_width(r, label, avail, vv.font_size, 0) }
+		}
+
+		tw, lh := measure_text(r, label, vv.font_size)
 		tx: f32
 		switch vv.text_align {
 		case .Start:    tx = origin.x + vv.padding.x
@@ -668,7 +679,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// this — without it, over-long text visually punches through
 		// the next button's background.
 		push_clip(r, {origin.x, origin.y, size.x, size.y})
-		draw_text(r, vv.label, tx, ty + ascent, vv.fg, vv.font_size, 0)
+		draw_text(r, label, tx, ty + ascent, vv.fg, vv.font_size, 0)
 		pop_clip(r)
 
 	case View_Text_Input:
@@ -710,6 +721,16 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		if vv.show_clear {
 			clear_w = vv.font_size + vv.padding.x * 0.5
 			iw = max(0, iw - clear_w)
+		}
+
+		// Dropdown chevron (combobox trigger): reserve a matching column
+		// on the right so the `▼` doesn't overlap the value text. Sits
+		// outboard of the clear `×` when both are present (they aren't in
+		// practice — combobox sets only this one).
+		chevron_w: f32 = 0
+		if vv.chevron {
+			chevron_w = vv.font_size + vv.padding.x * 0.5
+			iw = max(0, iw - chevron_w)
 		}
 
 		// Clip the text so an overfull string can't render past the
@@ -795,6 +816,18 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				gy := iy + (ih - glh) / 2
 				ascent := text_ascent(r, vv.font_size, vv.font)
 				draw_text(r, "×", gx, gy + ascent, glyph_col, vv.font_size, vv.font)
+			}
+
+			// Dropdown chevron, painted outside the text clip in the reserved
+			// right column. Use the large `▼` shrunk to ~0.6× — Inter ships
+			// it but NOT the small `▾`, which renders as tofu.
+			if vv.chevron {
+				cs := vv.font_size * 0.6
+				gw, glh := measure_text(r, "▼", cs, vv.font)
+				gx := ix + iw + clear_w + (chevron_w - gw) / 2
+				gy := iy + (ih - glh) / 2
+				ascent := text_ascent(r, cs, vv.font)
+				draw_text(r, "▼", gx, gy + ascent, vv.color_placeholder, cs, vv.font)
 			}
 		} else {
 			// Multiline: top-aligned, one glyph run per visual line (the
