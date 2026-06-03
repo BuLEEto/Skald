@@ -217,7 +217,7 @@ See `examples/07_counter` for the annotated version.
 
 ```
 skald/          the framework package (pure Odin; imports vendor:vulkan/sdl3)
-examples/       NN_topic/main.odin — runnable demos (51 of them)
+examples/       NN_topic/main.odin — runnable demos (52 of them)
 docs/           tutorial, cookbook, widget reference, benchmarks
 build.sh/.bat   build one example into ./build/ (use RELEASE=1 to strip -debug)
 bench.sh        run the canonical bench suite

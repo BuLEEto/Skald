@@ -8,6 +8,22 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`clickable` — make any view a button.** Wraps an arbitrary child (an
+  image, a card, a row) so a left-click — or Space/Enter while focused —
+  fires `on_click`; a second arg adds a right-click action:
+  `clickable(ctx, child, Open{})` or `clickable(ctx, child, Open{}, Menu{})`.
+  Auto-id, joins Tab order (`focusable`, default true), and `disabled`.
+  Input-only by design — it draws nothing, so hover/pressed/focus visuals
+  come from the query layer below.
+
+- **`zone` + interaction queries — the engine under `clickable`.** Register
+  a hit region with `zone(ctx, child, id)`, then read it during view:
+  `widget_clicked` (release-based), `widget_pressed` (press edge),
+  `widget_active` (held), `widget_click_count` (double/triple), plus the
+  existing `widget_hovered`. Covers every button and gesture off one id —
+  right-click menus, double-click, and hover/pressed restyling — the
+  Skald-native way to build custom interactive widgets.
+
 - **`image_is_resident(r, name)`.** Read-only check for whether an image
   is currently GPU-resident — without loading it or touching LRU order.
   Lets async-thumbnail apps detect LRU eviction and re-decode off-thread
@@ -72,6 +88,13 @@ bug fixes bump the patch.
   the node is wider than its content; defaults to `.Start`.
 
 ### Fixed
+
+- **Scroll wheel and scrollbar leaked through modals.** A `scroll` /
+  `virtual_list` / `table` viewport (and a multiline `text_input`) behind an
+  open dialog still claimed the wheel and let you drag its scrollbar — the
+  wheel/thumb paths gated on raw rect-containment, not the z-aware
+  `widget_hovered` that clicks already used. Now matched, so input behind a
+  modal is fully inert.
 
 - **Multiline `text_input` hit-testing ignored `line_spacing`.** Click-press
   resolved the cursor line by dividing mouse-y by the per-line stride

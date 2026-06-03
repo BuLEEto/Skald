@@ -310,7 +310,7 @@ Worth noticing:
   when they happen.
 - **[`widgets.md`](widgets.md)** — signatures and behavior notes for
   every public widget.
-- **`examples/`** — 44 annotated demos, grouped in
+- **`examples/`** — 52 annotated demos, grouped in
   [`examples.md`](examples.md). When you want to see a pattern, look
   for the example that uses it.
 - **[`architecture.md`](architecture.md)** — how the framework is

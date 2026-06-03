@@ -4495,12 +4495,9 @@ _text_input_impl :: proc(
 		max_off := content_h - viewport_h
 		if max_off < 0 { max_off = 0 }
 
-		// Pointer-over-widget wheel. Matches View_Scroll's feel — one
-		// notch ≈ 40 px, SDL wheel units multiplied in. Read from the
-		// current-frame input; caret-driven scroll below runs after so
-		// auto-follow beats an accidental simultaneous wheel.
-		wheeling := rect_contains_point(st.last_rect, ctx.input.mouse_pos) &&
-			(st.clip_rect.w <= 0 || rect_contains_point(st.clip_rect, ctx.input.mouse_pos))
+		// Pointer-over-widget wheel (~40 px/notch). widget_hovered is z-aware
+		// (clip + modal-trap), so a field behind a modal doesn't eat the wheel.
+		wheeling := widget_hovered(ctx, id)
 		if wheeling && ctx.input.scroll.y != 0 {
 			st.scroll_y -= ctx.input.scroll.y * 40
 		}
@@ -9387,6 +9384,120 @@ menu :: proc(
 	return View_Zone{id = id, child = c}
 }
 
+// zone registers `child` as an interactive hit region under `id`; read what
+// happened during the same view pass with widget_clicked / widget_pressed /
+// widget_active / widget_click_count (+ widget_hovered). The low-level
+// primitive behind `clickable` — full mouse interaction on any view.
+//
+// `id` must be a stable explicit id (`hash_id` / row-scoped), NOT 0: each
+// query would advance the auto-id counter and key a different slot.
+//
+//     id := skald.hash_id("tile-42")
+//     hot := skald.widget_hovered(ctx, id)            // read FIRST → style by hover
+//     skald.zone(ctx, styled_child, id)
+//     if skald.widget_clicked(ctx, id, .Left)  { skald.send(ctx, Open{42}) }
+//     if skald.widget_pressed(ctx, id, .Right) { skald.send(ctx, Menu{42}) }
+//
+// Keeps a per-button press latch so release-based widget_clicked works.
+zone :: proc(ctx: ^Ctx($Msg), child: View, id: Widget_ID) -> View {
+	id := widget_resolve_id(ctx, id)
+	st := widget_get(ctx, id, .Click_Zone)
+	hov := widget_hovered(ctx, id)
+
+	st.click_fired = {} // transient — recomputed every frame
+	for b in Mouse_Button {
+		if ctx.input.mouse_pressed[b] && hov {
+			st.click_held += {b}
+			st.click_count[b] = ctx.input.mouse_click_count[b]
+		}
+		if ctx.input.mouse_released[b] {
+			if b in st.click_held && hov { st.click_fired += {b} }
+			st.click_held -= {b}
+		}
+		// Drop a stale latch if the button isn't actually down (covers a
+		// release that happened off-widget or while we weren't built).
+		if !ctx.input.mouse_buttons[b] { st.click_held -= {b} }
+	}
+
+	widget_set(ctx, id, st)
+
+	c := new(View, context.temp_allocator)
+	c^ = child
+	return View_Zone{id = id, child = c}
+}
+
+// clickable makes any `child` view behave like a button. The proc group has
+// two shapes:
+//
+//     skald.clickable(ctx, image_card, Open{42})             // left (+ keyboard)
+//     skald.clickable(ctx, image_card, Open{42}, Menu{42})   // left + right
+//
+// A left-click (or Space/Enter while focused) fires `on_click`; the second
+// form adds `on_right_click` on a right-press. Wraps an arbitrary child,
+// unlike `button`; resolves the id once so a no-`id` call works, unlike `zone`.
+//
+// For STATIC content (images, text, cards). Don't wrap a child that already
+// handles clicks (`button`, `text_input`, nested `clickable`) — both fire.
+//
+// Draws nothing itself: hover/pressed/focus visuals are yours — read the
+// query layer on the same `id` and style the child before wrapping it.
+//
+//     bg := th.color.surface
+//     if skald.widget_hovered(ctx, id)       { bg = th.color.elevated }
+//     if skald.widget_active(ctx, id, .Left) { bg = th.color.primary }
+//     skald.clickable(ctx, skald.col(label, bg = bg, radius = r), Open{}, id = id)
+//
+// `focusable` (default true) joins Tab order — set false on list rows.
+// `disabled` suppresses firing. Double-click: `zone` + `widget_click_count`.
+clickable :: proc{clickable_left, clickable_lr}
+
+// clickable_left — left-click (+ keyboard) only. See `clickable`.
+clickable_left :: proc(
+	ctx:       ^Ctx($Msg),
+	child:     View,
+	on_click:  Msg,
+	id:        Widget_ID = 0,
+	disabled:  bool      = false,
+	focusable: bool      = true,
+) -> View {
+	rid := widget_resolve_id(ctx, id) // resolve ONCE — supports auto-id (0)
+	return clickable_impl(ctx, child, on_click, rid, disabled, focusable)
+}
+
+// clickable_lr — left-click plus a right-click action. See `clickable`.
+clickable_lr :: proc(
+	ctx:            ^Ctx($Msg),
+	child:          View,
+	on_click:       Msg,
+	on_right_click: Msg,
+	id:             Widget_ID = 0,
+	disabled:       bool      = false,
+	focusable:      bool      = true,
+) -> View {
+	rid := widget_resolve_id(ctx, id)
+	z := clickable_impl(ctx, child, on_click, rid, disabled, focusable)
+	if !disabled && widget_pressed(ctx, rid, .Right) { send(ctx, on_right_click) }
+	return z
+}
+
+// Shared body: register the zone, fire on_click on left-release (or
+// keyboard when focused). `rid` is already resolved.
+@(private)
+clickable_impl :: proc(ctx: ^Ctx($Msg), child: View, on_click: Msg, rid: Widget_ID, disabled, focusable: bool) -> View {
+	z := zone(ctx, child, rid)
+	if !disabled {
+		if focusable { widget_make_focusable(ctx, rid) }
+		if widget_clicked(ctx, rid, .Left) {
+			if focusable { widget_focus(ctx, rid) }
+			send(ctx, on_click)
+		} else if focusable && widget_has_focus(ctx, rid) &&
+		   (.Space in ctx.input.keys_pressed || .Enter in ctx.input.keys_pressed) {
+			send(ctx, on_click)
+		}
+	}
+	return z
+}
+
 // right_click_zone wraps `child` in a passthrough that emits
 // `on_right_click` whenever a right-mouse press lands inside
 // the child's rect. It's the canonical way to attach a
@@ -9403,7 +9514,10 @@ menu :: proc(
 // already the fresh-pressed position on the frame the right-click
 // fires, so reading it here produces the pixel the user clicked.
 // The child still gets all left-clicks and hover as usual; the
-// zone only listens for the right-button press event.
+// zone only listens for the right-button press event. (There's no
+// `left_click_zone` — left-click's primitive is `clickable`, which adds
+// release-semantics, focus and keyboard; for a bare left-press observer
+// use `zone` + `widget_pressed(ctx, id, .Left)`.)
 right_click_zone :: proc(
 	ctx:            ^Ctx($Msg),
 	child:          View,
@@ -10844,7 +10958,9 @@ scroll_advance :: proc(
 	st.content_h = content_h
 
 	vp := st.last_rect
-	hovered    := rect_contains_point(vp, ctx.input.mouse_pos)
+	// z-aware (widget_hovered, not bare rect): a viewport behind a modal must
+	// not claim the wheel or scrollbar even though its rect contains the cursor.
+	hovered    := widget_hovered(ctx, id)
 	scrollable := content_h > vp.h
 
 	// Publish this viewport to the scroll-rects list so sibling / deeper
@@ -10912,9 +11028,11 @@ scroll_advance :: proc(
 		mp := ctx.input.mouse_pos
 		on_thumb := rect_contains_point(thumb, mp)
 		on_track := rect_contains_point(bar,   mp) && !on_thumb
-		hover_thumb = on_thumb
+		hover_thumb = on_thumb && hovered
 
-		if ctx.input.mouse_pressed[.Left] {
+		// `hovered` gates press-start (no grabbing the thumb behind a modal);
+		// an already-latched drag below continues regardless.
+		if hovered && ctx.input.mouse_pressed[.Left] {
 			if on_thumb {
 				st.pressed = true
 				st.drag_anchor = mp.y - thumb_y

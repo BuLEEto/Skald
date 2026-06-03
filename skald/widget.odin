@@ -260,6 +260,17 @@ Widget_State :: struct {
 	press_link_idx:  int,
 	link_fire_at_ns: i64,
 
+	// Interaction latches for `zone` + the widget_clicked/pressed/active
+	// query family. `click_held` is the set of buttons currently down
+	// after pressing *inside* this zone (release-based click requires the
+	// press to have started here). `click_fired` is the transient set of
+	// buttons that completed a click (press+release inside) THIS frame —
+	// `zone` clears and recomputes it every frame. `click_count` records
+	// the SDL click streak captured at press, read back by widget_click_count.
+	click_held:  bit_set[Mouse_Button],
+	click_fired: bit_set[Mouse_Button],
+	click_count: [Mouse_Button]u8,
+
 	// vline_cache memoizes a multiline text_input's wrapped visual-line
 	// table across frames (see Visual_Line_Cache). Allocated lazily on the
 	// first multiline build, owned by this slot on the persistent heap,
@@ -1199,6 +1210,44 @@ widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 		}
 	}
 	return true
+}
+
+// --- Interaction queries -------------------------------------------------
+// Read these during `view` against an `id` registered by `zone` (or any
+// widget). `widget_hovered` (above) reports pointer-over. The set below
+// reports clicks/presses; all are z-aware via the latches `zone` keeps.
+
+// widget_clicked reports a COMPLETED click of `button` — pressed and
+// released inside the zone (release-based, so a press that drags off and
+// releases elsewhere does not fire). Call after the `zone`/widget that
+// registered `id`.
+widget_clicked :: proc(ctx: ^Ctx($Msg), id: Widget_ID, button: Mouse_Button = .Left) -> bool {
+	id := widget_resolve_id(ctx, id)
+	return button in ctx.widgets.states[id].click_fired
+}
+
+// widget_pressed reports the press DOWN-edge: `button` went down inside
+// the zone this frame (fires immediately, before release — for context
+// menus and drag-start). z-aware via widget_hovered.
+widget_pressed :: proc(ctx: ^Ctx($Msg), id: Widget_ID, button: Mouse_Button = .Left) -> bool {
+	return ctx.input.mouse_pressed[button] && widget_hovered(ctx, widget_resolve_id(ctx, id))
+}
+
+// widget_active reports `button` currently held down after pressing
+// inside the zone — for push-down / active-state restyling.
+widget_active :: proc(ctx: ^Ctx($Msg), id: Widget_ID, button: Mouse_Button = .Left) -> bool {
+	id := widget_resolve_id(ctx, id)
+	return button in ctx.widgets.states[id].click_held
+}
+
+// widget_click_count returns the SDL click streak (1 single, 2 double,
+// 3 triple) for the click that fired THIS frame on `button`, or 0 when no
+// click fired. Pair with widget_clicked to split single vs double.
+widget_click_count :: proc(ctx: ^Ctx($Msg), id: Widget_ID, button: Mouse_Button = .Left) -> int {
+	id := widget_resolve_id(ctx, id)
+	st := ctx.widgets.states[id]
+	if button not_in st.click_fired { return 0 }
+	return int(st.click_count[button])
 }
 
 // widget_make_focusable adds `id` to this frame's focusables list, so
