@@ -4,7 +4,7 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
-## Unreleased
+## 1.0.0-rc11 — 2026-06-04
 
 ### Added
 
@@ -15,10 +15,11 @@ bug fixes bump the patch.
   Mirrors `text`'s overflow — for a chat-list row title that should degrade
   gracefully when squeezed. Defaults to `.Visible`.
 
-- **`combobox` shows a dropdown chevron.** A `▼` in the closed trigger's
-  right padding so it reads as "pick from a list", not a free text field.
-  Internal (`View_Text_Input.chevron`); combobox sets it. Uses the large
-  `▼` shrunk to 0.6× — the small `▾` isn't in bundled Inter (renders tofu).
+- **`combobox` shows a dropdown chevron.** A downward caret in the closed
+  trigger's right padding so it reads as "pick from a list", not a free
+  text field. Internal (`View_Text_Input.chevron`); combobox sets it. The
+  caret is hand-drawn (stacked rects) like `select`'s — no glyph, so it
+  can't tofu on a font missing `▾`. `color_picker`'s caret matches.
 
 - **`chat_input` gains `line_spacing`.** Threads multiline leading into the
   composer; the auto-grow height counts the full per-line stride so loose
