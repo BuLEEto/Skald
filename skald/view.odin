@@ -8936,11 +8936,16 @@ _color_picker_impl :: proc(
 		width = SWATCH_SIZE, height = SWATCH_SIZE,
 	)
 	trigger_label := text(fmt.tprintf("#%s", hex), th.color.fg, th.font.size_md)
-	// Trailing caret (same ▼ glyph used by collapsibles / section toggles
-	// — Inter ships it, unlike ▾ which renders as a fallback rectangle).
-	// Signals "clickable trigger" to match the select / date / time picker
-	// family, who get a hand-drawn caret from View_Select.
-	trigger_caret := text("▼", th.color.fg_muted, th.font.size_sm)
+	// Trailing caret: same 8×4 triangle the selects paint, built from
+	// stacked rects (this trigger is view-composed, not a View_Select).
+	caret_c := th.color.fg_muted
+	trigger_caret := col(
+		rect({8, 1}, caret_c),
+		rect({6, 1}, caret_c),
+		rect({4, 1}, caret_c),
+		rect({2, 1}, caret_c),
+		spacing = 0, cross_align = .Center,
+	)
 	trigger_inner := row(
 		swatch_box,
 		trigger_label,

@@ -724,7 +724,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		}
 
 		// Dropdown chevron (combobox trigger): reserve a matching column
-		// on the right so the `▼` doesn't overlap the value text. Sits
+		// on the right so the caret doesn't overlap the value text. Sits
 		// outboard of the clear `×` when both are present (they aren't in
 		// practice — combobox sets only this one).
 		chevron_w: f32 = 0
@@ -818,16 +818,18 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				draw_text(r, "×", gx, gy + ascent, glyph_col, vv.font_size, vv.font)
 			}
 
-			// Dropdown chevron, painted outside the text clip in the reserved
-			// right column. Use the large `▼` shrunk to ~0.6× — Inter ships
-			// it but NOT the small `▾`, which renders as tofu.
+			// Dropdown chevron: the same hand-drawn 8×4 triangle `View_Select`
+			// paints — pure `draw_rect`, no glyph, so it can never tofu.
 			if vv.chevron {
-				cs := vv.font_size * 0.6
-				gw, glh := measure_text(r, "▼", cs, vv.font)
-				gx := ix + iw + clear_w + (chevron_w - gw) / 2
-				gy := iy + (ih - glh) / 2
-				ascent := text_ascent(r, cs, vv.font)
-				draw_text(r, "▼", gx, gy + ascent, vv.color_placeholder, cs, vv.font)
+				caret_w: f32 = 8
+				caret_h: f32 = 4
+				caret_x := origin.x + size.x - vv.padding.x - caret_w
+				caret_y := origin.y + (size.y - caret_h) / 2
+				for i: f32 = 0; i < caret_h; i += 1 {
+					row_w := caret_w - 2 * i
+					if row_w < 1 { break }
+					draw_rect(r, {caret_x + i, caret_y + i, row_w, 1}, vv.color_placeholder, 0)
+				}
 			}
 		} else {
 			// Multiline: top-aligned, one glyph run per visual line (the
