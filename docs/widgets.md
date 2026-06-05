@@ -378,6 +378,7 @@ reason `search_field` is split out from `text_input`.
 | Mixed-style text the user can select + copy | `rich_text_selectable` |
 | Same plus clickable link spans (chat-bubble use case) | `rich_text_selectable_links` |
 | Editable text | `text_input` |
+| Editable text with inline styling (syntax highlighting, headings) | `text_input` + `styles` |
 
 **Example:** `examples/44_rich_text` — bold / italic mixing, mixed
 sizes + colours, multi-line wrapped paragraph, inline-code chip,
@@ -625,7 +626,8 @@ text_input(ctx, value: string, on_change: proc(new: string) -> Msg,
            password = false,
            clear_button = false, escape_clears = false,
            invalid = false, error = "", max_chars = 0,
-           marks: []Text_Mark = nil)
+           marks: []Text_Mark = nil, styles: []Text_Style = nil,
+           line_spacing = 0)
 ```
 
 Editable text field. Single-line by default; set `multiline = true`
@@ -661,6 +663,14 @@ theme default (`danger` for squiggle/underline, translucent `primary`
 for highlight). Supply marks fresh each frame; `nil` is a no-op. To
 react to a click on a mark, map screen↔byte with the accessors below.
 
+`styles` restyles byte ranges *of the buffer* — `Text_Style{start, end,
+color, weight, italic, font, size}` — for syntax highlighting and
+headings. `{}` colour inherits the field fg; the rest default to the
+base face. Unlike `marks` (pure decoration), styles change glyph
+metrics, so the caret, selection, and hit-testing measure per run; a
+per-run `size` makes that visual line taller (multiline). Fresh each
+frame, `nil` is a no-op; offsets clamp and snap to rune boundaries.
+
 ```odin
 // Call these from `view` (they need `ctx`, which `update` doesn't have):
 // read the click off `ctx.input`, query against last frame's geometry (a
@@ -680,7 +690,8 @@ A floating fix menu (`overlay` + `menu`) should get a stable explicit
 `id` or its click-away dismiss won't arm.
 
 **Examples: `examples/08_text_input`, `examples/18_forms`,
-`examples/49_text_marks` (marks + offset accessors).**
+`examples/49_text_marks` (marks + offset accessors),
+`examples/51_text_styles` (inline styling).**
 
 ### search_field
 

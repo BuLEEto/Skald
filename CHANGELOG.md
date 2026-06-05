@@ -4,6 +4,18 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## Unreleased
+
+### Added
+
+- **`text_input` gains `styles` — inline rich text.** `styles: []Text_Style`
+  restyles byte ranges of the buffer (`{start, end, color, weight, italic,
+  font, size}`) for syntax highlighting and headings. Caret, selection and
+  click hit-testing measure per run, so bold / italic / mono advances — and
+  per-run sizes, which make a line taller — stay exact. Supply fresh each
+  frame; `nil` is a no-op, and offsets clamp + snap to rune boundaries.
+  Composes with `marks`; unstyled fields are untouched.
+
 ## 1.0.0-rc11 — 2026-06-04
 
 ### Added
