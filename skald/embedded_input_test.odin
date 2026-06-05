@@ -80,6 +80,24 @@ embedded_text_and_scroll_accumulate :: proc(t: ^testing.T) {
 	testing.expect_value(t, w.input.scroll, [2]f32{0, 0})
 }
 
+// Without a per-frame widget-store advance, auto_id
+// climbs every frame so a stateful widget never keeps its id (clicks/hover/
+// focus/scroll/popovers all break). widget_store_begin_frame must reset it.
+@(test)
+embedded_begin_frame_advances_store :: proc(t: ^testing.T) {
+	ws: Widget_Store
+	widget_store_init(&ws)
+	defer widget_store_destroy(&ws)
+	ws.frame   = 5
+	ws.auto_id = Widget_ID(42) // ids consumed last frame
+
+	input: Input
+	widget_store_begin_frame(&ws, input)
+
+	testing.expect_value(t, ws.auto_id, Widget_ID(0)) // reset → ids stay stable across frames
+	testing.expect_value(t, ws.frame, u64(6))         // advanced exactly one frame
+}
+
 @(test)
 embedded_window_init :: proc(t: ^testing.T) {
 	cfg := Embedded_Config{

@@ -721,6 +721,24 @@ widget_store_frame_reset :: proc(ws: ^Widget_Store) {
 	}
 }
 
+// widget_store_begin_frame advances a widget store one frame the way `run`
+// does before building the view: cycle Tab / Shift-Tab focus against last
+// frame's focusables, reset the per-frame id + frame counters (and rotate the
+// overlay / scroll / modal geometry buffers), then blur keyboard focus on an
+// outside press. An embedded-backend caller — which drives its own frames —
+// MUST call this once per drawn frame, before frame_begin / building the Ctx;
+// without it every stateful widget takes a fresh id each frame and nothing
+// (clicks, hover, focus, scroll, popovers) latches. SDL apps get this inside
+// `run`. The debug inspector toggle and modal-dialog click interception are
+// run-only and intentionally not bundled here.
+widget_store_begin_frame :: proc(ws: ^Widget_Store, input: Input) {
+	if .Tab in input.keys_pressed {
+		widget_advance_focus(ws, .Shift in input.modifiers)
+	}
+	widget_store_frame_reset(ws)
+	widget_store_blur_on_outside_press(ws, input)
+}
+
 // widget_store_blur_on_outside_press clears keyboard focus when a fresh
 // left-press lands outside the currently-focused widget. It runs after
 // `widget_store_frame_reset`, so `overlay_rects_prev` / `modal_rect_prev`
