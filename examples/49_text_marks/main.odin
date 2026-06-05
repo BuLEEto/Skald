@@ -21,7 +21,7 @@ import "core:strings"
 import "gui:skald"
 
 // Toy checker: a fixed bad -> good table. A real app swaps this for its
-// own scanner (Kenning runs a pure-Odin one and debounces it like autosave).
+// own scanner (a real editor runs a pure-Odin one, debounced like autosave).
 DICT := [][2]string{
 	{"teh", "the"},
 	{"recieve", "receive"},

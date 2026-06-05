@@ -1326,7 +1326,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// continuously-growing content the rendered y of every glyph
 		// shifts by sub-pixel amounts per frame — anti-aliased
 		// glyphs rasterise to different pixels, producing the flicker
-		// boc-next reported on chat rows near the viewport top while
+		// a chat app reported on chat rows near the viewport top while
 		// the assistant streams. Rounding to physical px (rather than
 		// logical) keeps the snap correct on HiDPI too.
 		scale := r.scale if r.scale > 0 else 1

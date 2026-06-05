@@ -88,7 +88,7 @@ CRLF_SEED ::
 
 // big_message synthesises a ~30 KB body of plausible English-ish text
 // so the bench exercises wrap_text on something that takes real work.
-// Mirrors the bug-class string size Archon saw in boc-next.
+// Mirrors a bug-class string size a real chat app hit.
 big_message :: proc() -> string {
 	chunk := "Lorem ipsum dolor sit amet, consectetur adipiscing elit, " +
 		"sed do eiusmod tempor incididunt ut labore et dolore magna " +
@@ -107,7 +107,7 @@ init :: proc() -> State {
 	// having three discrete gaps between the labels.
 	append(&out.messages, "tab demo:\tcol1\tcol2\tcol3")
 	// One ~30 KB message exercises the wrap_text cost path during the
-	// bench, mirroring the boc-next repro. Toggle off if you just want
+	// bench, mirroring a real chat-app repro. Toggle off if you just want
 	// to test the chat_input controls without the perf trace.
 	when #config(BENCH_BIG_MSG, false) {
 		append(&out.messages, big_message())
@@ -166,7 +166,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	// the width=0 stretch path. The parent column below pins a width
 	// and stretches children, so chat_input gets sized via layout and
 	// wraps via the `_text_input_impl` last_rect fallback. Same shape
-	// as boc-next's onboarding text fields.
+	// as a typical onboarding text field.
 	composer := skald.chat_input(ctx,
 		s.draft,
 		proc(v: string) -> Msg { return Draft_Changed(v) },
@@ -176,7 +176,7 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		disabled    = s.disabled,
 	)
 
-	// Same shape as boc-next's wizard combobox: no `width`, lives
+	// Same shape as a typical wizard combobox: no `width`, lives
 	// inside a stretching parent. Closed and open states should both
 	// fill the parent width; the trigger shouldn't shrink the moment
 	// the popover appears.
