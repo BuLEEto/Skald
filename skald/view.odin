@@ -9724,6 +9724,18 @@ right_click_zone :: proc(
 // the item count; the popover auto-flips above the cursor if a below-
 // cursor placement would overflow the framebuffer (same flip rule as
 // date / time / color pickers).
+//
+// `anchor` picks what the popover hangs from: `.Cursor` (default) opens it
+// at the click point — "attached to what I clicked," right for list rows and
+// arbitrary content; `.Child` opens it under the wrapped child's bottom edge
+// regardless of where in it you clicked — the toolbar-dropdown convention for
+// a menu that hangs off a fixed UI element (a panel button, a menubar item).
+//
+// `offset` nudges the popover by that many logical px after placement (so the
+// auto-flip still applies). Use it to clear a bar or add a gap — e.g. a panel
+// applet passing `offset = {0, 14}` so its menu sits below the panel.
+Context_Menu_Anchor :: enum { Cursor, Child }
+
 context_menu :: proc(
 	ctx:       ^Ctx($Msg),
 	child:     View,
@@ -9731,6 +9743,8 @@ context_menu :: proc(
 	on_select: proc(index: int) -> Msg,
 	id:        Widget_ID = 0,
 	width:     f32       = 200,
+	anchor:    Context_Menu_Anchor = .Cursor,
+	offset:    [2]f32    = {0, 0},
 ) -> View {
 	th := ctx.theme
 	id := widget_resolve_id(ctx, id)
@@ -9759,9 +9773,12 @@ context_menu :: proc(
 	row_h := th.font.size_md + 2*th.spacing.sm
 	popover_h := 2 * 4 + 2 * 1 + f32(len(items)) * row_h + f32(max(0, len(items)-1)) * 2
 	popover_w := width
+	// `.Cursor` anchors a zero-size rect at the click point; `.Child` anchors
+	// the child's last-frame rect so the menu hangs under its bottom edge.
 	anchor_rect := Rect{st.anchor_pos.x, st.anchor_pos.y, 0, 0}
+	if anchor == .Child { anchor_rect = st.last_rect }
 	popover_rect := overlay_placement_rect(ctx, anchor_rect,
-		{popover_w, popover_h}, .Below, {0, 0})
+		{popover_w, popover_h}, .Below, offset)
 
 	if st.open {
 		// Outside-click (Left) dismiss — fires before the tree renders so
@@ -9853,7 +9870,7 @@ context_menu :: proc(
 	// against it, so open and closed lay the child out identically.
 	return col(
 		flex(1, zoned),
-		overlay(anchor_rect, card, .Below, {0, 0}, anim_op),
+		overlay(anchor_rect, card, .Below, offset, anim_op),
 		spacing     = 0,
 		cross_align = .Stretch,
 	)
