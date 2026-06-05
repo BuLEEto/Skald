@@ -49,6 +49,15 @@ text_styles_rune_snap :: proc(t: ^testing.T) {
 }
 
 @(test)
+has_sized_style_gate :: proc(t: ^testing.T) {
+	testing.expect(t, !has_sized_style(nil), "nil → uniform path")
+	testing.expect(t, !has_sized_style([]Text_Style{{start = 0, end = 3, weight = .Bold}}),
+		"weight/italic alone keep the uniform path")
+	testing.expect(t, has_sized_style([]Text_Style{{start = 0, end = 3, size = 20}}),
+		"a per-run size triggers the variable-height path")
+}
+
+@(test)
 text_style_font_resolution :: proc(t: ^testing.T) {
 	r: Renderer
 	r.text.default_font     = 1

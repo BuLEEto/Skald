@@ -291,14 +291,17 @@ Text_Mark :: struct {
 //   font   — explicit face (e.g. a mono handle from `font_load`); 0 derives
 //            the face from (weight, italic) over the field's base font — the
 //            same rule rich_text spans use.
+//   size   — font size in logical px; 0 inherits the field's size. A larger
+//            run makes its visual line taller (the line's height is the max
+//            of its runs); runs on a line share the line's baseline.
 //
-// Unlike `color`, weight/italic/font change glyph advances, so the caret,
-// selection and click hit-testing are measured per run to stay exact.
-// Overlapping ranges resolve first-match-wins. Drives syntax highlighting.
-// Skipped for password fields, whose bullets don't map to real byte offsets.
-// Note: with `wrap = true`, line-break points are still computed in the base
-// font — the rare wrap+styled combo can break a hair early/late, though
-// caret/selection positions stay correct.
+// Unlike `color`, weight/italic/font/size change glyph advances (and size
+// changes line height), so the caret, selection and click hit-testing are
+// measured per run to stay exact. Overlapping ranges resolve first-match-wins.
+// Drives syntax highlighting and headings. Skipped for password fields, whose
+// bullets don't map to real byte offsets. Note: with `wrap = true`, line-break
+// points are still computed in the base font — the rare wrap+styled combo can
+// break a hair early/late, though caret/selection positions stay correct.
 Text_Style :: struct {
 	start:  int,
 	end:    int,
@@ -306,6 +309,7 @@ Text_Style :: struct {
 	weight: Text_Weight,
 	italic: bool,
 	font:   Font,
+	size:   f32,
 }
 
 // normalize_text_styles copies caller styles into `allocator`, clamping each
@@ -330,7 +334,7 @@ normalize_text_styles :: proc(
 		if col.a == 0 { col = fg }
 		append(&cp, Text_Style{
 			start = lo, end = hi, color = col,
-			weight = s.weight, italic = s.italic, font = s.font,
+			weight = s.weight, italic = s.italic, font = s.font, size = s.size,
 		})
 	}
 	if len(cp) == 0 { delete(cp); return nil } // free the empty backing
@@ -518,10 +522,17 @@ View_Text_Input :: struct {
 	marks:             []Text_Mark,
 	// styles tint caller-supplied byte ranges of `text` (syntax
 	// highlighting). Copied into the frame arena by the builder with {}
-	// colours resolved and offsets rune-aligned. Colour doesn't affect
-	// advances, so caret / selection / wrap geometry matches an unstyled
-	// field. Nil = no styling. Skipped for password fields.
+	// colours resolved and offsets rune-aligned. Nil = no styling. Skipped
+	// for password fields.
 	styles:            []Text_Style,
+	// line_tops / line_ascents drive the variable-height path used only when
+	// a style sets a per-run `size` (headings). line_tops has one entry per
+	// visual line plus a terminator (cumulative y incl. line_spacing, so
+	// content_h = line_tops[len-1]); line_ascents is the per-line baseline
+	// offset. Both nil for the common uniform-height case — the renderer then
+	// falls back to the single `stride`, byte-identical to before.
+	line_tops:         []f32,
+	line_ascents:      []f32,
 	// invalid flips the field into error state: a persistent border in
 	// `color_border` (which the builder has already set to the danger
 	// accent) regardless of focus. The builder may also pair this with
@@ -3867,6 +3878,7 @@ resolve_click_idx :: proc(
 	multiline: bool,
 	font: Font,
 	styles: []Text_Style = nil,
+	line_spacing: f32 = 0,
 ) -> int {
 	if renderer == nil { return 0 }
 	if !multiline {
@@ -3876,10 +3888,24 @@ resolve_click_idx :: proc(
 		return byte_index_at_x(renderer, text, fs, font, rel_x)
 	}
 	ry := mouse_y - content_y0
-	line := int(ry / stride)
-	if line < 0 { line = 0 }
 	last := len(vls) - 1
 	if last < 0 { return 0 }
+	line := 0
+	if has_sized_style(styles) {
+		// Variable line heights: walk per-line strides until ry lands.
+		if ry > 0 {
+			line = last
+			acc: f32 = 0
+			for vl, k in vls {
+				h, _ := styled_line_metrics(renderer, text, vl.start, vl.end, fs, font, styles)
+				if ry < acc + h + line_spacing { line = k; break }
+				acc += h + line_spacing
+			}
+		}
+	} else {
+		line = int(ry / stride)
+	}
+	if line < 0 { line = 0 }
 	if line > last { line = last }
 	vl := vls[line]
 	if len(styles) > 0 {
@@ -4217,7 +4243,7 @@ _text_input_impl :: proc(
 			focused = true
 			idx := resolve_click_idx(ctx.renderer, disp_text, visual_lines,
 				fs, click_rel_x,
-				ctx.input.mouse_pos.y, content_y0, stride, multiline, font, norm_styles)
+				ctx.input.mouse_pos.y, content_y0, stride, multiline, font, norm_styles, line_spacing)
 			if password { idx = mask_byte_to_real_byte(new_value, idx) }
 			clicks := ctx.input.mouse_click_count[.Left]
 			// Password mode: double-click would collapse to select-all
@@ -4270,7 +4296,7 @@ _text_input_impl :: proc(
 	if st.mouse_selecting && !sb_captured && ctx.input.mouse_buttons[.Left] && ctx.renderer != nil {
 		cursor = resolve_click_idx(ctx.renderer, disp_text, visual_lines,
 			fs, click_rel_x,
-			ctx.input.mouse_pos.y, content_y0, stride, multiline, font, norm_styles)
+			ctx.input.mouse_pos.y, content_y0, stride, multiline, font, norm_styles, line_spacing)
 		if password { cursor = mask_byte_to_real_byte(new_value, cursor) }
 	}
 	if ctx.input.mouse_released[.Left] {
@@ -4585,7 +4611,20 @@ _text_input_impl :: proc(
 	effective_h := h
 	if height <= 0 && st.last_rect.h > 0 { effective_h = st.last_rect.h }
 	viewport_h := effective_h - 2 * pad.y
-	content_h  := f32(len(visual_lines)) * stride
+
+	// Variable line heights — only when a style set a per-run size (headings).
+	// Compute the per-line cumulative tops/ascents once against the final
+	// (post-edit) visual lines; content height, caret-follow and the renderer
+	// all read from them. Both nil otherwise → uniform stride everywhere,
+	// byte-identical to before.
+	line_tops, line_ascents: []f32
+	if multiline && has_sized_style(norm_styles) {
+		line_tops, line_ascents = line_layout(
+			ctx.renderer, new_value, visual_lines, fs, font, norm_styles, line_spacing)
+	}
+
+	content_h := f32(len(visual_lines)) * stride
+	if len(line_tops) > 0 { content_h = line_tops[len(line_tops) - 1] }
 	if multiline {
 		max_off := content_h - viewport_h
 		if max_off < 0 { max_off = 0 }
@@ -4604,8 +4643,14 @@ _text_input_impl :: proc(
 		// the user's wheel scroll.
 		if cursor != cursor_before || new_value != value_before {
 			cur_line := visual_line_of_byte(visual_lines, cursor)
-			caret_top := f32(cur_line) * stride
-			caret_bot := caret_top + line_h
+			caret_top: f32; caret_bot: f32
+			if len(line_tops) > 0 {
+				caret_top = line_tops[cur_line]
+				caret_bot = line_tops[cur_line + 1] - line_spacing
+			} else {
+				caret_top = f32(cur_line) * stride
+				caret_bot = caret_top + line_h
+			}
 			if caret_top < st.scroll_y            { st.scroll_y = caret_top }
 			if caret_bot > st.scroll_y + viewport_h {
 				st.scroll_y = caret_bot - viewport_h
@@ -4718,6 +4763,8 @@ _text_input_impl :: proc(
 		visual_lines      = out_vls,
 		marks             = out_marks,
 		styles            = out_styles,
+		line_tops         = line_tops,
+		line_ascents      = line_ascents,
 		invalid           = invalid,
 		sb_hover          = sb_hover,
 		sb_dragging       = st.pressed,

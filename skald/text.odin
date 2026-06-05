@@ -673,22 +673,27 @@ text_style_font :: proc(r: ^Renderer, base_font: Font, s: Text_Style) -> Font {
 	return r.text.default_font
 }
 
-// style_font_at returns the face for byte `p`: the first style covering it
-// (matching draw_input_text / styled_width segmentation), else `base_font`.
+// styled_run_at returns the face and size for byte `p`: the first style
+// covering it (matching draw_input_text / styled_width segmentation), else
+// the field's base face and size.
 @(private)
-style_font_at :: proc(r: ^Renderer, base_font: Font, styles: []Text_Style, p: int) -> Font {
+styled_run_at :: proc(
+	r: ^Renderer, base_font: Font, base_size: f32, styles: []Text_Style, p: int,
+) -> (font: Font, size: f32) {
 	for s in styles {
-		if s.start <= p && p < s.end { return text_style_font(r, base_font, s) }
+		if s.start <= p && p < s.end {
+			return text_style_font(r, base_font, s), s.size if s.size > 0 else base_size
+		}
 	}
-	return base_font
+	return base_font, base_size
 }
 
 // styled_width returns the rendered width of buf[lo:hi), measuring each style
-// run with its own face so bold / italic / mono advances are exact. With no
-// styles it collapses to a single measure_text — byte-identical to the
-// unstyled path. The chokepoint every text_input measurement routes through,
-// so caret / selection / hit-test agree with what draw_input_text paints
-// (both use the same first-covering-style run segmentation).
+// run with its own face AND size so bold / italic / mono / heading advances
+// are exact. With no styles it collapses to a single measure_text —
+// byte-identical to the unstyled path. The chokepoint every text_input
+// measurement routes through, so caret / selection / hit-test agree with what
+// draw_input_text paints (both use the same first-covering-style segmentation).
 styled_width :: proc(
 	r: ^Renderer, buf: string, lo, hi: int, size: f32, base_font: Font, styles: []Text_Style,
 ) -> f32 {
@@ -700,17 +705,69 @@ styled_width :: proc(
 	total: f32 = 0
 	p := lo
 	for p < hi {
-		fnt := style_font_at(r, base_font, styles, p)
+		fnt, sz := styled_run_at(r, base_font, size, styles, p)
 		nb := hi
 		for s in styles {
 			if s.start > p && s.start < nb { nb = s.start }
 			if s.end   > p && s.end   < nb { nb = s.end   }
 		}
-		w, _ := measure_text(r, buf[p:nb], size, fnt)
+		w, _ := measure_text(r, buf[p:nb], sz, fnt)
 		total += w
 		p = nb
 	}
 	return total
+}
+
+// styled_line_metrics returns the line-box height and ascent (baseline from
+// the line top) for buf[lo:hi): the max over its style runs, so a larger-size
+// run makes the whole line taller and every run shares the tallest baseline.
+// Only `size` changes these (the bundled weights/italics share metrics), so
+// just the sized styles intersecting the line are considered. With no sized
+// styles it returns the base font's metrics — identical to an unstyled line.
+styled_line_metrics :: proc(
+	r: ^Renderer, buf: string, lo, hi: int, base_size: f32, base_font: Font, styles: []Text_Style,
+) -> (height, ascent: f32) {
+	_, height = measure_text(r, "", base_size, base_font)
+	ascent    = text_ascent(r, base_size, base_font)
+	for s in styles {
+		if s.size <= 0      { continue }
+		if s.end <= lo || s.start >= hi { continue } // no overlap with this line
+		fnt := text_style_font(r, base_font, s)
+		_, lh := measure_text(r, "", s.size, fnt)
+		asc   := text_ascent(r, s.size, fnt)
+		if lh  > height { height = lh  }
+		if asc > ascent { ascent = asc }
+	}
+	return
+}
+
+// has_sized_style reports whether any style sets a per-run size — the trigger
+// for the variable line-height path. Weight / italic / colour alone keep the
+// cheaper uniform-stride layout.
+has_sized_style :: proc(styles: []Text_Style) -> bool {
+	for s in styles { if s.size > 0 { return true } }
+	return false
+}
+
+// line_layout fills cumulative line tops (len+1 entries, each incl. trailing
+// line_spacing so content height = tops[len]) and per-line baseline ascents
+// for variable-height styled text. Both live in the frame arena.
+line_layout :: proc(
+	r: ^Renderer, text: string, vls: []Visual_Line,
+	base_size: f32, base_font: Font, styles: []Text_Style, line_spacing: f32,
+) -> (tops, ascents: []f32) {
+	n := len(vls)
+	tops    = make([]f32, n + 1, context.temp_allocator)
+	ascents = make([]f32, n,     context.temp_allocator)
+	acc: f32 = 0
+	for vl, k in vls {
+		h, a := styled_line_metrics(r, text, vl.start, vl.end, base_size, base_font, styles)
+		tops[k]    = acc
+		ascents[k] = a
+		acc += h + line_spacing
+	}
+	tops[n] = acc
+	return
 }
 
 // styled_byte_index_at_x is byte_index_at_x for a styled run: it returns the

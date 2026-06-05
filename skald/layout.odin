@@ -386,14 +386,17 @@ draw_input_text :: proc(
 	pen := x
 	p   := lo
 	for p < hi {
-		// Colour + face at p from the first covering style ({} colour and
-		// Regular/no-italic/no-font already resolved/handled by the builder).
+		// Colour + face + size at p from the first covering style ({} colour
+		// and Regular/no-italic/no-font/no-size handled by the builder). All
+		// runs draw at the shared line `baseline`, so mixed sizes align.
 		col := base
 		fnt := font
+		sz  := fs
 		for s in styles {
 			if s.start <= p && p < s.end {
 				col = s.color
 				fnt = text_style_font(r, font, s)
+				if s.size > 0 { sz = s.size }
 				break
 			}
 		}
@@ -404,8 +407,8 @@ draw_input_text :: proc(
 			if s.end   > p && s.end   < nb { nb = s.end   }
 		}
 		seg := buf[p:nb]
-		draw_text(r, seg, pen, baseline, col, fs, fnt)
-		w, _ := measure_text(r, seg, fs, fnt)
+		draw_text(r, seg, pen, baseline, col, sz, fnt)
+		w, _ := measure_text(r, seg, sz, fnt)
 		pen += w
 		p = nb
 	}
@@ -913,7 +916,18 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				}
 			} else {
 				for vl, vli in vv.visual_lines {
-					line_y := base_y + f32(vli) * stride
+					// Variable-height path (a sized style) reads per-line tops/
+					// ascents; otherwise every line is one uniform `stride`.
+					line_y:   f32
+					box_h    := lh
+					line_asc := ascent
+					if vv.line_tops != nil {
+						line_y   = base_y + vv.line_tops[vli]
+						box_h    = vv.line_tops[vli + 1] - vv.line_tops[vli] - vv.line_spacing
+						line_asc = vv.line_ascents[vli]
+					} else {
+						line_y = base_y + f32(vli) * stride
+					}
 					i := vl.start
 					j := vl.end
 
@@ -934,7 +948,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 						}
 						if x_hi > x_lo {
 							draw_rect(r,
-								{ix + x_lo, line_y, x_hi - x_lo, lh},
+								{ix + x_lo, line_y, x_hi - x_lo, box_h},
 								vv.color_selection, 0)
 						}
 					}
@@ -942,7 +956,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 					// Marks on this visual line, clipped to [i, j].
 					if len(vv.marks) > 0 {
 						draw_input_marks(r, vv.marks, vv.text, i, j,
-							ix, line_y, lh, ascent, vv.font_size, vv.font)
+							ix, line_y, box_h, line_asc, vv.font_size, vv.font)
 					}
 
 					// Glyphs for this visual line. The slice excludes any
@@ -950,10 +964,10 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 					// is exactly what should render.
 					if j > i {
 						if len(vv.styles) > 0 {
-							draw_input_text(r, vv.text, i, j, ix, line_y + ascent,
+							draw_input_text(r, vv.text, i, j, ix, line_y + line_asc,
 								display_col, vv.styles, vv.font_size, vv.font)
 						} else {
-							draw_text(r, vv.text[i:j], ix, line_y + ascent,
+							draw_text(r, vv.text[i:j], ix, line_y + line_asc,
 								display_col, vv.font_size, vv.font)
 						}
 					}
@@ -975,7 +989,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 						if draw_here {
 							cw := styled_width(r, vv.text, i, vv.cursor_pos,
 								vv.font_size, vv.font, vv.styles)
-							draw_rect(r, {ix + cw, line_y, 1.5, lh}, vv.color_caret, 0)
+							draw_rect(r, {ix + cw, line_y, 1.5, box_h}, vv.color_caret, 0)
 						}
 					}
 				}
