@@ -2043,6 +2043,16 @@ wrap_row_render :: proc(r: ^Renderer, w: View_Wrap_Row, origin: [2]f32, size: [2
 
 @(private)
 stack_render :: proc(r: ^Renderer, s: View_Stack, origin: [2]f32, size: [2]f32) {
+	// Soft drop shadow behind the box. Drawn first so the bg fill sits on top,
+	// and `draw_shadow` extends the quad outside the rect — no clip is active
+	// here, so it isn't cut by the stack's own bounds. Same pass the overlay
+	// pipeline uses. Default tint matches the popover shadow.
+	if s.shadow > 0 {
+		col := s.shadow_color
+		if col[3] == 0 { col = Color{0, 0, 0, 0.28} }
+		draw_shadow(r, {origin.x, origin.y, size.x, size.y}, s.radius, s.shadow, col, {0, s.shadow_y})
+	}
+
 	// Background (if any) renders at the stack's full assigned size, so it
 	// covers the padded gutter as well as the content area.
 	if s.bg[3] > 0 {

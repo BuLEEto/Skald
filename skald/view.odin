@@ -390,6 +390,14 @@ View_Stack :: struct {
 	cross_align: Cross_Align,
 	bg:          Color,
 	radius:      f32,
+	// shadow is a soft drop-shadow blur radius behind the stack's rounded
+	// rect (0 = none). shadow_color {} defaults to a soft translucent black;
+	// shadow_y offsets it vertically. Drawn before the bg fill and extends
+	// outside the rect, so it isn't clipped by the stack's own bounds —
+	// reuses the same `draw_shadow` pass the overlay pipeline uses.
+	shadow:       f32,
+	shadow_color: Color,
+	shadow_y:     f32,
 	children:    []View,
 }
 
@@ -1944,20 +1952,28 @@ col :: proc(
 	cross_align: Cross_Align = .Start,
 	bg:          Color       = {},
 	radius:      f32         = 0,
+	// soft drop shadow behind the box; shadow = blur radius (0 = none),
+	// shadow_color {} = soft translucent black, shadow_y = vertical offset.
+	shadow:       f32   = 0,
+	shadow_color: Color = {},
+	shadow_y:     f32   = 0,
 ) -> View {
 	slice := make([]View, len(children), context.temp_allocator)
 	copy(slice, children)
 	return View_Stack{
-		direction   = .Column,
-		spacing     = spacing,
-		padding     = padding,
-		width       = width,
-		height      = height,
-		main_align  = main_align,
-		cross_align = cross_align,
-		bg          = bg,
-		radius      = radius,
-		children    = slice,
+		direction    = .Column,
+		spacing      = spacing,
+		padding      = padding,
+		width        = width,
+		height       = height,
+		main_align   = main_align,
+		cross_align  = cross_align,
+		bg           = bg,
+		radius       = radius,
+		shadow       = shadow,
+		shadow_color = shadow_color,
+		shadow_y     = shadow_y,
+		children     = slice,
 	}
 }
 
@@ -1973,20 +1989,26 @@ row :: proc(
 	cross_align: Cross_Align = .Start,
 	bg:          Color       = {},
 	radius:      f32         = 0,
+	shadow:       f32   = 0,
+	shadow_color: Color = {},
+	shadow_y:     f32   = 0,
 ) -> View {
 	slice := make([]View, len(children), context.temp_allocator)
 	copy(slice, children)
 	return View_Stack{
-		direction   = .Row,
-		spacing     = spacing,
-		padding     = padding,
-		width       = width,
-		height      = height,
-		main_align  = main_align,
-		cross_align = cross_align,
-		bg          = bg,
-		radius      = radius,
-		children    = slice,
+		direction    = .Row,
+		spacing      = spacing,
+		padding      = padding,
+		width        = width,
+		height       = height,
+		main_align   = main_align,
+		cross_align  = cross_align,
+		bg           = bg,
+		radius       = radius,
+		shadow       = shadow,
+		shadow_color = shadow_color,
+		shadow_y     = shadow_y,
+		children     = slice,
 	}
 }
 
