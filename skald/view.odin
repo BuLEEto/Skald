@@ -279,6 +279,50 @@ Text_Mark :: struct {
 	color: Color,
 }
 
+// Text_Style colours value[start:end) in a `text_input` — the editable
+// counterpart to rich_text's Text_Span, tagged by byte range rather than
+// carrying its own string (the text lives in the edit buffer). Supplied
+// fresh each frame; offsets are clamped to the buffer and snapped to rune
+// boundaries by the builder, and a zero `color` ({}) inherits the field's
+// foreground.
+//
+// Colour never changes glyph advances, so styling leaves the caret,
+// selection, wrapping and hit-testing identical to an unstyled field;
+// overlapping ranges are allowed (first match wins). Drives syntax
+// highlighting and any type-and-see-it-coloured editor. Skipped for
+// password fields, whose bullets don't map to real byte offsets.
+Text_Style :: struct {
+	start: int,
+	end:   int,
+	color: Color,
+}
+
+// normalize_text_styles copies caller styles into `allocator`, clamping each
+// range to `text`, snapping offsets to rune boundaries (a mid-rune cut would
+// slice a partial code point), dropping empty ranges, and resolving {}
+// colours to `fg`. Returns nil when nothing survives. Split out of the
+// text_input builder so the byte-fiddling is unit-testable without a renderer.
+@(private)
+normalize_text_styles :: proc(
+	styles: []Text_Style, text: string, fg: Color,
+	allocator := context.temp_allocator,
+) -> []Text_Style {
+	if len(styles) == 0 { return nil }
+	cp := make([dynamic]Text_Style, 0, len(styles), allocator)
+	for s in styles {
+		lo := clamp(s.start, 0, len(text))
+		hi := clamp(s.end,   0, len(text))
+		for lo > 0 && lo < len(text) && (text[lo] & 0xC0) == 0x80 { lo -= 1 }
+		for hi > 0 && hi < len(text) && (text[hi] & 0xC0) == 0x80 { hi -= 1 }
+		if hi <= lo { continue }
+		col := s.color
+		if col.a == 0 { col = fg }
+		append(&cp, Text_Style{start = lo, end = hi, color = col})
+	}
+	if len(cp) == 0 { delete(cp); return nil } // free the empty backing
+	return cp[:]
+}
+
 // View_Rich_Text carries a list of spans plus the paragraph-level
 // defaults that fill in their inheritances, and the pre-computed
 // visual lines `wrap_rich_text` produced during the view build.
@@ -458,6 +502,12 @@ View_Text_Input :: struct {
 	// search highlights, …). Copied into the frame arena by the builder
 	// with colours already resolved to concrete values. Nil = no marks.
 	marks:             []Text_Mark,
+	// styles tint caller-supplied byte ranges of `text` (syntax
+	// highlighting). Copied into the frame arena by the builder with {}
+	// colours resolved and offsets rune-aligned. Colour doesn't affect
+	// advances, so caret / selection / wrap geometry matches an unstyled
+	// field. Nil = no styling. Skipped for password fields.
+	styles:            []Text_Style,
 	// invalid flips the field into error state: a persistent border in
 	// `color_border` (which the builder has already set to the danger
 	// accent) regardless of focus. The builder may also pair this with
@@ -3856,6 +3906,9 @@ _text_input_impl :: proc(
 	// squiggles, search highlights). nil = no decorations, byte-identical
 	// to a field without the param. See Text_Mark.
 	marks:        []Text_Mark = nil,
+	// styles tint byte ranges of `value` (syntax highlighting). nil = no
+	// styling, byte-identical to a field without the param. See Text_Style.
+	styles:       []Text_Style = nil,
 	// line_spacing adds extra leading between visual lines (multiline
 	// only; ignored single-line). 0 = font-default spacing. Feeds the
 	// per-line stride consistently — render, content height, scrollbar,
@@ -4605,6 +4658,11 @@ _text_input_impl :: proc(
 		out_marks = cp
 	}
 
+	// Normalise styles into the frame arena. Skipped for password fields —
+	// the bullet mask doesn't map to real byte offsets.
+	out_styles: []Text_Style = nil
+	if !password { out_styles = normalize_text_styles(styles, out_text, fg_c) }
+
 	field := View_Text_Input{
 		id                = id,
 		text              = out_text,
@@ -4633,6 +4691,7 @@ _text_input_impl :: proc(
 		line_spacing      = line_spacing,
 		visual_lines      = out_vls,
 		marks             = out_marks,
+		styles            = out_styles,
 		invalid           = invalid,
 		sb_hover          = sb_hover,
 		sb_dragging       = st.pressed,
@@ -4713,6 +4772,7 @@ text_input_simple :: proc(
 	error:        string = "",
 	max_chars:    int    = 0,
 	marks:        []Text_Mark = nil,
+	styles:       []Text_Style = nil,
 	line_spacing: f32 = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
@@ -4737,6 +4797,7 @@ text_input_simple :: proc(
 		error         = error,
 		max_chars     = max_chars,
 		marks         = marks,
+		styles        = styles,
 		line_spacing  = line_spacing,
 	)
 	if changed { send(ctx, on_change(new_value)) }
@@ -4774,6 +4835,7 @@ text_input_payload :: proc(
 	error:        string = "",
 	max_chars:    int    = 0,
 	marks:        []Text_Mark = nil,
+	styles:       []Text_Style = nil,
 	line_spacing: f32 = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
@@ -4798,6 +4860,7 @@ text_input_payload :: proc(
 		error         = error,
 		max_chars     = max_chars,
 		marks         = marks,
+		styles        = styles,
 		line_spacing  = line_spacing,
 	)
 	if changed { send(ctx, on_change(payload, new_value)) }

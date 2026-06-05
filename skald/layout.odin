@@ -372,6 +372,39 @@ draw_input_marks :: proc(
 	}
 }
 
+// draw_input_text draws buf[lo:hi) at baseline (x, y), tinting byte ranges
+// per `styles` (absolute offsets into buf, rune-aligned by the builder).
+// Bytes no style covers use `base`. Colour leaves advances unchanged, so each
+// run begins at the measured width of the text before it; overlapping styles
+// resolve first-match-wins. Cost is O(runs × styles) per call — fine for a
+// field-sized style list; a whole-file highlighter would pre-slice styles to
+// the visible window before this (a later-stage concern).
+draw_input_text :: proc(
+	r: ^Renderer, buf: string, lo, hi: int,
+	x, baseline: f32, base: Color, styles: []Text_Style, fs: f32, font: Font,
+) {
+	pen := x
+	p   := lo
+	for p < hi {
+		// Colour at p: first covering style wins ({} resolved by builder).
+		col := base
+		for s in styles {
+			if s.start <= p && p < s.end { col = s.color; break }
+		}
+		// Cut the run at the next style edge after p (else the line end).
+		nb := hi
+		for s in styles {
+			if s.start > p && s.start < nb { nb = s.start }
+			if s.end   > p && s.end   < nb { nb = s.end   }
+		}
+		seg := buf[p:nb]
+		draw_text(r, seg, pen, baseline, col, fs, font)
+		w, _ := measure_text(r, seg, fs, font)
+		pen += w
+		p = nb
+	}
+}
+
 // elide_to_width truncates `str` to fit `max_w` on one line and appends
 // an ellipsis. Returns `str` unchanged when it already fits. Uses the
 // cumulative per-byte advance array (one shaping pass, O(n)) so it's the
@@ -784,7 +817,14 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 			}
 
 			if len(display) > 0 {
-				draw_text(r, display, ix, ty + ascent, display_col, vv.font_size, vv.font)
+				// Styled runs only apply to the real buffer; when it's empty
+				// `display` is the placeholder, which stays a single colour.
+				if len(vv.styles) > 0 && len(vv.text) > 0 {
+					draw_input_text(r, vv.text, 0, len(vv.text), ix, ty + ascent,
+						display_col, vv.styles, vv.font_size, vv.font)
+				} else {
+					draw_text(r, display, ix, ty + ascent, display_col, vv.font_size, vv.font)
+				}
 			}
 
 			// Caret: measure the prefix up to cursor_pos to locate its x.
@@ -905,8 +945,13 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 					// space consumed by a wrap break, so `text[vl.start:vl.end]`
 					// is exactly what should render.
 					if j > i {
-						draw_text(r, vv.text[i:j], ix, line_y + ascent,
-							display_col, vv.font_size, vv.font)
+						if len(vv.styles) > 0 {
+							draw_input_text(r, vv.text, i, j, ix, line_y + ascent,
+								display_col, vv.styles, vv.font_size, vv.font)
+						} else {
+							draw_text(r, vv.text[i:j], ix, line_y + ascent,
+								display_col, vv.font_size, vv.font)
+						}
 					}
 
 					// Caret on this visual line.
