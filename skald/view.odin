@@ -279,22 +279,33 @@ Text_Mark :: struct {
 	color: Color,
 }
 
-// Text_Style colours value[start:end) in a `text_input` — the editable
+// Text_Style styles value[start:end) in a `text_input` — the editable
 // counterpart to rich_text's Text_Span, tagged by byte range rather than
 // carrying its own string (the text lives in the edit buffer). Supplied
 // fresh each frame; offsets are clamped to the buffer and snapped to rune
-// boundaries by the builder, and a zero `color` ({}) inherits the field's
-// foreground.
+// boundaries by the builder.
 //
-// Colour never changes glyph advances, so styling leaves the caret,
-// selection, wrapping and hit-testing identical to an unstyled field;
-// overlapping ranges are allowed (first match wins). Drives syntax
-// highlighting and any type-and-see-it-coloured editor. Skipped for
-// password fields, whose bullets don't map to real byte offsets.
+//   color  — glyph colour; {} inherits the field's foreground.
+//   weight — .Regular / .Bold.
+//   italic — italic face.
+//   font   — explicit face (e.g. a mono handle from `font_load`); 0 derives
+//            the face from (weight, italic) over the field's base font — the
+//            same rule rich_text spans use.
+//
+// Unlike `color`, weight/italic/font change glyph advances, so the caret,
+// selection and click hit-testing are measured per run to stay exact.
+// Overlapping ranges resolve first-match-wins. Drives syntax highlighting.
+// Skipped for password fields, whose bullets don't map to real byte offsets.
+// Note: with `wrap = true`, line-break points are still computed in the base
+// font — the rare wrap+styled combo can break a hair early/late, though
+// caret/selection positions stay correct.
 Text_Style :: struct {
-	start: int,
-	end:   int,
-	color: Color,
+	start:  int,
+	end:    int,
+	color:  Color,
+	weight: Text_Weight,
+	italic: bool,
+	font:   Font,
 }
 
 // normalize_text_styles copies caller styles into `allocator`, clamping each
@@ -317,7 +328,10 @@ normalize_text_styles :: proc(
 		if hi <= lo { continue }
 		col := s.color
 		if col.a == 0 { col = fg }
-		append(&cp, Text_Style{start = lo, end = hi, color = col})
+		append(&cp, Text_Style{
+			start = lo, end = hi, color = col,
+			weight = s.weight, italic = s.italic, font = s.font,
+		})
 	}
 	if len(cp) == 0 { delete(cp); return nil } // free the empty backing
 	return cp[:]
@@ -3852,9 +3866,13 @@ resolve_click_idx :: proc(
 	mouse_y, content_y0, stride: f32,
 	multiline: bool,
 	font: Font,
+	styles: []Text_Style = nil,
 ) -> int {
 	if renderer == nil { return 0 }
 	if !multiline {
+		if len(styles) > 0 {
+			return styled_byte_index_at_x(renderer, text, 0, len(text), fs, font, styles, rel_x)
+		}
 		return byte_index_at_x(renderer, text, fs, font, rel_x)
 	}
 	ry := mouse_y - content_y0
@@ -3864,6 +3882,10 @@ resolve_click_idx :: proc(
 	if last < 0 { return 0 }
 	if line > last { line = last }
 	vl := vls[line]
+	if len(styles) > 0 {
+		// Absolute offsets keep each byte's owning run identifiable.
+		return styled_byte_index_at_x(renderer, text, vl.start, vl.end, fs, font, styles, rel_x)
+	}
 	col_in_line := byte_index_at_x(renderer, text[vl.start:vl.end], fs, font, rel_x)
 	return vl.start + col_in_line
 }
@@ -3935,6 +3957,13 @@ _text_input_impl :: proc(
 	// Read-only fields read as "informational, not interactive" — mute
 	// the glyph color so the eye skips over them in a dense form.
 	if disabled { fg_c = th.color.fg_muted }
+
+	// Normalise styles once, up front, against the pre-edit buffer: this
+	// frame's click hit-tests that buffer, and the render reuses the same
+	// slice (it only ever slices within line bounds, so a one-frame-stale
+	// offset after an in-flight edit is harmless — same model as `marks`).
+	// Skipped for password — the bullet mask has no real byte offsets.
+	norm_styles := normalize_text_styles(styles, value, fg_c) if !password else nil
 
 	// Error state paints the border in the danger accent and makes it
 	// persistent (see View_Text_Input.invalid for the renderer side). The
@@ -4188,7 +4217,7 @@ _text_input_impl :: proc(
 			focused = true
 			idx := resolve_click_idx(ctx.renderer, disp_text, visual_lines,
 				fs, click_rel_x,
-				ctx.input.mouse_pos.y, content_y0, stride, multiline, font)
+				ctx.input.mouse_pos.y, content_y0, stride, multiline, font, norm_styles)
 			if password { idx = mask_byte_to_real_byte(new_value, idx) }
 			clicks := ctx.input.mouse_click_count[.Left]
 			// Password mode: double-click would collapse to select-all
@@ -4241,7 +4270,7 @@ _text_input_impl :: proc(
 	if st.mouse_selecting && !sb_captured && ctx.input.mouse_buttons[.Left] && ctx.renderer != nil {
 		cursor = resolve_click_idx(ctx.renderer, disp_text, visual_lines,
 			fs, click_rel_x,
-			ctx.input.mouse_pos.y, content_y0, stride, multiline, font)
+			ctx.input.mouse_pos.y, content_y0, stride, multiline, font, norm_styles)
 		if password { cursor = mask_byte_to_real_byte(new_value, cursor) }
 	}
 	if ctx.input.mouse_released[.Left] {
@@ -4658,10 +4687,7 @@ _text_input_impl :: proc(
 		out_marks = cp
 	}
 
-	// Normalise styles into the frame arena. Skipped for password fields —
-	// the bullet mask doesn't map to real byte offsets.
-	out_styles: []Text_Style = nil
-	if !password { out_styles = normalize_text_styles(styles, out_text, fg_c) }
+	out_styles := norm_styles
 
 	field := View_Text_Input{
 		id                = id,

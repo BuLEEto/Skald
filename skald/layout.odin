@@ -386,10 +386,16 @@ draw_input_text :: proc(
 	pen := x
 	p   := lo
 	for p < hi {
-		// Colour at p: first covering style wins ({} resolved by builder).
+		// Colour + face at p from the first covering style ({} colour and
+		// Regular/no-italic/no-font already resolved/handled by the builder).
 		col := base
+		fnt := font
 		for s in styles {
-			if s.start <= p && p < s.end { col = s.color; break }
+			if s.start <= p && p < s.end {
+				col = s.color
+				fnt = text_style_font(r, font, s)
+				break
+			}
 		}
 		// Cut the run at the next style edge after p (else the line end).
 		nb := hi
@@ -398,8 +404,8 @@ draw_input_text :: proc(
 			if s.end   > p && s.end   < nb { nb = s.end   }
 		}
 		seg := buf[p:nb]
-		draw_text(r, seg, pen, baseline, col, fs, font)
-		w, _ := measure_text(r, seg, fs, font)
+		draw_text(r, seg, pen, baseline, col, fs, fnt)
+		w, _ := measure_text(r, seg, fs, fnt)
 		pen += w
 		p = nb
 	}
@@ -800,10 +806,10 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 				if lo > hi { lo, hi = hi, lo }
 				lo = clamp(lo, 0, len(vv.text))
 				hi = clamp(hi, 0, len(vv.text))
-				x_lo: f32 = 0
-				x_hi: f32 = 0
-				if lo > 0 { x_lo, _ = measure_text(r, vv.text[:lo], vv.font_size, vv.font) }
-				if hi > 0 { x_hi, _ = measure_text(r, vv.text[:hi], vv.font_size, vv.font) }
+				// styled_width is per-run font-aware; identical to measure_text
+				// when the field has no styles. Returns 0 for an empty prefix.
+				x_lo := styled_width(r, vv.text, 0, lo, vv.font_size, vv.font, vv.styles)
+				x_hi := styled_width(r, vv.text, 0, hi, vv.font_size, vv.font, vv.styles)
 				draw_rect(r,
 					{ix + x_lo, ty, x_hi - x_lo, lh},
 					vv.color_selection, 0)
@@ -833,7 +839,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 			if vv.focused {
 				cw: f32 = 0
 				if vv.cursor_pos > 0 && vv.cursor_pos <= len(vv.text) {
-					cw, _ = measure_text(r, vv.text[:vv.cursor_pos], vv.font_size, vv.font)
+					cw = styled_width(r, vv.text, 0, vv.cursor_pos, vv.font_size, vv.font, vv.styles)
 				}
 				caret_w: f32 = 1.5
 				draw_rect(r,
@@ -921,10 +927,8 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 					if has_sel && sel_hi > i && sel_lo <= j {
 						lo := max(sel_lo, i)
 						hi := min(sel_hi, j)
-						x_lo: f32 = 0
-						x_hi: f32 = 0
-						if lo > i { x_lo, _ = measure_text(r, vv.text[i:lo], vv.font_size, vv.font) }
-						if hi > i { x_hi, _ = measure_text(r, vv.text[i:hi], vv.font_size, vv.font) }
+						x_lo := styled_width(r, vv.text, i, lo, vv.font_size, vv.font, vv.styles)
+						x_hi := styled_width(r, vv.text, i, hi, vv.font_size, vv.font, vv.styles)
 						if line_ends_hard && sel_hi > j {
 							x_hi += vv.font_size * 0.4
 						}
@@ -969,11 +973,8 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 							}
 						}
 						if draw_here {
-							cw: f32 = 0
-							if vv.cursor_pos > i {
-								cw, _ = measure_text(r,
-									vv.text[i:vv.cursor_pos], vv.font_size, vv.font)
-							}
+							cw := styled_width(r, vv.text, i, vv.cursor_pos,
+								vv.font_size, vv.font, vv.styles)
 							draw_rect(r, {ix + cw, line_y, 1.5, lh}, vv.color_caret, 0)
 						}
 					}

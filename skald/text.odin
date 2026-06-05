@@ -659,6 +659,88 @@ utf8_step :: proc(s: string, i: int) -> int {
 	return 4
 }
 
+// text_style_font resolves the concrete face for a style run: an explicit
+// `font` wins; otherwise it derives from (weight, italic) over `base_font`,
+// mirroring rich_text's span-font rule. A plain colour-only style (Regular,
+// no italic, no font) resolves back to `base_font`, so its advances match an
+// unstyled run exactly.
+text_style_font :: proc(r: ^Renderer, base_font: Font, s: Text_Style) -> Font {
+	if s.font != 0 { return s.font }
+	if s.weight == .Bold && s.italic { return r.text.bold_italic_font }
+	if s.weight == .Bold             { return r.text.bold_font        }
+	if s.italic                      { return r.text.italic_font      }
+	if base_font != 0                { return base_font               }
+	return r.text.default_font
+}
+
+// style_font_at returns the face for byte `p`: the first style covering it
+// (matching draw_input_text / styled_width segmentation), else `base_font`.
+@(private)
+style_font_at :: proc(r: ^Renderer, base_font: Font, styles: []Text_Style, p: int) -> Font {
+	for s in styles {
+		if s.start <= p && p < s.end { return text_style_font(r, base_font, s) }
+	}
+	return base_font
+}
+
+// styled_width returns the rendered width of buf[lo:hi), measuring each style
+// run with its own face so bold / italic / mono advances are exact. With no
+// styles it collapses to a single measure_text — byte-identical to the
+// unstyled path. The chokepoint every text_input measurement routes through,
+// so caret / selection / hit-test agree with what draw_input_text paints
+// (both use the same first-covering-style run segmentation).
+styled_width :: proc(
+	r: ^Renderer, buf: string, lo, hi: int, size: f32, base_font: Font, styles: []Text_Style,
+) -> f32 {
+	if hi <= lo { return 0 }
+	if len(styles) == 0 {
+		w, _ := measure_text(r, buf[lo:hi], size, base_font)
+		return w
+	}
+	total: f32 = 0
+	p := lo
+	for p < hi {
+		fnt := style_font_at(r, base_font, styles, p)
+		nb := hi
+		for s in styles {
+			if s.start > p && s.start < nb { nb = s.start }
+			if s.end   > p && s.end   < nb { nb = s.end   }
+		}
+		w, _ := measure_text(r, buf[p:nb], size, fnt)
+		total += w
+		p = nb
+	}
+	return total
+}
+
+// styled_byte_index_at_x is byte_index_at_x for a styled run: it returns the
+// absolute byte index in buf[lo:hi) whose edge is nearest `x` (from the
+// slice's left edge). It measures each candidate prefix with styled_width —
+// the SAME per-run block measurement the caret uses — so the two never drift
+// (a rune-by-rune sum would lose intra-run kerning the caret keeps).
+styled_byte_index_at_x :: proc(
+	r: ^Renderer, buf: string, lo, hi: int, size: f32, base_font: Font, styles: []Text_Style, x: f32,
+) -> int {
+	if x <= 0 || hi <= lo { return lo }
+	prev_w: f32 = 0
+	prev_i := lo
+	i := lo
+	for i < hi {
+		step := utf8_step(buf, i)
+		next := i + step
+		if next > hi { next = hi }
+		w := styled_width(r, buf, lo, next, size, base_font, styles)
+		if w >= x {
+			// Nearest boundary: edge before (prev_i) or after (next).
+			return prev_i if (x - prev_w < w - x) else next
+		}
+		prev_w = w
+		prev_i = next
+		i      = next
+	}
+	return hi
+}
+
 // split_lines splits `s` on cross-platform line breaks. Handles `\r\n`
 // (Windows), bare `\r` (classic Mac), and `\n` (Unix). Returned slice
 // and its backing string-views all live in context.temp_allocator —
