@@ -220,7 +220,9 @@ Breakpoint :: enum {
 	Wide,
 }
 
-@(private)
+// Exported (not @private) so an embedded-backend caller can fill
+// `Ctx.breakpoint` when it builds the frame Ctx itself — `run` does this
+// internally for SDL windows.
 breakpoint_for_width :: proc(w: f32) -> Breakpoint {
 	switch {
 	case w < 600:  return .Compact

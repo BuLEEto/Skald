@@ -3,6 +3,7 @@ package skald
 import "core:fmt"
 import "core:strings"
 import "vendor:sdl3"
+import vk "vendor:vulkan"
 
 // X11-specific title workaround lives in platform_title_linux.odin; a
 // no-op stub with the same signature lives in platform_title_other.odin
@@ -68,7 +69,125 @@ Window :: struct {
 	focus_lost:   bool,
 
 	input:        Input,  // populated by window_pump — logical-pixel space
+
+	// Embedded backend (bring-your-own-surface). Set by window_init_embedded;
+	// `handle` stays nil. When `embedded`, renderer_init/destroy skip SDL for
+	// the loader bootstrap, instance extensions, and surface create/destroy,
+	// and the caller drives input (input_feed_*) + frames itself. Zero-valued
+	// for every SDL-backed window, so those paths are unaffected.
+	embedded:           bool,
+	emb_instance_exts:  []cstring,
+	emb_get_proc_addr:  rawptr,
+	emb_create_surface: proc(instance: vk.Instance, user: rawptr) -> (vk.SurfaceKHR, bool),
+	emb_user:           rawptr,
 }
+
+// Embedded_Config configures a bring-your-own-surface Window for the embedded
+// backend — a caller (e.g. a Wayland shell) that owns the surface, input, and
+// frame loop instead of SDL. Skald still owns vkCreateInstance and the device.
+Embedded_Config :: struct {
+	// instance_extensions Skald must enable (e.g. VK_KHR_surface +
+	// VK_KHR_wayland_surface); Skald unions in its own portability/debug set.
+	instance_extensions: []cstring,
+	// get_instance_proc_addr is the caller's PFN_vkGetInstanceProcAddr — the
+	// loader bootstrap SDL would otherwise provide. Required.
+	get_instance_proc_addr: rawptr,
+	// create_surface returns a VkSurfaceKHR for the instance Skald created;
+	// the caller makes only the surface (e.g. vkCreateWaylandSurfaceKHR).
+	create_surface: proc(instance: vk.Instance, user: rawptr) -> (vk.SurfaceKHR, bool),
+	user:    rawptr,
+	size_px: [2]u32, // initial drawable size, physical px
+	scale:   f32,    // content scale; fractional ok (1.25, 1.5, …); 0 → 1.0
+	transparent: bool,
+}
+
+// window_init_embedded builds a Window backed by a caller-supplied surface
+// instead of an SDL window — no sdl3.Init, no SDL window. Hand the result to
+// renderer_init like any Window; feed input via input_begin + input_feed_*;
+// drive frames with frame_begin/frame_end; push size/scale via
+// window_resize_embedded.
+window_init_embedded :: proc(cfg: Embedded_Config) -> (w: Window, ok: bool) {
+	if cfg.get_instance_proc_addr == nil || cfg.create_surface == nil {
+		fmt.eprintln("skald: window_init_embedded needs get_instance_proc_addr + create_surface")
+		return {}, false
+	}
+	scale := cfg.scale
+	if scale <= 0 { scale = 1 }
+	w = Window{
+		embedded           = true,
+		emb_instance_exts  = cfg.instance_extensions,
+		emb_get_proc_addr  = cfg.get_instance_proc_addr,
+		emb_create_surface = cfg.create_surface,
+		emb_user           = cfg.user,
+		size_px            = cfg.size_px,
+		size_logical       = {u32(f32(cfg.size_px.x) / scale), u32(f32(cfg.size_px.y) / scale)},
+		scale              = scale,
+		transparent        = cfg.transparent,
+	}
+	return w, true
+}
+
+// window_resize_embedded updates an embedded Window's drawable size + scale
+// (call it from the compositor's configure / fractional-scale handler), then
+// pass the window to renderer_resize to rebuild the swapchain.
+window_resize_embedded :: proc(w: ^Window, size_px: [2]u32, scale: f32) {
+	s := scale
+	if s <= 0 { s = 1 }
+	w.size_px      = size_px
+	w.scale        = s
+	w.size_logical = {u32(f32(size_px.x) / s), u32(f32(size_px.y) / s)}
+	w.resized      = true
+}
+
+// input_begin clears the per-frame input edges for an embedded Window — call
+// once at the top of each frame, before the input_feed_* calls. The embedded
+// analogue of what window_pump does each pump.
+input_begin :: proc(w: ^Window) { window_reset_frame(w) }
+
+// input_feed_* populate the same Input fields the SDL pump sets, so widget
+// behaviour is identical. Coordinates are logical px; the renderer maps to
+// physical at the framebuffer boundary using the window's scale.
+input_feed_pointer_motion :: proc(w: ^Window, logical: [2]f32) {
+	w.had_events = true
+	w.input.mouse_delta += logical - w.input.mouse_pos
+	w.input.mouse_pos = logical
+	w.input.mouse_physical_moved = true
+}
+input_feed_pointer_button :: proc(w: ^Window, btn: Mouse_Button, pressed: bool, clicks: u8 = 1) {
+	w.had_events = true
+	w.input.mouse_buttons[btn] = pressed
+	if pressed {
+		w.input.mouse_pressed[btn]     = true
+		w.input.mouse_click_count[btn] = clicks
+	} else {
+		w.input.mouse_released[btn] = true
+	}
+}
+input_feed_scroll :: proc(w: ^Window, delta: [2]f32) {
+	w.had_events = true
+	w.input.scroll += delta
+}
+input_feed_key :: proc(w: ^Window, key: Key, pressed: bool, repeat: bool = false) {
+	w.had_events = true
+	if pressed {
+		w.input.keys_pressed += {key}
+		if !repeat { w.input.keys_down += {key} }
+	} else {
+		w.input.keys_released += {key}
+		w.input.keys_down     -= {key}
+	}
+}
+input_feed_text :: proc(w: ^Window, utf8: string) {
+	if len(utf8) == 0 { return }
+	w.had_events = true
+	s := strings.clone(utf8, context.temp_allocator)
+	if len(w.input.text) == 0 {
+		w.input.text = s
+	} else {
+		w.input.text = strings.concatenate({w.input.text, s}, context.temp_allocator)
+	}
+}
+input_feed_modifiers :: proc(w: ^Window, mods: Modifiers) { w.input.modifiers = mods }
 
 // window_open initializes SDL3 (if not already) and creates the app
 // window. Returns ok=false on SDL error. `extra_flags` overrides the

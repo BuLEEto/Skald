@@ -256,19 +256,39 @@ renderer_init :: proc(r: ^Renderer, w: ^Window) -> (ok: bool) {
 	append(&r.targets, primary)
 	r.cur = primary
 
-	r.window = w.handle
+	r.window = w.handle // nil for an embedded target — only used by the SDL surface path below
 
-	get_proc := sdl3.Vulkan_GetVkGetInstanceProcAddr()
-	if get_proc == nil {
-		fmt.eprintfln("skald: Vulkan_GetVkGetInstanceProcAddr returned nil (window missing {{.VULKAN}} flag?)")
-		return
+	// Loader bootstrap: SDL hands us vkGetInstanceProcAddr; an embedded
+	// caller supplies its own (it already loaded Vulkan for the surface).
+	get_proc: rawptr
+	if w.embedded {
+		get_proc = w.emb_get_proc_addr
+	} else {
+		gp := sdl3.Vulkan_GetVkGetInstanceProcAddr()
+		if gp == nil {
+			fmt.eprintfln("skald: Vulkan_GetVkGetInstanceProcAddr returned nil (window missing {{.VULKAN}} flag?)")
+			return
+		}
+		get_proc = rawptr(gp)
 	}
-	vk.load_proc_addresses_global(rawptr(get_proc))
+	vk.load_proc_addresses_global(get_proc)
 
-	if !vk_create_instance(r) { return }
-	if !sdl3.Vulkan_CreateSurface(r.window, r.instance, nil, &r.surface) {
-		fmt.eprintfln("skald: Vulkan_CreateSurface: %s", sdl3.GetError())
-		return
+	if !vk_create_instance(r, w) { return }
+
+	// Surface: SDL builds it from the window; an embedded caller's callback
+	// builds it from the instance Skald just created (e.g. Wayland surface).
+	if w.embedded {
+		surf, sok := w.emb_create_surface(r.instance, w.emb_user)
+		if !sok {
+			fmt.eprintln("skald: embedded create_surface failed")
+			return
+		}
+		r.surface = surf
+	} else {
+		if !sdl3.Vulkan_CreateSurface(r.window, r.instance, nil, &r.surface) {
+			fmt.eprintfln("skald: Vulkan_CreateSurface: %s", sdl3.GetError())
+			return
+		}
 	}
 	if !vk_pick_physical_device(r) { return }
 	vk.GetPhysicalDeviceMemoryProperties(r.phys_device, &r.mem_props)
@@ -347,7 +367,13 @@ renderer_destroy :: proc(r: ^Renderer) {
 			vk_destroy_commands_and_sync(r)
 			vk_destroy_swapchain(r)
 			if r.surface != 0 && r.instance != nil {
-				sdl3.Vulkan_DestroySurface(r.instance, r.surface, nil)
+				// Embedded surfaces came from the caller's callback, not SDL —
+				// tear them down through the Vulkan loader directly.
+				if t.platform != nil && t.platform.embedded {
+					vk.DestroySurfaceKHR(r.instance, r.surface, nil)
+				} else {
+					sdl3.Vulkan_DestroySurface(r.instance, r.surface, nil)
+				}
 				r.surface = 0
 			}
 			if t.widgets != nil {
@@ -591,7 +617,7 @@ frame_end :: proc(r: ^Renderer) {
 // ---- internal: instance / physical device / logical device ----
 
 @(private)
-vk_create_instance :: proc(r: ^Renderer) -> bool {
+vk_create_instance :: proc(r: ^Renderer, w: ^Window) -> bool {
 	app := vk.ApplicationInfo{
 		sType = .APPLICATION_INFO,
 		pApplicationName = "skald",
@@ -600,9 +626,16 @@ vk_create_instance :: proc(r: ^Renderer) -> bool {
 		engineVersion = vk.MAKE_VERSION(0, 1, 0),
 		apiVersion = vk.API_VERSION_1_3,
 	}
-	n: u32
-	exts_raw := sdl3.Vulkan_GetInstanceExtensions(&n)
-	exts_slice := slice.from_ptr(exts_raw, int(n))
+	// Required instance extensions: SDL enumerates them; an embedded caller
+	// passes the list (VK_KHR_surface + its platform surface extension).
+	exts_slice: []cstring
+	if w.embedded {
+		exts_slice = w.emb_instance_exts
+	} else {
+		n: u32
+		exts_raw := sdl3.Vulkan_GetInstanceExtensions(&n)
+		exts_slice = slice.from_ptr(exts_raw, int(n))
+	}
 
 	// macOS has no fully-conformant Vulkan driver; MoltenVK is a
 	// "portability subset" implementation. To opt into that on the
