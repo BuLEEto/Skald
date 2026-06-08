@@ -6532,6 +6532,7 @@ _select_impl :: proc(
 	id := widget_resolve_id(ctx, id)
 	if !disabled { widget_make_focusable(ctx, id) }
 	st := widget_get(ctx, id, .Select)
+	prev_open := st.open
 	focused := !disabled && widget_has_focus(ctx, id)
 
 	// A read-only select renders the trigger only. Force any previously-
@@ -6564,8 +6565,25 @@ _select_impl :: proc(
 		overlay_h += option_gap * f32(len(options) - 1)
 	}
 	overlay_w := trigger_rect.w if trigger_rect.w > 0 else width
+
+	// Cap the menu to the larger of the space above/below the trigger so a
+	// long option list never renders taller than the window; the rows then
+	// scroll inside the capped viewport. `4` is the trigger→menu gap below.
+	menu_h   := overlay_h
+	scrolled := false
+	if ctx.renderer != nil {
+		fb_h       := f32(ctx.renderer.fb_size.y)
+		room_below := fb_h - (trigger_rect.y + trigger_rect.h) - 4 - th.spacing.sm
+		room_above := trigger_rect.y - 4 - th.spacing.sm
+		max_room   := max(room_below, room_above)
+		if menu_h > max_room && max_room > 0 {
+			menu_h   = max_room
+			scrolled = true
+		}
+	}
+
 	overlay_rect := overlay_placement_rect(ctx, trigger_rect,
-		{overlay_w, overlay_h}, .Below, {0, 4})
+		{overlay_w, menu_h}, .Below, {0, 4})
 	mouse_over_overlay := rect_contains_point(overlay_rect, ctx.input.mouse_pos)
 	if st.open { widget_stamp_overlay_rect(ctx.widgets, overlay_rect) }
 
@@ -6586,6 +6604,25 @@ _select_impl :: proc(
 		keys := ctx.input.keys_pressed
 		if .Space in keys || .Enter in keys { st.open = !st.open }
 		if .Escape in keys                  { st.open = false   }
+	}
+
+	// On the frame the menu opens, pre-scroll a long list so the current
+	// value is visible (native dropdown behaviour). Centre-ish it in the
+	// viewport, clamped to the valid range. No-op when the list fits.
+	if scrolled && st.open && !prev_open {
+		selected_idx := 0
+		for opt, i in options {
+			if opt == value { selected_idx = i; break }
+		}
+		view_h     := menu_h - 2 * (BORDER_W + overlay_pad)
+		content_h  := f32(len(options)) * opt_h
+		desired    := f32(selected_idx) * opt_h - (view_h - opt_h) / 2
+		max_scr    := content_h - view_h
+		desired     = clamp(desired, 0, max(max_scr, 0))
+		sid := widget_make_sub_id(id, 1)
+		sst := widget_get(ctx, sid, .Scroll)
+		sst.scroll_y = desired
+		widget_set(ctx, sid, sst)
 	}
 
 	// Close on release inside the overlay is *deferred* until after the
@@ -6651,15 +6688,27 @@ _select_impl :: proc(
 		if is_selected { row_bg = th.color.selection }
 		append(&rows, select_option_row(ctx, opt, option_msgs[i], row_bg, th))
 	}
-	widget_scope_pop(ctx, scope)
 
 	// Two-layer card: outer border-colored rect lays down the hairline,
 	// inner elevated rect leaves 1 px of border showing. Matches the
-	// menu popover convention so the two readers feel native.
-	inner := col(..rows[:],
-		spacing     = option_gap,
+	// menu popover convention so the two readers feel native. When the
+	// list was capped (taller than the window), the rows scroll inside
+	// the capped viewport instead of spilling out.
+	inner_w := overlay_w - 2 * BORDER_W
+	body: View
+	if scrolled {
+		view_h := menu_h - 2 * (BORDER_W + overlay_pad)
+		body = scroll(ctx, {inner_w - 2 * overlay_pad, view_h},
+			col(..rows[:], spacing = option_gap, cross_align = .Stretch),
+			id = widget_make_sub_id(id, 1))
+	} else {
+		body = col(..rows[:], spacing = option_gap, cross_align = .Stretch)
+	}
+	widget_scope_pop(ctx, scope)
+
+	inner := col(body,
 		padding     = overlay_pad,
-		width       = overlay_w - 2 * BORDER_W,
+		width       = inner_w,
 		bg          = th.color.elevated,
 		radius      = th.radius.sm,
 		cross_align = .Stretch,
