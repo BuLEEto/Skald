@@ -3622,8 +3622,11 @@ overlay_placement_rect :: proc(
 	}
 	if ctx.renderer != nil {
 		fb_w := f32(ctx.renderer.fb_size.x)
+		fb_h := f32(ctx.renderer.fb_size.y)
 		if x + child_size.x > fb_w { x = fb_w - child_size.x }
 		if x < 0 { x = 0 }
+		if y + child_size.y > fb_h { y = fb_h - child_size.y }
+		if y < 0 { y = 0 }
 	}
 	return Rect{x, y, child_size.x, child_size.y}
 }
