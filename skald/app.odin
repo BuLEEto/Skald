@@ -116,6 +116,24 @@ App :: struct($State, $Msg: typeid) {
 	// state or fires `cmd_close_window`. Optional; nil means "ignore
 	// focus changes."
 	on_window_focus_lost: proc(window: Window_Id) -> Msg,
+
+	// on_key fires for every discrete keyboard edge — one call per key
+	// pressed or released this frame, carrying the `Key`, the held
+	// `Modifiers`, and a press/release flag (see `Key_Event`). It returns
+	// a Msg that lands in the regular queue, like the other hooks.
+	//
+	// This is the clean path for capturing a chord outside normal widget
+	// focus — e.g. a click-to-rebind keybindings editor: enter capture
+	// mode, take the first `pressed` event whose `key` is non-modifier,
+	// record `{mods, key}`, leave capture mode. Bare modifier presses
+	// never arrive (modifiers aren't `Key`s), so they're filtered for
+	// free. Optional; nil means "don't deliver key events this way" —
+	// widgets still receive keys through `view`/`ctx.input` regardless.
+	//
+	// Note: `keys_pressed` includes OS auto-repeat, so a held key fires
+	// repeatedly; capture-style handlers act on the first and ignore the
+	// rest.
+	on_key: proc(ev: Key_Event) -> Msg,
 }
 
 // Window_State captures everything needed to restore a window's
@@ -649,6 +667,22 @@ run :: proc(app: App($State, $Msg)) {
 			for t in r.targets {
 				if t.platform != nil && t.platform.focus_lost {
 					append(&msgs, app.on_window_focus_lost(Window_Id(t)))
+				}
+			}
+		}
+
+		// Discrete key-event dispatch. Fires App.on_key once per key edge
+		// this frame (press + release), across every window. SDL routes
+		// key events to the focused window only, so iterating targets
+		// can't double-fire the same physical key.
+		if app.on_key != nil {
+			evs := make([dynamic]Key_Event, 0, 8, context.temp_allocator)
+			for t in r.targets {
+				if t.platform == nil { continue }
+				clear(&evs)
+				key_events_for(t.platform.input, &evs)
+				for ev in evs {
+					append(&msgs, app.on_key(ev))
 				}
 			}
 		}

@@ -165,6 +165,32 @@ Modifier :: enum {
 // for membership like `.Ctrl in ctx.input.modifiers`.
 Modifiers :: bit_set[Modifier]
 
+// Key_Event is a single discrete keyboard edge delivered to the optional
+// `App.on_key` hook: which `Key` changed, the `Modifiers` held at the
+// time, and whether it was a press (`true`) or release (`false`). Bare
+// modifier presses never produce one — modifiers aren't `Key`s — so a
+// chord is `{mods, key}` with `pressed = true`. See `App.on_key`.
+Key_Event :: struct {
+	key:     Key,
+	mods:    Modifiers,
+	pressed: bool,
+}
+
+// key_events_for collects the discrete `Key_Event`s implied by one frame's
+// input edges: every key in `keys_pressed` as a press, every key in
+// `keys_released` as a release, each stamped with the modifiers held this
+// frame. Pure; the run loop maps these through `App.on_key` into the msg
+// queue. Order is press-edges then release-edges; within each, ascending
+// `Key` (bit_set iteration order).
+key_events_for :: proc(input: Input, out: ^[dynamic]Key_Event) {
+	for k in input.keys_pressed {
+		append(out, Key_Event{key = k, mods = input.modifiers, pressed = true})
+	}
+	for k in input.keys_released {
+		append(out, Key_Event{key = k, mods = input.modifiers, pressed = false})
+	}
+}
+
 // Key is the subset of keyboard keys Skald surfaces to application and
 // widget code. Text entry itself flows through `Input.text` (UTF-8); this
 // enum is for the editing controls that aren't characters — cursor motion,
