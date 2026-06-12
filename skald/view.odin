@@ -9851,12 +9851,17 @@ context_menu :: proc(
 		ctx.input.mouse_pressed[.Right] = false
 	}
 
-	// When open, compute the popover rect so we can hit-test and stamp
-	// the overlay list for modal-input accounting. Height tracks the
-	// items count; 2-px padding, 1-px border, per-row (md+2·sm) tile.
-	row_h := th.font.size_md + 2*th.spacing.sm
-	popover_h := 2 * 4 + 2 * 1 + f32(len(items)) * row_h + f32(max(0, len(items)-1)) * 2
+	// Popover geometry. Rows are a FIXED height (same tile as combobox /
+	// select) so the hit/dismiss/stamp rect equals the rendered menu exactly
+	// — no estimate-vs-measured divergence (req 010 cause 3). `button` rows
+	// auto-sized to text line-height, which is taller, and that gap drove the
+	// rect disjoint near the bottom edge.
+	BORDER :: f32(1)
+	PAD    :: f32(4)
+	GAP    :: f32(2)
+	row_h     := th.font.size_md + 2*th.spacing.sm + 6
 	popover_w := width
+	popover_h := 2*(BORDER+PAD) + f32(len(items))*row_h + f32(max(0, len(items)-1))*GAP
 	// `.Cursor` anchors a zero-size rect at the click point; `.Child` anchors
 	// the child's last-frame rect so the menu hangs under its bottom edge.
 	anchor_rect := Rect{st.anchor_pos.x, st.anchor_pos.y, 0, 0}
@@ -9864,23 +9869,53 @@ context_menu :: proc(
 	popover_rect := overlay_placement_rect(ctx, anchor_rect,
 		{popover_w, popover_h}, .Below, offset)
 
-	if st.open {
-		// Outside-click (Left) dismiss — fires before the tree renders so
-		// the popover doesn't flash on the dismissal frame.
-		if ctx.input.mouse_pressed[.Left] &&
-		   !rect_contains_point(popover_rect, ctx.input.mouse_pos) {
-			st.open = false
+	// Resolve the row under the cursor by geometry. This replaces per-row
+	// `button`s, which fired only when hover held at BOTH press and release —
+	// a touchpad tap that drifts across a row boundary then dies silently
+	// (req 010 cause 1). We fire the row under the RELEASE point instead, and
+	// treat the padding / inter-row gaps as inert (cause 2).
+	rows_x := popover_rect.x + BORDER + PAD
+	rows_y := popover_rect.y + BORDER + PAD
+	rows_w := popover_w - 2*(BORDER+PAD)
+	mp := ctx.input.mouse_pos
+	hover_row := -1
+	if mp.x >= rows_x && mp.x < rows_x+rows_w {
+		rel := mp.y - rows_y
+		slot := row_h + GAP
+		idx  := int(rel / slot)
+		if rel >= 0 && idx < len(items) && rel-f32(idx)*slot <= row_h {
+			hover_row = idx
 		}
-		// Escape also dismisses.
+	}
+	over_popover := rect_contains_point(popover_rect, mp)
+
+	// Whether the menu was showing at the start of this frame. The select /
+	// dismiss below may clear st.open, but the consume must still fire on the
+	// closing frame — and must NOT fire while closed (the stale popover_rect
+	// would otherwise eat clicks meant for the wrapped child).
+	was_open := st.open
+
+	if st.open {
+		// Outside-press or Escape dismisses.
+		if ctx.input.mouse_pressed[.Left] && !over_popover { st.open = false }
 		if .Escape in ctx.input.keys_pressed { st.open = false }
-		// Any click inside the popover closes it — the row buttons still
-		// fire their own on_select on release, so the selection lands
-		// before the popover disappears next frame.
-		if ctx.input.mouse_released[.Left] &&
-		   rect_contains_point(popover_rect, ctx.input.mouse_pos) {
+		// Release on a row fires it and closes; release on padding / a gap is
+		// inert (the menu stays open). Resolved here, before the consume
+		// below, so there's no ordering trap (req 010 tooling note).
+		if ctx.input.mouse_released[.Left] && over_popover && hover_row >= 0 {
+			send(ctx, on_select(hover_row))
 			st.open = false
 		}
 	}
+
+	// Consume left press/release inside the popover so the wrapped child and
+	// later siblings don't also react to a click meant for the menu — only
+	// while the menu is actually up.
+	if was_open && over_popover {
+		ctx.input.mouse_pressed[.Left]  = false
+		ctx.input.mouse_released[.Left] = false
+	}
+
 	// Keep stamping the overlay rect while the popover is still
 	// visible (open or mid-fade-out). Without this the gate drops
 	// when st.open flips, and widgets underneath the fading menu
@@ -9906,35 +9941,34 @@ context_menu :: proc(
 
 	if !st.open && anim_op <= 0.01 { return zoned }
 
-	// Build the popover: same two-layer card (border + elevated) as the
-	// menu widget so the two read as the same family visually.
-	// Wrap in a per-context-menu widget scope so the option-row buttons'
-	// auto-id consumption stays isolated from the parent counter — see
-	// the same pattern in `menu` and `_select_impl`.
-	scope := widget_scope_push(ctx, u64(id))
+	// Build the popover: same two-layer card (border + elevated) as the menu
+	// widget. Rows are fixed-height visual tiles (not buttons) — context_menu
+	// owns the click resolution above; the highlight follows the cursor row.
 	rows := make([dynamic]View, 0, len(items), context.temp_allocator)
 	for label, i in items {
-		append(&rows, button(ctx, label, on_select(i),
-			bg         = th.color.elevated,
-			fg         = th.color.fg,
-			radius     = th.radius.sm,
-			padding    = {th.spacing.md, th.spacing.sm},
-			font_size  = th.font.size_md,
-			text_align = .Start,
+		rbg := th.color.elevated
+		if i == hover_row { rbg = th.color.selection }
+		append(&rows, col(
+			row(spacer(th.spacing.md), text(label, th.color.fg, th.font.size_md)),
+			width       = rows_w,
+			height      = row_h,
+			main_align  = .Center,
+			cross_align = .Start,
+			bg          = rbg,
+			radius      = th.radius.sm,
 		))
 	}
-	widget_scope_pop(ctx, scope)
 	inner := col(..rows[:],
-		spacing     = 2,
-		padding     = 4,
-		width       = popover_w - 2,
+		spacing     = GAP,
+		padding     = PAD,
+		width       = popover_w - 2*BORDER,
 		bg          = th.color.elevated,
 		radius      = th.radius.sm,
 		cross_align = .Stretch,
 	)
 	card := col(
 		inner,
-		padding     = 1,
+		padding     = BORDER,
 		width       = popover_w,
 		bg          = th.color.border,
 		radius      = th.radius.sm,
