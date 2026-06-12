@@ -6625,11 +6625,17 @@ _select_impl :: proc(
 		widget_set(ctx, sid, sst)
 	}
 
-	// Close on release inside the overlay is *deferred* until after the
-	// option rows build this frame. The option row is a button that fires
-	// on_click on release; if we closed first we'd skip the row's builder
-	// and lose the selection.
-	close_after_build := st.open && ctx.input.mouse_released[.Left] && mouse_over_overlay
+	// Close on release inside the overlay is deferred until after the option
+	// rows build, so the row button fires on_click first. But a mouse-up that
+	// ends a scrollbar-thumb drag also lands inside the overlay — gate on the
+	// scroll's last-frame `pressed` so it isn't mistaken for a pick.
+	dragging_scrollbar := false
+	if scrolled {
+		sst := widget_get(ctx, widget_make_sub_id(id, 1), .Scroll)
+		dragging_scrollbar = sst.pressed
+	}
+	close_after_build := st.open && ctx.input.mouse_released[.Left] &&
+		mouse_over_overlay && !dragging_scrollbar
 
 	fg_c := th.color.fg
 	if disabled { fg_c = th.color.fg_muted }
@@ -6697,9 +6703,13 @@ _select_impl :: proc(
 	inner_w := overlay_w - 2 * BORDER_W
 	body: View
 	if scrolled {
+		// Pin the option col to the viewport width; without it the col takes
+		// its widest option's intrinsic width, which on a narrow select
+		// overflows the overlay rect so the bleed hit-test drops every click.
+		view_w := inner_w - 2 * overlay_pad
 		view_h := menu_h - 2 * (BORDER_W + overlay_pad)
-		body = scroll(ctx, {inner_w - 2 * overlay_pad, view_h},
-			col(..rows[:], spacing = option_gap, cross_align = .Stretch),
+		body = scroll(ctx, {view_w, view_h},
+			col(..rows[:], spacing = option_gap, cross_align = .Stretch, width = view_w),
 			id = widget_make_sub_id(id, 1))
 	} else {
 		body = col(..rows[:], spacing = option_gap, cross_align = .Stretch)
