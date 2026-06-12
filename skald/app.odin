@@ -134,6 +134,18 @@ App :: struct($State, $Msg: typeid) {
 	// repeatedly; capture-style handlers act on the first and ignore the
 	// rest.
 	on_key: proc(ev: Key_Event) -> Msg,
+
+	// on_close_request intercepts the primary window's native close (the
+	// title-bar ✕ or an app-level quit). Instead of exiting, the runtime
+	// dispatches the returned Msg through update — the app decides what to
+	// do: pop a "really quit?" prompt while background work is in flight,
+	// or issue `cmd_quit` straight away. Optional; nil keeps the default
+	// (the window closes and the app exits, as before).
+	//
+	// WARNING: an app that sets this MUST have a path to `cmd_quit`, or the
+	// window becomes unclosable. Secondary windows are unaffected — they
+	// close as usual (use `cmd_open_window`'s on_close for those).
+	on_close_request: proc() -> Msg,
 }
 
 // Window_State captures everything needed to restore a window's
@@ -658,6 +670,21 @@ run :: proc(app: App($State, $Msg)) {
 		for t in r.targets { append(&plats, t.platform) }
 		windows_pump(plats[:])
 
+		// Resolve close requests (window ✕ / app-level quit). The primary
+		// may veto via App.on_close_request — dispatch its Msg and leave the
+		// window open; the app exits later via `cmd_quit`. Without a hook (or
+		// for any secondary) it falls through to should_close: the primary
+		// exits the loop below, a secondary is torn down further down.
+		for t in r.targets {
+			p := t.platform
+			if p == nil || !p.close_requested { continue }
+			if p == &w && app.on_close_request != nil {
+				append(&msgs, app.on_close_request())
+			} else {
+				p.should_close = true
+			}
+		}
+
 		// Focus-lost dispatch. Fires once per target whose window
 		// stopped being foreground this frame. Apps use this to
 		// auto-dismiss popovers / notifications on click-away —
@@ -1019,6 +1046,7 @@ run :: proc(app: App($State, $Msg)) {
 		// had asked us to paint. If update runs any msg below, set the
 		// flag again so the next iteration paints the post-update state.
 		state_may_have_changed = false
+		quit_requested := false
 		for len(msgs) > 0 {
 			state_may_have_changed = true
 			frame_msgs := make([dynamic]Msg, context.temp_allocator)
@@ -1027,7 +1055,7 @@ run :: proc(app: App($State, $Msg)) {
 			for msg in frame_msgs {
 				new_state, cmd := app.update(state, msg)
 				state = new_state
-				process_command(cmd, &msgs, &pending, &io, &windows_pending, &tpool, &th)
+				process_command(cmd, &msgs, &pending, &io, &windows_pending, &tpool, &th, &quit_requested)
 			}
 			// Drain window-op requests between each msg batch so a follow-up
 			// `cmd_now` that reacts to a newly-opened window's id lands in
@@ -1037,6 +1065,9 @@ run :: proc(app: App($State, $Msg)) {
 				drain_window_ops(&r, &windows_pending, &msgs, &close_reg, th.color.bg)
 			}
 		}
+
+		// `cmd_quit` from any update above exits the loop next iteration.
+		if quit_requested { w.should_close = true }
 
 		free_all(context.temp_allocator)
 	}

@@ -39,6 +39,11 @@ Window :: struct {
 	scale:        f32,    // size_px / size_logical — OS display scale factor
 	transparent:  bool,   // .TRANSPARENT was in the window flags — affects clear-color alpha
 	should_close: bool,   // set true when the user closes the window
+	// close_requested is edge-triggered: true for one frame after the user
+	// asks to close (window ✕ or app-level quit). The run loop resolves it —
+	// the primary may veto via App.on_close_request; everything else falls
+	// through to should_close. Cleared at the top of the next window_pump.
+	close_requested: bool,
 	resized:      bool,   // set true on the frame a resize occurred
 
 	// system_theme_changed is edge-triggered: true for exactly one frame
@@ -219,6 +224,7 @@ window_reset_frame :: proc(w: ^Window) {
 	w.system_theme_changed = false
 	w.had_events           = false
 	w.focus_lost           = false
+	w.close_requested      = false
 	input_reset_edges(&w.input)
 }
 
@@ -231,7 +237,9 @@ window_apply_event :: proc(w: ^Window, e: sdl3.Event) {
 	w.had_events = true
 	#partial switch e.type {
 	case .QUIT:
-		w.should_close = true
+		// App-level quit (last window closed, Cmd-Q). Edge for the run
+		// loop to resolve, so on_close_request can veto it too.
+		w.close_requested = true
 
 	case .KEY_DOWN:
 			input_apply_modifiers(&w.input, e.key.mod)
@@ -257,10 +265,10 @@ window_apply_event :: proc(w: ^Window, e: sdl3.Event) {
 			w.resized = true
 
 	case .WINDOW_CLOSE_REQUESTED:
-		// User hit the window's X button. Flip `should_close` so the
-		// run loop can react — primary-window close exits the app,
-		// secondary close triggers target teardown.
-		w.should_close = true
+		// User hit the window's X button. Edge for the run loop to
+		// resolve: the primary may veto via App.on_close_request, a
+		// secondary (or unvetoed primary) falls through to should_close.
+		w.close_requested = true
 
 	case .WINDOW_FOCUS_LOST:
 		// Window stopped being the foreground window. Edge-flag;

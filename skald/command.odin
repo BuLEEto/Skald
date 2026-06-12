@@ -70,6 +70,11 @@ Command_Kind :: enum u8 {
 	// from update() to apply a theme-picker change immediately,
 	// without a restart. See `cmd_set_theme`.
 	Set_Theme,
+	// Quit closes the primary window and exits the run loop. The escape
+	// hatch for apps that veto the native close via App.on_close_request
+	// (e.g. a "really quit?" prompt) and then need to actually quit. See
+	// `cmd_quit`.
+	Quit,
 }
 
 // Window_Desc describes a window to be opened by `cmd_open_window`. Mirrors
@@ -203,6 +208,18 @@ cmd_set_theme :: proc($Msg: typeid, t: Theme) -> Command(Msg) {
 	return Command(Msg){kind = .Set_Theme, theme_op = p}
 }
 
+// cmd_quit exits the app: the runtime sets the primary window's
+// should_close on this frame and the run loop falls out next iteration.
+// Pair it with App.on_close_request — an app that intercepts the native
+// close to prompt "really quit?" issues cmd_quit once the user confirms
+// (or immediately, if there's nothing to guard). Without it an app that
+// sets on_close_request has no way to actually close.
+//
+//     case Confirm_Quit_Yes: return s, skald.cmd_quit(Msg)
+cmd_quit :: proc($Msg: typeid) -> Command(Msg) {
+	return Command(Msg){kind = .Quit}
+}
+
 // cmd_delay schedules `msg` to be delivered after `seconds` have
 // elapsed. The delay is measured against wall-clock time; the runtime
 // polls pending delays at the top of every frame and releases any that
@@ -268,6 +285,7 @@ process_command :: proc(
 	windows_pending:  ^[dynamic]Window_Op(Msg),
 	thread_pool:      ^Thread_Pool(Msg),
 	theme:            ^Theme,
+	quit_requested:   ^bool,
 ) {
 	switch cmd.kind {
 	case .None:
@@ -279,7 +297,7 @@ process_command :: proc(
 		append(pending, Pending_Delay(Msg){fire_at_ns = fire, msg = cmd.msg})
 	case .Batch:
 		for child in cmd.children {
-			process_command(child, msgs, pending, io, windows_pending, thread_pool, theme)
+			process_command(child, msgs, pending, io, windows_pending, thread_pool, theme, quit_requested)
 		}
 	case .Async:
 		process_async(cmd.async, io)
@@ -293,6 +311,8 @@ process_command :: proc(
 		if cmd.theme_op != nil && theme != nil {
 			theme^ = cmd.theme_op^
 		}
+	case .Quit:
+		if quit_requested != nil { quit_requested^ = true }
 	}
 }
 
