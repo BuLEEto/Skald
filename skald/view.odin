@@ -9889,12 +9889,6 @@ context_menu :: proc(
 	}
 	over_popover := rect_contains_point(popover_rect, mp)
 
-	// Whether the menu was showing at the start of this frame. The select /
-	// dismiss below may clear st.open, but the consume must still fire on the
-	// closing frame — and must NOT fire while closed (the stale popover_rect
-	// would otherwise eat clicks meant for the wrapped child).
-	was_open := st.open
-
 	if st.open {
 		// Outside-press or Escape dismisses.
 		if ctx.input.mouse_pressed[.Left] && !over_popover { st.open = false }
@@ -9909,9 +9903,11 @@ context_menu :: proc(
 	}
 
 	// Consume left press/release inside the popover so the wrapped child and
-	// later siblings don't also react to a click meant for the menu — only
-	// while the menu is actually up.
-	if was_open && over_popover {
+	// later siblings don't react to a click meant for the menu. Gated on
+	// visibility (open or mid-fade) like the overlay stamp below, so a closed
+	// menu's stale rect can't swallow clicks. On the closing frame st.open is
+	// already false but anim_t still holds ~1, so the firing release is consumed.
+	if (st.open || st.anim_t > 0.01) && over_popover {
 		ctx.input.mouse_pressed[.Left]  = false
 		ctx.input.mouse_released[.Left] = false
 	}
