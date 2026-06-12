@@ -34,6 +34,11 @@ Input :: struct {
 	mouse_buttons:      [Mouse_Button]bool,
 	mouse_pressed:      [Mouse_Button]bool,
 	mouse_released:     [Mouse_Button]bool,
+	// mouse_pressed_raw mirrors mouse_pressed but is never cleared by widget
+	// consumption — a press edge that survives for widgets built in a
+	// deferred pass (e.g. a `table` body inside a `context_menu` that already
+	// consumed the cooked flag). Reset per frame like the rest.
+	mouse_pressed_raw:  [Mouse_Button]bool,
 	// mouse_click_count carries the click streak reported by SDL for the
 	// most recent press this frame: 1 single, 2 double, 3 triple, etc.
 	// Defined only when the matching `mouse_pressed[btn]` is true — the
@@ -263,6 +268,7 @@ input_reset_edges :: proc(in_: ^Input) {
 	in_.mouse_delta          = {0, 0}
 	in_.mouse_physical_moved = false
 	in_.mouse_pressed        = {}
+	in_.mouse_pressed_raw    = {}
 	in_.mouse_released       = {}
 	in_.mouse_click_count    = {}
 	in_.scroll         = {0, 0}

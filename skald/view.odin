@@ -12209,6 +12209,7 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 	overscan:        int,
 	header_height:   f32,
 	hairline:        bool,
+	on_row_context:  proc(row: int) -> Msg,
 }
 
 // table is a virtualized, sortable, resizable, selectable data grid.
@@ -12240,7 +12241,13 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 // `header_height` defaults to 32 logical pixels; `overscan` is the
 // extra rows rendered outside the viewport for smooth scrolling.
 // `viewport` follows the same zero-axis fill convention as `scroll`.
-table :: proc(
+//
+// `table` is a proc group: the plain form, plus `table_full` which adds the
+// optional `on_row_context`. Odin can't default a `proc(...) -> Msg` param on
+// a `^Ctx($Msg)` widget, so the overload keeps the common form non-breaking.
+table :: proc{table_simple, table_full}
+
+table_full :: proc(
 	ctx:             ^Ctx($Msg),
 	state:           $T,
 	columns:         []Table_Column,
@@ -12254,6 +12261,11 @@ table :: proc(
 	on_sort_change:  proc(col: int, ascending: bool) -> Msg,
 	on_resize:       proc(col: int, new_width: f32)  -> Msg,
 	on_row_activate: proc(row: int) -> Msg,
+	// on_row_context fires on a right-press over a row — for a context menu
+	// that should first select the row under the cursor. Reads the unconsumed
+	// `mouse_pressed_raw`, so it fires even when the table is wrapped in a
+	// `context_menu` (which consumed the cooked right-press in the main pass).
+	on_row_context:  proc(row: int) -> Msg,
 	sort_column:     int       = -1,
 	sort_ascending:  bool      = true,
 	focus_row:       int       = -1,
@@ -12319,11 +12331,12 @@ table :: proc(
 			overscan        = overscan,
 			header_height   = header_height,
 			hairline        = hairline,
+			on_row_context  = on_row_context,
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, size: [2]f32) -> View {
 			// Tight-window guard — same as scroll() / grid() / virtual_list().
 			if size.x <= 0 || size.y <= 0 { return View_Spacer{size = 0} }
-			return table(
+			return table_full(
 				ctx,
 				data.state,
 				data.columns,
@@ -12337,6 +12350,7 @@ table :: proc(
 				data.on_sort_change,
 				data.on_resize,
 				data.on_row_activate,
+				data.on_row_context,
 				sort_column    = data.sort_column,
 				sort_ascending = data.sort_ascending,
 				focus_row      = data.focus_row,
@@ -12779,10 +12793,10 @@ table :: proc(
 			)
 		}
 
-		if on_row_click != nil {
+		if on_row_click != nil || on_row_context != nil {
 			row_id := widget_auto_id(ctx)
 			row_st := widget_get(ctx, row_id, .Click_Zone)
-			if ctx.input.mouse_pressed[.Left] &&
+			if on_row_click != nil && ctx.input.mouse_pressed[.Left] &&
 			   widget_hovered(ctx, row_id) {
 				send(ctx, on_row_click(i, ctx.input.modifiers))
 				// Clicking a row moves keyboard focus to the table
@@ -12797,6 +12811,14 @@ table :: proc(
 				   ctx.input.mouse_click_count[.Left] >= 2 {
 					send(ctx, on_row_activate(i))
 				}
+			}
+			// Right-press selects the row under the cursor so a wrapping
+			// context_menu acts on it. Reads the unconsumed raw flag, since
+			// the context_menu consumed the cooked one in the main pass.
+			if on_row_context != nil && ctx.input.mouse_pressed_raw[.Right] &&
+			   widget_hovered(ctx, row_id) {
+				send(ctx, on_row_context(i))
+				widget_focus(ctx, body_id)
 			}
 			widget_set(ctx, row_id, row_st)
 			rc := new(View, context.temp_allocator)
@@ -12830,6 +12852,43 @@ table :: proc(
 		width       = viewport.x,
 		spacing     = 0,
 		cross_align = .Start,
+	)
+}
+
+// table_simple is the plain `table` overload (no right-click handler). It
+// forwards to `table_full` with `on_row_context` nil; see there for the
+// parameter docs. The split exists only because Odin can't default an
+// optional `proc(...) -> Msg` param on a `^Ctx($Msg)` widget.
+table_simple :: proc(
+	ctx:             ^Ctx($Msg),
+	state:           $T,
+	columns:         []Table_Column,
+	row_count:       int,
+	item_height:     f32,
+	viewport:        [2]f32,
+	row_builder:     proc(ctx: ^Ctx(Msg), state: T, row: int) -> []View,
+	row_key:         proc(state: T, row: int) -> u64,
+	on_row_click:    proc(row: int, mods: Modifiers) -> Msg,
+	is_selected:     proc(state: T, row: int)        -> bool,
+	on_sort_change:  proc(col: int, ascending: bool) -> Msg,
+	on_resize:       proc(col: int, new_width: f32)  -> Msg,
+	on_row_activate: proc(row: int) -> Msg,
+	sort_column:     int       = -1,
+	sort_ascending:  bool      = true,
+	focus_row:       int       = -1,
+	reveal_row:      int       = -1,
+	id:              Widget_ID = 0,
+	overscan:        int       = 4,
+	header_height:   f32       = 32,
+	hairline:        bool      = false,
+) -> View {
+	return table_full(
+		ctx, state, columns, row_count, item_height, viewport,
+		row_builder, row_key, on_row_click, is_selected, on_sort_change,
+		on_resize, on_row_activate, nil,
+		sort_column = sort_column, sort_ascending = sort_ascending,
+		focus_row = focus_row, reveal_row = reveal_row, id = id,
+		overscan = overscan, header_height = header_height, hairline = hairline,
 	)
 }
 

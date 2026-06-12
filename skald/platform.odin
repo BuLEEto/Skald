@@ -296,6 +296,7 @@ window_apply_event :: proc(w: ^Window, e: sdl3.Event) {
 			if btn, ok := sdl_button_to_enum(e.button.button); ok {
 				w.input.mouse_buttons[btn]     = true
 				w.input.mouse_pressed[btn]     = true
+				w.input.mouse_pressed_raw[btn] = true
 				w.input.mouse_click_count[btn] = u8(e.button.clicks)
 				w.input.mouse_pos = {e.button.x, e.button.y}
 			}
