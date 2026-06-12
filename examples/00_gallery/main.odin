@@ -666,7 +666,7 @@ decorations_section :: proc(ctx: ^skald.Ctx(Msg), s: State) -> skald.View {
 		skald.alert(ctx, "Something went wrong",
 			description = "Changes not saved.", tone = .Danger),
 		skald.stepper(ctx, {"Details", "Address", "Payment", "Review"}, current = 1),
-		skald.breadcrumb(ctx, segments, on_tab),
+		skald.breadcrumb(ctx, segments, gallery_breadcrumb_noop),
 		skald.accordion(ctx,
 			{
 				{title = "General",
@@ -780,6 +780,7 @@ gallery_table_is_selected :: proc(s: State, row: int) -> bool {
 gallery_table_noop_sort     :: proc(col: int, ascending: bool) -> Msg { return Noop{} }
 gallery_table_noop_resize   :: proc(col: int, new_width: f32)  -> Msg { return Noop{} }
 gallery_table_noop_activate :: proc(row: int) -> Msg                  { return Noop{} }
+gallery_breadcrumb_noop     :: proc(i: int) -> Msg                    { return Noop{} }
 
 table_section :: proc(ctx: ^skald.Ctx(Msg), s: State) -> skald.View {
 	th := ctx.theme
