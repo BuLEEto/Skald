@@ -325,12 +325,26 @@ renderer_init :: proc(r: ^Renderer, w: ^Window) -> (ok: bool) {
 	return
 }
 
+// renderer_select points `r.cur` at the target backing window `w`
+// (pointer identity on `platform`). Every render goes through one target
+// at a time; the SDL run loop sets `r.cur = t` itself, but embedded
+// callers driving N wl_surfaces just pass each window to frame_begin /
+// renderer_resize and these select the right swapchain for them. No-op
+// when `w` has no target (single-target callers and tests are untouched).
+@(private)
+renderer_select :: proc(r: ^Renderer, w: ^Window) {
+	for t in r.targets {
+		if t.platform == w { r.cur = t; return }
+	}
+}
+
 // renderer_resize tears down and rebuilds the swapchain for the
 // window's new framebuffer size. Called from `window_pump` when SDL3
 // reports a resize, and from frame_begin when AcquireNextImage
 // returns OUT_OF_DATE.
 renderer_resize :: proc(r: ^Renderer, w: ^Window) {
 	if w.size_px.x == 0 || w.size_px.y == 0 { return }
+	renderer_select(r, w)
 	vk.DeviceWaitIdle(r.device)
 	vk_destroy_swapchain(r)
 	vk_create_swapchain(r, w)
@@ -427,6 +441,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 // date — caller should skip frame_end and loop back through
 // renderer_resize next frame).
 frame_begin :: proc(r: ^Renderer, w: ^Window, clear: Color) -> (ok: bool) {
+	renderer_select(r, w)
 	slot := u32(r.frame % FRAMES_IN_FLIGHT)
 	vk.WaitForFences(r.device, 1, &r.in_flight[slot], true, max(u64))
 

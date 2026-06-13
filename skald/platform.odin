@@ -139,6 +139,107 @@ window_resize_embedded :: proc(w: ^Window, size_px: [2]u32, scale: f32) {
 	w.resized      = true
 }
 
+// renderer_add_embedded_surface attaches another caller-supplied surface to an
+// already-initialized Renderer, so one Skald process can drive several
+// wl_surfaces — e.g. a per-output lock surface across a multi-monitor session,
+// or a greeter card on the primary output and wallpaper on the rest. Build each
+// extra `^Window` with window_init_embedded (heap-allocate it — the target
+// holds the pointer), then call this. The window's create_surface callback runs
+// against Skald's existing Vulkan instance, so the new swapchain shares the
+// device, pipeline, and glyph atlas; only the per-surface swapchain + frame
+// plumbing is added.
+//
+// Per frame, drive each surface independently: input_begin + input_feed_* on
+// its window, then frame_begin(r, w, clear) / draw / frame_end(r). frame_begin
+// selects the matching target, so one view proc can paint every surface (or a
+// per-output view — switch on the window). The caller owns each `^Window` and
+// frees it after renderer_destroy. Tear a surface down on output unplug with
+// renderer_remove_embedded_surface.
+renderer_add_embedded_surface :: proc(r: ^Renderer, w: ^Window, clear: Color = {0, 0, 0, 1}) -> (ok: bool) {
+	if !w.embedded || w.emb_create_surface == nil {
+		fmt.eprintln("skald: renderer_add_embedded_surface needs an embedded window (window_init_embedded)")
+		return
+	}
+
+	target := new(Window_Target)
+	target.platform = w          // caller-owned; renderer_destroy won't free it
+	target.widgets  = new(Widget_Store)
+	widget_store_init(target.widgets)
+
+	// Build surface → swapchain → sync through the same `cur`-driven
+	// initializers a secondary SDL window uses; only the surface source
+	// differs (the caller's callback instead of SDL).
+	prev := r.cur
+	r.cur = target
+	surf, sok := w.emb_create_surface(r.instance, w.emb_user)
+	if !sok {
+		fmt.eprintln("skald: embedded create_surface (additional) failed")
+		widget_store_destroy(target.widgets); free(target.widgets); free(target)
+		r.cur = prev
+		return
+	}
+	target.surface = surf
+	if !vk_create_swapchain(r, w) ||
+	   !vk_create_commands_and_sync(r) ||
+	   !vk_create_render_finished_semaphores(r) ||
+	   !target_vk_init(r, target, &r.pipeline, &r.text) {
+		target_vk_destroy(r, target, &r.pipeline)
+		vk_destroy_commands_and_sync(r)
+		vk_destroy_swapchain(r)
+		vk.DestroySurfaceKHR(r.instance, target.surface, nil)
+		widget_store_destroy(target.widgets); free(target.widgets); free(target)
+		r.cur = prev
+		return
+	}
+
+	append(&r.targets, target)
+
+	// Clear-and-present once so the compositor's first sample is the clear
+	// colour, not undefined swapchain memory — a lock surface must never
+	// flash GPU leftovers. Mirrors the SDL secondary-open path.
+	oc := clear
+	if w.transparent { oc.a = 0 }
+	if frame_begin(r, w, oc) { frame_end(r) }
+
+	r.cur = prev
+	ok = true
+	return
+}
+
+// renderer_remove_embedded_surface tears down the target backing `w` — its
+// swapchain, sync, and surface — for an output hotplugged away while
+// rendering. The `^Window` is the caller's and is NOT freed (reuse or free it
+// yourself). No-op if `w` has no target or is the last one left (tear the final
+// surface down via renderer_destroy).
+renderer_remove_embedded_surface :: proc(r: ^Renderer, w: ^Window) -> (ok: bool) {
+	idx := -1
+	for t, i in r.targets {
+		if t.platform == w { idx = i; break }
+	}
+	if idx < 0 || len(r.targets) <= 1 { return }
+
+	target := r.targets[idx]
+	if r.device != nil { vk.DeviceWaitIdle(r.device) }
+
+	prev := r.cur
+	r.cur = target
+	target_vk_destroy(r, target, &r.pipeline)
+	batch_destroy(&target.batch)
+	vk_destroy_commands_and_sync(r)
+	vk_destroy_swapchain(r)
+	if target.surface != 0 && r.instance != nil {
+		vk.DestroySurfaceKHR(r.instance, target.surface, nil)
+	}
+	if target.widgets != nil {
+		widget_store_destroy(target.widgets); free(target.widgets)
+	}
+	ordered_remove(&r.targets, idx)
+	r.cur = prev if prev != target else r.targets[0]
+	free(target)
+	ok = true
+	return
+}
+
 // input_begin clears the per-frame input edges for an embedded Window — call
 // once at the top of each frame, before the input_feed_* calls. The embedded
 // analogue of what window_pump does each pump.
