@@ -16,6 +16,11 @@ SDL3 handles the rest of the windowing/input differences; surface creation
 runs through `sdl3.Vulkan_CreateSurface`, which picks the right
 platform-specific `VkSurfaceKHR` extension under the hood.
 
+A host that owns its own surface, input, and frame loop (e.g. a Wayland
+compositor or shell) can instead drive Skald via the **embedded backend**
+(`window_init_embedded` + `renderer_add_embedded_surface`) — same Vulkan
+renderer, but surface creation and the event loop come from the host.
+
 ---
 
 ## macOS (Intel + Apple Silicon)

@@ -16,6 +16,21 @@ bug fixes bump the patch.
   frame; `nil` is a no-op, and offsets clamp + snap to rune boundaries.
   Composes with `marks`; unstyled fields are untouched.
 
+- **Embedded backend — bring your own surface.** A second entry path
+  alongside `skald.run` for hosts that own their surface, input, and frame
+  loop (e.g. a Wayland compositor or shell). `window_init_embedded` builds a
+  `Window` from a caller-supplied Vulkan surface, `input_feed_*` push the
+  pointer/key/text snapshot the SDL pump would, and the host drives
+  `frame_begin`/`frame_end` itself. Skald still owns the instance, device,
+  and pipeline; the SDL path is untouched.
+
+- **Multiple surfaces from one renderer.** `renderer_add_embedded_surface` /
+  `renderer_remove_embedded_surface` attach extra caller-supplied surfaces to
+  a single `Renderer`, so one process drives N swapchains — a panel per
+  output, a lock surface per monitor — sharing one device, pipeline, and
+  glyph atlas. `frame_begin` selects the target by window, so one view proc
+  can paint every surface.
+
 ## 1.0.0-rc11 — 2026-06-04
 
 ### Added

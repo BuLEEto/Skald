@@ -65,6 +65,17 @@ Key properties:
   result: the click is pushed in frame N, consumed by `update` at the end
   of frame N, rendered from new state in frame N+1.
 
+### Bring your own surface
+
+`skald.run` is the SDL path. A host that owns its own surface, input, and
+frame loop — a Wayland compositor or shell — can drive Skald directly
+instead: `window_init_embedded` builds a `Window` from a caller-supplied
+Vulkan surface, `input_feed_*` push the snapshot the SDL pump would, and the
+host runs `frame_begin`/`frame_end` itself. `renderer_add_embedded_surface`
+attaches further surfaces to one `Renderer`, so a single process drives
+several swapchains (a panel per output, a lock surface per monitor) sharing
+one device, pipeline, and glyph atlas. The SDL path is unchanged.
+
 ## The view tree
 
 `View` is a recursive record built each frame (see `skald/view.odin`). The
