@@ -1360,7 +1360,12 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// builder drives hit-testing and drag via cached content_h
 		// from last frame, so the thumb is fully clickable.
 		if max_off > 0 {
-			bar_w: f32 = 6
+			// Slim 8px resting bar that fattens to 12px while the thumb is
+			// hovered or dragged — a clear grab affordance that still reads
+			// as a thin bar at rest. It grows leftward (right edge pinned),
+			// so the expansion doesn't push off-screen.
+			bar_w: f32 = 8
+			if vv.hover_thumb || vv.dragging { bar_w = 12 }
 			bar_x := origin.x + vp_w - bar_w - 2
 			bar_y := origin.y + 2
 			bar_h := vp_h - 4

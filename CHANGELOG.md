@@ -6,6 +6,14 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Changed
+
+- **`scroll` thumb is much easier to grab.** Presses register in a wider
+  invisible band flush to the viewport's right edge (no more dead gap at the
+  window edge, no more 6px sliver target), the visible bar is 8px and expands
+  to 12px on hover/drag, and grabbing or dragging the thumb no longer
+  click-throughs or hover-bleeds into the content beneath it. No API change.
+
 ### Fixed
 
 - **Default to native Wayland on a Wayland session.** SDL3 with no

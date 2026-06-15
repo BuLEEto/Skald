@@ -11293,7 +11293,8 @@ scroll_advance :: proc(
 		ctx.input.scroll.y = 0
 	}
 
-	hover_thumb := false
+	hover_thumb   := false
+	claim_pointer := false
 
 	if vp.w > 0 && vp.h > 0 && content_h > vp.h {
 		bar_w: f32 = 6
@@ -11315,12 +11316,24 @@ scroll_advance :: proc(
 		t: f32 = 0
 		if max_off > 0 { t = clamped_off / max_off }
 		thumb_y := bar.y + (bar.h - thumb_h) * t
-		thumb := Rect{bar.x, thumb_y, bar.w, thumb_h}
+
+		// Grab zone: the visible thumb (drawn slim in layout.odin) is a hard
+		// target, so accept a thumb press anywhere in a wider band flush to
+		// the viewport's right edge — this kills the ~2px dead gap at the
+		// window edge and the thin grab target in one go. Track page-clicks
+		// stay on the visible `bar` so a click in the content near the right
+		// edge doesn't page-jump unexpectedly. Vertical geometry is
+		// unchanged, so the drag still tracks the visible thumb exactly.
+		grab_w: f32 = 20
+		hit_x     := vp.x + vp.w - grab_w
+		hit_thumb := Rect{hit_x, thumb_y, vp.x + vp.w - hit_x, thumb_h}
 
 		mp := ctx.input.mouse_pos
-		on_thumb := rect_contains_point(thumb, mp)
-		on_track := rect_contains_point(bar,   mp) && !on_thumb
+		on_thumb := rect_contains_point(hit_thumb, mp)
+		on_track := rect_contains_point(bar, mp) && !on_thumb
 		hover_thumb = on_thumb && hovered
+		// Claim the pointer while the bar is hovered or grabbed (see below).
+		claim_pointer = st.pressed || (hovered && (on_thumb || on_track))
 
 		// `hovered` gates press-start (no grabbing the thumb behind a modal);
 		// an already-latched drag below continues regardless.
@@ -11349,6 +11362,21 @@ scroll_advance :: proc(
 	} else {
 		st.pressed = false
 	}
+
+	// Pointer capture: own the mouse while the bar is hovered or dragged so
+	// the press doesn't bleed into the content under the bar, and a sloppy
+	// drag that wanders onto rows doesn't select them. Asserted a frame ahead
+	// via hover — the press itself is handled by widgets built before this
+	// one, so they need last frame's claim to already be set.
+	if claim_pointer {
+		ctx.widgets.pointer_capture_id    = id
+		ctx.widgets.pointer_capture_frame = ctx.widgets.frame
+	} else if ctx.widgets.pointer_capture_id == id {
+		ctx.widgets.pointer_capture_id = 0
+	}
+	// Dragging the thumb past the window edge keeps tracking via SDL's
+	// default mouse auto-capture (SDL_HINT_MOUSE_AUTO_CAPTURE) — no explicit
+	// SDL_CaptureMouse needed; on Wayland that's the implicit pointer grab.
 
 	widget_set(ctx, id, st)
 	return st, hover_thumb

@@ -442,6 +442,17 @@ Widget_Store :: struct {
 	// last in the render walk and gets to claim the cursor. The run
 	// loop applies it via SDL once per frame, after view has settled.
 	wants_cursor:      Cursor_Shape,
+	// pointer_capture_id, when non-zero, is the widget that owns the mouse —
+	// currently a scrollbar being hovered or dragged. While set, widget_hovered
+	// returns false for every OTHER id, so content under the bar (and rows a
+	// sloppy drag wanders onto) can't react to a press meant for the scrollbar.
+	// It persists across frames (a live grab, not per-frame state):
+	// scroll_advance asserts it on hover/drag and clears it on release.
+	// pointer_capture_frame stamps the last assertion so a scroll that vanishes
+	// mid-grab can't strand the pointer — widget_hovered ignores a capture more
+	// than one frame stale.
+	pointer_capture_id:    Widget_ID,
+	pointer_capture_frame: u64,
 	// frame is a monotonically increasing counter bumped by
 	// widget_store_frame_reset. Widget_State carries the frame value it
 	// was last written at; widget_get compares against (frame - 1) to
@@ -1191,6 +1202,14 @@ rect_hovered :: proc(ctx: ^Ctx($Msg), rect: Rect) -> bool {
 widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	st, ok := ctx.widgets.states[id]
 	if !ok { return false }
+	// Pointer capture: while a scrollbar owns the mouse (hovered or dragged),
+	// no other widget reports hover — this kills click/hover bleed-through to
+	// the content under the bar and to rows a sloppy drag wanders onto. A
+	// capture more than one frame stale (a scroll removed mid-grab) is ignored.
+	cap := ctx.widgets.pointer_capture_id
+	if cap != 0 && cap != id && ctx.widgets.pointer_capture_frame + 1 >= ctx.widgets.frame {
+		return false
+	}
 	if !rect_contains_point(st.last_rect, ctx.input.mouse_pos) { return false }
 	// Reject the hover when the mouse is outside the scissor the widget
 	// rendered under: a widget scrolled out of its container's viewport
