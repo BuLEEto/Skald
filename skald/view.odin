@@ -10065,22 +10065,18 @@ Drag_Payload :: struct {
 // The ghost is only drawn while the source is built — a source scrolled out of
 // a virtual_list keeps the drag alive but hides the ghost (rebuild one from
 // `dragging_payload` if you need it then).
-drag_source :: proc(
-	ctx:       ^Ctx($Msg),
-	child:     View,
-	payload:   Drag_Payload,
-	visual:    View,
-	id:        Widget_ID = 0,
-	threshold: f32 = 5,
-) -> View {
-	id := widget_resolve_id(ctx, id)
-	st := widget_get(ctx, id, .Click_Zone)
-	d  := &ctx.widgets.drag
-
+// _drag_source_step runs one frame of drag-source behaviour for widget `id`
+// (its rect is `st.last_rect`): arm on press, start a drag past `threshold`,
+// re-supply the ghost while active. Shared by `drag_source` and `table` rows;
+// mutates `st`, which the caller persists.
+@(private)
+_drag_source_step :: proc(ctx: ^Ctx($Msg), id: Widget_ID, st: ^Widget_State,
+                          payload: Drag_Payload, visual: View, threshold: f32) {
+	d := &ctx.widgets.drag
 	if d.active && d.source_id == id {
-		// We're the live source: re-supply the ghost (a temp-arena View built
-		// this frame, drawn on top right after render_overlays) and show the
-		// move cursor. Capture is kept alive centrally by the run loop.
+		// Live source: re-supply the ghost (a temp-arena View, drawn on top
+		// after render_overlays) and show the move cursor; capture is kept
+		// alive by the run loop.
 		d.visual       = visual
 		d.visual_valid = true
 		cursor_request(ctx, .Move)
@@ -10103,7 +10099,19 @@ drag_source :: proc(
 		}
 	}
 	if !ctx.input.mouse_buttons[.Left] { st.pressed = false }
+}
 
+drag_source :: proc(
+	ctx:       ^Ctx($Msg),
+	child:     View,
+	payload:   Drag_Payload,
+	visual:    View,
+	id:        Widget_ID = 0,
+	threshold: f32 = 5,
+) -> View {
+	id := widget_resolve_id(ctx, id)
+	st := widget_get(ctx, id, .Click_Zone)
+	_drag_source_step(ctx, id, &st, payload, visual, threshold)
 	widget_set(ctx, id, st)
 	c := new(View, context.temp_allocator)
 	c^ = child
@@ -12375,6 +12383,7 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 	header_height:   f32,
 	hairline:        bool,
 	on_row_context:  proc(row: int) -> Msg,
+	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool),
 }
 
 // table is a virtualized, sortable, resizable, selectable data grid.
@@ -12431,6 +12440,12 @@ table_full :: proc(
 	// `mouse_pressed_raw`, so it fires even when the table is wrapped in a
 	// `context_menu` (which consumed the cooked right-press in the main pass).
 	on_row_context:  proc(row: int) -> Msg,
+	// on_row_drag makes table rows in-window drag sources (requests 012/017).
+	// Called per visible row; return ok=true to make that row draggable, with
+	// the `Drag_Payload` it carries and the ghost `View` that follows the
+	// cursor. The table runs the same threshold / ghost / pointer-capture logic
+	// as `drag_source`. Pair with a wrapping `drop_target` to receive the drop.
+	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool) = nil,
 	sort_column:     int       = -1,
 	sort_ascending:  bool      = true,
 	focus_row:       int       = -1,
@@ -12497,6 +12512,7 @@ table_full :: proc(
 			header_height   = header_height,
 			hairline        = hairline,
 			on_row_context  = on_row_context,
+			on_row_drag     = on_row_drag,
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, size: [2]f32) -> View {
 			// Tight-window guard — same as scroll() / grid() / virtual_list().
@@ -12524,6 +12540,7 @@ table_full :: proc(
 				overscan       = data.overscan,
 				header_height  = data.header_height,
 				hairline       = data.hairline,
+				on_row_drag    = data.on_row_drag,
 			)
 		}
 		return sized(ctx, p, fill_builder,
@@ -12958,7 +12975,7 @@ table_full :: proc(
 			)
 		}
 
-		if on_row_click != nil || on_row_context != nil {
+		if on_row_click != nil || on_row_context != nil || on_row_drag != nil {
 			row_id := widget_auto_id(ctx)
 			row_st := widget_get(ctx, row_id, .Click_Zone)
 			if on_row_click != nil && ctx.input.mouse_pressed[.Left] &&
@@ -12984,6 +13001,14 @@ table_full :: proc(
 			   widget_hovered(ctx, row_id) {
 				send(ctx, on_row_context(i))
 				widget_focus(ctx, body_id)
+			}
+			// Drag source: the app decides per row whether it's draggable and
+			// what payload/ghost it carries. Same gesture as `drag_source`,
+			// keyed to this row's zone.
+			if on_row_drag != nil {
+				if payload, visual, ok := on_row_drag(state, i); ok {
+					_drag_source_step(ctx, row_id, &row_st, payload, visual, 5)
+				}
 			}
 			widget_set(ctx, row_id, row_st)
 			rc := new(View, context.temp_allocator)

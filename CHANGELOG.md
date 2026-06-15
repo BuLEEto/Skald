@@ -17,7 +17,9 @@ bug fixes bump the patch.
   pointer, so it doesn't click-through or hover-bleed into content underneath;
   Esc or a release over nothing cancels. Selection and multi-item drag compose
   from the existing click queries — the framework just carries the gesture and
-  paints the ghost. In-window only (no cross-app data-device yet).
+  paints the ghost. In-window only (no cross-app data-device yet). `table` grows
+  an `on_row_drag(state, row) -> (payload, visual, ok)` callback so list-view
+  rows are drag sources too, composing with `on_row_click` / `on_row_activate`.
 
 ### Changed
 

@@ -1110,6 +1110,18 @@ For shift-select / ctrl-toggle, read `mods` in `on_row_click`.
 `on_row_activate` fires on double-click or Enter when a row has
 keyboard focus.
 
+**Dragging rows.** Pass `on_row_drag: proc(state, row) -> (payload:
+Drag_Payload, visual: View, ok: bool)` to make rows in-window drag
+sources (see `drag_source`). Return `ok = true` to make that row
+draggable; the table runs the same threshold / ghost / pointer-capture
+gesture, keyed to the row's hit-zone, and it composes with
+`on_row_click` / `on_row_activate` (a press still selects, a
+double-click still activates, only a past-threshold move becomes a
+drag). It's on the full `table` form, so pass `on_row_context` (e.g.
+`nil`) to select it. The callback has no `ctx`, so build the ghost
+`visual` with literal colours. Wrap the table (or its container) in a
+`drop_target` to receive drops.
+
 Widget IDs inside `row_builder` are auto-scoped per `row_key(state,
 row)` return value (same as `virtual_list`) — cells can contain any
 stateful widget without extra ceremony, and state follows the item
