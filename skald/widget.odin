@@ -412,6 +412,27 @@ Focusable_Entry :: struct {
 	tab_index: int,
 }
 
+// Active_Drag is the window-global in-window drag gesture (request 012 Layer
+// 1) — at most one is live per window, so it sits on Widget_Store as a
+// singleton like `pointer_capture_id`. `drag_source` starts it; `drop_target`
+// or a cancel path ends it.
+Active_Drag :: struct {
+	active:       bool,
+	source_id:    Widget_ID,
+	// payload identifies the dragged thing. `kind` gates which targets accept
+	// the drop; `id` is an app-side handle (it maps id -> its own data).
+	// `kind` is heap-cloned (context.allocator) on start and freed on end.
+	payload_kind: string,
+	payload_id:   u64,
+	start_pos:    [2]f32, // logical px, where the press that armed the drag landed
+	grab_offset:  [2]f32, // cursor -> visual top-left, so the ghost keeps its grab point
+	// visual is the cursor-following ghost. Per-frame: the active source
+	// re-supplies this temp-arena View each frame (cleared in frame_reset); the
+	// run loop draws it after render_overlays the same frame, never stored across.
+	visual:       View,
+	visual_valid: bool,
+}
+
 Widget_Store :: struct {
 	states:            map[Widget_ID]Widget_State,
 	auto_id:           Widget_ID,
@@ -453,6 +474,8 @@ Widget_Store :: struct {
 	// than one frame stale.
 	pointer_capture_id:    Widget_ID,
 	pointer_capture_frame: u64,
+	// drag is the live in-window drag-and-drop gesture (see Active_Drag).
+	drag:                  Active_Drag,
 	// frame is a monotonically increasing counter bumped by
 	// widget_store_frame_reset. Widget_State carries the frame value it
 	// was last written at; widget_get compares against (frame - 1) to
@@ -662,6 +685,7 @@ widget_store_destroy :: proc(ws: ^Widget_Store) {
 		link_rects_free(st.link_rects)
 		vline_cache_free(st.vline_cache)
 	}
+	if ws.drag.active { delete(ws.drag.payload_kind) } // a drag can be live at shutdown
 	delete(ws.states)
 	delete(ws.focusables)
 	delete(ws.overlay_rects)
@@ -710,6 +734,10 @@ widget_store_frame_reset :: proc(ws: ^Widget_Store) {
 	ws.wants_cursor           = .Default
 	ws.next_frame_deadline_ns = 0
 	ws.frame                 += 1
+	// The drag ghost is per-frame: the active source re-supplies it during view.
+	// Clear it so a frame where the source isn't built draws no stale visual.
+	ws.drag.visual       = {}
+	ws.drag.visual_valid = false
 	clear(&ws.focusables)
 	// Swap the overlay buffers so this frame's builders/renderers can
 	// push into a fresh `overlay_rects`, while `overlay_rects_prev`
@@ -1200,8 +1228,6 @@ rect_hovered :: proc(ctx: ^Ctx($Msg), rect: Rect) -> bool {
 // `widget_record_rect` has run for the current frame — you simply get
 // `false` until the widget gets its first render-time rect.
 widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
-	st, ok := ctx.widgets.states[id]
-	if !ok { return false }
 	// Pointer capture: while a scrollbar owns the mouse (hovered or dragged),
 	// no other widget reports hover — this kills click/hover bleed-through to
 	// the content under the bar and to rows a sloppy drag wanders onto. A
@@ -1210,12 +1236,23 @@ widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	if cap != 0 && cap != id && ctx.widgets.pointer_capture_frame + 1 >= ctx.widgets.frame {
 		return false
 	}
-	if !rect_contains_point(st.last_rect, ctx.input.mouse_pos) { return false }
-	// Reject the hover when the mouse is outside the scissor the widget
-	// rendered under: a widget scrolled out of its container's viewport
-	// keeps a full last_rect for geometry but isn't clickable where it's
-	// clipped away. Zero clip_rect = unclipped = no restriction.
-	if st.clip_rect.w > 0 && !rect_contains_point(st.clip_rect, ctx.input.mouse_pos) {
+	return _point_hits_widget(ctx, id, ctx.input.mouse_pos)
+}
+
+// _point_hits_widget is widget_hovered's geometry + z-occlusion test at an
+// explicit point, WITHOUT the pointer-capture gate. `drop_target` /
+// `drag_target_hot` need it: a live drag holds capture on the source, so
+// widget_hovered would return false for the target and every drop would fail.
+@(private)
+_point_hits_widget :: proc(ctx: ^Ctx($Msg), id: Widget_ID, pt: [2]f32) -> bool {
+	st, ok := ctx.widgets.states[id]
+	if !ok { return false }
+	if !rect_contains_point(st.last_rect, pt) { return false }
+	// Reject the hit when the point is outside the scissor the widget rendered
+	// under: a widget scrolled out of its container's viewport keeps a full
+	// last_rect for geometry but isn't clickable where it's clipped away. Zero
+	// clip_rect = unclipped = no restriction.
+	if st.clip_rect.w > 0 && !rect_contains_point(st.clip_rect, pt) {
 		return false
 	}
 
@@ -1233,7 +1270,7 @@ widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	mr := ctx.widgets.modal_rect_prev
 	if mr.w > 0 && mr.h > 0 && !stamped { return false }
 
-	// Popover bleed: if the mouse is over an open overlay (select / picker /
+	// Popover bleed: if the point is over an open overlay (select / picker /
 	// menu / context-menu popover), a main-tree widget behind it is z-blocked
 	// — geometric containment alone can't tell a popover's own child from a
 	// background widget that happens to sit inside the popover's rect (a small
@@ -1241,7 +1278,7 @@ widget_hovered :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	// widget is suppressed only by a *different* overlay in front of it (one
 	// that doesn't contain it).
 	for rr in ctx.widgets.overlay_rects_prev {
-		if rect_contains_point(rr, ctx.input.mouse_pos) {
+		if rect_contains_point(rr, pt) {
 			if !stamped { return false }
 			if !rect_contains_rect(rr, st.last_rect) { return false }
 		}
@@ -1275,6 +1312,51 @@ widget_pressed :: proc(ctx: ^Ctx($Msg), id: Widget_ID, button: Mouse_Button = .L
 widget_active :: proc(ctx: ^Ctx($Msg), id: Widget_ID, button: Mouse_Button = .Left) -> bool {
 	id := widget_resolve_id(ctx, id)
 	return button in ctx.widgets.states[id].click_held
+}
+
+// --- In-window drag & drop (request 012 Layer 1) -----------------------------
+
+// _drag_begin_store arms the window-global drag. `kind` is cloned onto the
+// persistent heap so it survives the frames between drag-start and drop.
+@(private)
+_drag_begin_store :: proc(ws: ^Widget_Store, source_id: Widget_ID, kind: string, payload_id: u64, start_pos, grab_offset: [2]f32) {
+	if ws.drag.active { _drag_end_store(ws) } // never leak a previous payload
+	ws.drag = Active_Drag{
+		active       = true,
+		source_id    = source_id,
+		payload_kind = strings.clone(kind), // context.allocator (persistent)
+		payload_id   = payload_id,
+		start_pos    = start_pos,
+		grab_offset  = grab_offset,
+	}
+}
+
+// _drag_end_store clears the drag and frees the cloned payload. Idempotent: it
+// zeroes `active` first, so a drop and the end-of-frame cancel can both call it.
+@(private)
+_drag_end_store :: proc(ws: ^Widget_Store) {
+	if !ws.drag.active { return }
+	delete(ws.drag.payload_kind)
+	ws.drag = {}
+}
+
+// dragging_payload reports the in-flight drag: its kind, app id, and whether a
+// drag is active. Apps read it during view to style drop zones or the cursor.
+// The returned `kind` is borrowed (valid this frame only) — clone to retain.
+dragging_payload :: proc(ctx: ^Ctx($Msg)) -> (kind: string, id: u64, active: bool) {
+	d := &ctx.widgets.drag
+	return d.payload_kind, d.payload_id, d.active
+}
+
+// drag_target_hot reports a compatible drag hovering `id` now — for tinting the
+// drop zone under the cursor. `accepts` ("" = any) filters by kind. Capture-
+// exempt (the drag's capture would otherwise blind `widget_hovered`). Pass the
+// same id you gave `drop_target`.
+drag_target_hot :: proc(ctx: ^Ctx($Msg), id: Widget_ID, accepts: string = "") -> bool {
+	d := &ctx.widgets.drag
+	if !d.active { return false }
+	if accepts != "" && accepts != d.payload_kind { return false }
+	return _point_hits_widget(ctx, widget_resolve_id(ctx, id), ctx.input.mouse_pos)
 }
 
 // widget_click_count returns the SDL click streak (1 single, 2 double,

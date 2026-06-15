@@ -46,7 +46,7 @@ per row" recipe walks through both styles.
 - [Containers and layout helpers](#containers-and-layout-helpers) — list_frame, form_row, section_header, collapsible, accordion, empty_state
 - [Small decorations](#small-decorations) — badge, chip, avatar, kbd, stepper, alert
 - [Floating and feedback](#floating-and-feedback) — overlay, tooltip, dialog, confirm_dialog, alert_dialog, toast, menu
-- [Interaction helpers](#interaction-helpers) — right_click_zone, context_menu, drop_zone, drag_over
+- [Interaction helpers](#interaction-helpers) — right_click_zone, context_menu, drop_zone, drag_over, drag_source, drop_target, drag_target_hot
 - [Framework helpers](#framework-helpers) — widget_tab_index, font_add_fallback, font_use_default_emoji, Window_State
 
 ---
@@ -1521,6 +1521,53 @@ the matching `drop_zone`'s rect. Use this to tint the drop zone's
 border during drag-over.
 
 **Example: `examples/23_editor`** (drop a file to open it).
+
+### drag_source
+
+```odin
+Drag_Payload :: struct { kind: string, id: u64 }
+
+drag_source(ctx, child: View, payload: Drag_Payload, visual: View,
+            id: Widget_ID = 0, threshold: f32 = 5) -> View
+```
+
+Makes `child` draggable *within the window* (distinct from `drop_zone`,
+which is for OS file drops). A press that moves past `threshold` px
+starts a drag carrying `payload`; `visual` — any View — follows the
+cursor as a ghost. A press released under the threshold passes through,
+so an inner `clickable` still registers a normal click. While dragging,
+the source owns the pointer, so it doesn't click- or hover-bleed into
+content underneath. `kind` selects which `drop_target`s accept it; `id`
+is an app handle (a row index, a file id).
+
+### drop_target
+
+```odin
+drop_target(ctx, child: View,
+            on_drop: proc(p: Drag_Payload) -> Msg,
+            id: Widget_ID = 0, accepts: string = "") -> View
+```
+
+Fires `on_drop` when a drag whose kind matches `accepts` (`""` = any) is
+released over `child`, resolved at the release point (z-aware, like a
+click). Esc or a release over no target cancels. The `payload.kind`
+handed to `on_drop` is a frame-arena string — clone to keep.
+
+### drag_target_hot / dragging_payload
+
+```odin
+drag_target_hot(ctx, id: Widget_ID, accepts: string = "") -> bool
+dragging_payload(ctx) -> (kind: string, id: u64, active: bool)
+```
+
+Queries for styling while a drag is in flight: `drag_target_hot` is true
+when a compatible drag hovers `id` (tint the drop zone); `dragging_payload`
+reports the active drag for cursor or app-level feedback. Selection and
+multi-item drag are app state composed from `widget_pressed` /
+`widget_clicked` — no special multi-select API.
+
+**Example: `examples/53_drag_drop`** (drag folders between panes, with
+Ctrl-click multi-select).
 
 ## Framework helpers
 

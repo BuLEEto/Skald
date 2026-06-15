@@ -6,6 +6,19 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Added
+
+- **In-window drag & drop.** `drag_source(child, payload, visual)` makes an item
+  draggable — a press that moves past a threshold starts a drag carrying a
+  `Drag_Payload{kind, id}`, with `visual` (any View) following the cursor as a
+  ghost. `drop_target(child, on_drop, accepts)` fires a Msg when a matching drag
+  is released over it, resolved at the release point (z-aware, like a click).
+  `drag_target_hot` / `dragging_payload` drive hover tints. A drag owns the
+  pointer, so it doesn't click-through or hover-bleed into content underneath;
+  Esc or a release over nothing cancels. Selection and multi-item drag compose
+  from the existing click queries — the framework just carries the gesture and
+  paints the ghost. In-window only (no cross-app data-device yet).
+
 ### Changed
 
 - **`scroll` thumb is much easier to grab.** Presses register in a wider

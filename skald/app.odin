@@ -922,6 +922,20 @@ run :: proc(app: App($State, $Msg)) {
 			widget_store_frame_reset(t_widgets)
 			widget_store_blur_on_outside_press(t_widgets, t_w.input)
 
+			// In-window drag (request 012 Layer 1): Esc cancels — swallowed
+			// so a dialog underneath doesn't also close. Otherwise re-assert
+			// pointer-capture on the source every frame (even when it's
+			// scrolled out of view) so the drag never leaks clicks underneath.
+			if t_widgets.drag.active {
+				if .Escape in t_w.input.keys_pressed {
+					_drag_end_store(t_widgets)
+					t_w.input.keys_pressed -= {.Escape}
+				} else {
+					t_widgets.pointer_capture_id    = t_widgets.drag.source_id
+					t_widgets.pointer_capture_frame = t_widgets.frame
+				}
+			}
+
 			// Modal dialog interception. A left-press outside the card is
 			// swallowed — `mouse_pressed[.Left]` and `mouse_released[.Left]`
 			// are zeroed so nothing underneath the scrim fires. The click
@@ -985,6 +999,28 @@ run :: proc(app: App($State, $Msg)) {
 				// the main pass — they only queued themselves. Drain the
 				// queue now so they sit on top in draw order.
 				render_overlays(&r)
+
+				// In-window drag ghost: drawn on top of overlays at the cursor.
+				// The visual is the temp-arena View the active source supplied
+				// in `view` this frame — the arena outlives this draw, so no
+				// cross-frame copy is needed.
+				if t_widgets.drag.active && t_widgets.drag.visual_valid {
+					gv := t_widgets.drag.visual
+					sz := view_size(&r, gv)
+					// The grab point was captured relative to the source row,
+					// usually wider than the ghost. Clamp it to the ghost's
+					// size so the cursor stays on the ghost instead of floating
+					// off a short row's far edge.
+					off := t_widgets.drag.grab_offset
+					off.x = clamp(off.x, 0, sz.x)
+					off.y = clamp(off.y, 0, sz.y)
+					render_view(&r, gv, t_w.input.mouse_pos - off, sz)
+				}
+				// A successful drop already ended the drag in `view`; a release
+				// with a drag still live means it landed on nothing — cancel it.
+				if t_widgets.drag.active && !t_w.input.mouse_buttons[.Left] {
+					_drag_end_store(t_widgets)
+				}
 				// Debug inspector paints on the primary window only — its
 				// hover readout is app-level info; drawing it on every
 				// popover and HUD would be noise.

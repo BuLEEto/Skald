@@ -10042,6 +10042,113 @@ drag_over :: proc(ctx: ^Ctx($Msg), id: Widget_ID) -> bool {
 	       rect_contains_point(st.last_rect, ctx.input.drag_pos)
 }
 
+// Drag_Payload identifies an item dragged within a window. `kind` gates which
+// `drop_target`s accept it; `id` is an app-side handle (a row index, a file id).
+Drag_Payload :: struct {
+	kind: string,
+	id:   u64,
+}
+
+// drag_source makes `child` draggable. A press that moves past `threshold` px
+// starts a drag carrying `payload`; `visual` (any View) follows the cursor as a
+// ghost. A press released under the threshold passes through, so an inner
+// `clickable` still registers the click. While dragging, the source owns the
+// pointer (no click/hover bleed-through); the drop fires on the `drop_target`
+// under the release point, and Esc or a release over nothing cancels.
+//
+//     skald.drag_source(ctx,
+//         skald.clickable(ctx, row, Select{i}, id = row_id),
+//         payload = skald.Drag_Payload{kind = "file", id = u64(i)},
+//         visual  = skald.text(name, th.color.fg, th.font.size_md),
+//         id      = drag_id)
+//
+// The ghost is only drawn while the source is built — a source scrolled out of
+// a virtual_list keeps the drag alive but hides the ghost (rebuild one from
+// `dragging_payload` if you need it then).
+drag_source :: proc(
+	ctx:       ^Ctx($Msg),
+	child:     View,
+	payload:   Drag_Payload,
+	visual:    View,
+	id:        Widget_ID = 0,
+	threshold: f32 = 5,
+) -> View {
+	id := widget_resolve_id(ctx, id)
+	st := widget_get(ctx, id, .Click_Zone)
+	d  := &ctx.widgets.drag
+
+	if d.active && d.source_id == id {
+		// We're the live source: re-supply the ghost (a temp-arena View built
+		// this frame, drawn on top right after render_overlays) and show the
+		// move cursor. Capture is kept alive centrally by the run loop.
+		d.visual       = visual
+		d.visual_valid = true
+		cursor_request(ctx, .Move)
+	} else if !d.active {
+		// Arm on press; promote to a drag once the cursor moves past the
+		// threshold — that's what separates a drag from a click.
+		if widget_pressed(ctx, id) {
+			st.pressed   = true
+			st.press_pos = ctx.input.mouse_pos
+		}
+		if st.pressed && ctx.input.mouse_buttons[.Left] {
+			dx := abs(ctx.input.mouse_pos.x - st.press_pos.x)
+			dy := abs(ctx.input.mouse_pos.y - st.press_pos.y)
+			if dx + dy > threshold {
+				grab := ctx.input.mouse_pos - [2]f32{st.last_rect.x, st.last_rect.y}
+				_drag_begin_store(ctx.widgets, id, payload.kind, payload.id, st.press_pos, grab)
+				ctx.widgets.pointer_capture_id    = id
+				ctx.widgets.pointer_capture_frame = ctx.widgets.frame
+			}
+		}
+	}
+	if !ctx.input.mouse_buttons[.Left] { st.pressed = false }
+
+	widget_set(ctx, id, st)
+	c := new(View, context.temp_allocator)
+	c^ = child
+	return View_Zone{id = id, child = c}
+}
+
+// drop_target accepts an in-window drag. When a drag whose kind matches
+// `accepts` ("" = any) is released over `child`, it fires `on_drop(payload)`.
+// The drop resolves to the target under the RELEASE point (z-aware, like a
+// click); when targets overlap, the first in view order wins. For hover
+// feedback while a drag is in flight, read `drag_target_hot(ctx, id, accepts)`.
+//
+// The `payload.kind` handed to `on_drop` lives in the frame arena — clone it to
+// retain past this frame (same contract as `drop_zone`'s files).
+drop_target :: proc(
+	ctx:     ^Ctx($Msg),
+	child:   View,
+	on_drop: proc(p: Drag_Payload) -> Msg,
+	id:      Widget_ID = 0,
+	accepts: string = "",
+) -> View {
+	id := widget_resolve_id(ctx, id)
+	st := widget_get(ctx, id, .Click_Zone)
+	d  := &ctx.widgets.drag
+
+	// Capture-exempt hit test: the live drag holds pointer-capture on its
+	// source, so widget_hovered would return false here — _point_hits_widget
+	// answers "what's under the release point?" ignoring the capture gate.
+	if d.active && ctx.input.mouse_released[.Left] &&
+	   (accepts == "" || accepts == d.payload_kind) &&
+	   _point_hits_widget(ctx, id, ctx.input.mouse_pos) {
+		p := Drag_Payload{
+			kind = strings.clone(d.payload_kind, context.temp_allocator),
+			id   = d.payload_id,
+		}
+		send(ctx, on_drop(p))
+		_drag_end_store(ctx.widgets)
+	}
+
+	widget_set(ctx, id, st)
+	c := new(View, context.temp_allocator)
+	c^ = child
+	return View_Zone{id = id, child = c}
+}
+
 // dialog presents `content` as a modal: a full-frame scrim dims the app,
 // a centered card hosts the child, and keyboard/mouse outside the card
 // is trapped so nothing behind it fires. When `open` is false the return
