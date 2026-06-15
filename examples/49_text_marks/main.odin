@@ -63,7 +63,9 @@ Apply    :: struct{}
 Dismiss  :: struct{}
 
 on_text    :: proc(v: string) -> Msg { return Edited(v) }
-on_pick    :: proc(i: int) -> Msg { return i == 0 ? Msg(Apply{}) : Msg(Dismiss{}) }
+// Separate returns, not a `?:` ternary — a ternary that yields two different
+// union variants makes some Odin nightlies emit a bad LLVM PHI node.
+on_pick    :: proc(i: int) -> Msg { if i == 0 do return Apply{}; return Dismiss{} }
 on_dismiss :: proc() -> Msg { return Dismiss{} }
 
 init :: proc() -> State {
