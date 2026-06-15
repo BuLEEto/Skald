@@ -297,6 +297,12 @@ input_feed_modifiers :: proc(w: ^Window, mods: Modifiers) { w.input.modifiers = 
 // DPI scaling contract both require them. Zero `extra_flags` preserves
 // the default behavior.
 window_open :: proc(title: string, size: Size, initial: Window_State = {}, extra_flags: sdl3.WindowFlags = {}) -> (w: Window, ok: bool) {
+	// On a Wayland session, default to SDL's native Wayland driver instead
+	// of XWayland (which mis-maps pointer input on negative-origin outputs).
+	// No-op on X11 and respects a pre-set SDL_VIDEODRIVER — see the proc.
+	// Must run before sdl3.Init.
+	prefer_native_wayland()
+
 	// Tell SDL3 not to set `_NET_WM_BYPASS_COMPOSITOR = 1` on every X11
 	// window we create. The default is "1" (bypass) because SDL is built
 	// for fullscreen games, where bypassing the compositor avoids

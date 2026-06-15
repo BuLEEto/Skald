@@ -4,6 +4,19 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## Unreleased
+
+### Fixed
+
+- **Default to native Wayland on a Wayland session.** SDL3 with no
+  `SDL_VIDEODRIVER` picks x11 on a Wayland desktop (where `DISPLAY` is also
+  set, via XWayland), and XWayland mis-maps pointer input on outputs at
+  negative layout coordinates — a window dragged to a monitor left of the
+  primary got no hover or clicks (keyboard still worked, so it looked frozen).
+  Skald now sets `SDL_VIDEODRIVER=wayland` in-process before `SDL_Init` when
+  `WAYLAND_DISPLAY` is set and no driver was chosen. No-op on real X11
+  sessions; respects a pre-set `SDL_VIDEODRIVER` / `SDL_VIDEO_DRIVER`.
+
 ## 1.0.0-rc12 — 2026-06-13
 
 ### Added
