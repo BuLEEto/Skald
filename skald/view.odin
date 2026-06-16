@@ -12408,7 +12408,7 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 	header_height:   f32,
 	hairline:        bool,
 	on_row_context:  proc(row: int) -> Msg,
-	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool),
+	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool, export_mime: string, export_data: []u8),
 }
 
 // table is a virtualized, sortable, resizable, selectable data grid.
@@ -12465,12 +12465,14 @@ table_full :: proc(
 	// `mouse_pressed_raw`, so it fires even when the table is wrapped in a
 	// `context_menu` (which consumed the cooked right-press in the main pass).
 	on_row_context:  proc(row: int) -> Msg,
-	// on_row_drag makes table rows in-window drag sources (requests 012/017).
-	// Called per visible row; return ok=true to make that row draggable, with
-	// the `Drag_Payload` it carries and the ghost `View` that follows the
-	// cursor. The table runs the same threshold / ghost / pointer-capture logic
-	// as `drag_source`. Pair with a wrapping `drop_target` to receive the drop.
-	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool) = nil,
+	// on_row_drag makes table rows drag sources (requests 012/017/019). Called
+	// per visible row; return ok=true to make that row draggable, with the
+	// `Drag_Payload` it carries and the ghost `View` that follows the cursor.
+	// The table runs the same threshold / ghost / pointer-capture logic as
+	// `drag_source`. Pair with a wrapping `drop_target` to receive an in-window
+	// drop. Return a non-empty `export_mime` (+ `export_data`) to also let the
+	// row drag OUT to other apps on Wayland — same as `drag_source`'s export.
+	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool, export_mime: string, export_data: []u8) = nil,
 	sort_column:     int       = -1,
 	sort_ascending:  bool      = true,
 	focus_row:       int       = -1,
@@ -13031,8 +13033,8 @@ table_full :: proc(
 			// what payload/ghost it carries. Same gesture as `drag_source`,
 			// keyed to this row's zone.
 			if on_row_drag != nil {
-				if payload, visual, ok := on_row_drag(state, i); ok {
-					_drag_source_step(ctx, row_id, &row_st, payload, visual, 5)
+				if payload, visual, ok, emime, edata := on_row_drag(state, i); ok {
+					_drag_source_step(ctx, row_id, &row_st, payload, visual, 5, emime, edata)
 				}
 			}
 			widget_set(ctx, row_id, row_st)

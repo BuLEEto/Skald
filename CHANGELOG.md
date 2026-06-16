@@ -18,8 +18,8 @@ bug fixes bump the patch.
   Esc or a release over nothing cancels. Selection and multi-item drag compose
   from the existing click queries — the framework just carries the gesture and
   paints the ghost. In-window only (no cross-app data-device yet). `table` grows
-  an `on_row_drag(state, row) -> (payload, visual, ok)` callback so list-view
-  rows are drag sources too, composing with `on_row_click` / `on_row_activate`.
+  an `on_row_drag` callback so list-view rows are drag sources too, composing
+  with `on_row_click` / `on_row_activate`.
 
 - **Drag *out* to other apps (Wayland).** `drag_source` gains optional
   `export_mime` + `export_data`: when the drag leaves the window on a Wayland
@@ -27,7 +27,8 @@ bug fixes bump the patch.
   file drags straight from a Skald app into a browser upload box / file manager /
   editor. The ghost View is rendered to the compositor's drag icon. No-op off
   Wayland (libwayland is loaded at runtime, never linked — X11 / non-Linux are
-  unaffected); in-window DnD is unchanged.
+  unaffected); in-window DnD is unchanged. `table`'s `on_row_drag` carries the
+  same export, so list-view rows drag out too — not just `drag_source` tiles.
 
 - **`tooltip` shadow control.** `tooltip(..., shadow := f32(-1))` — the default
   keeps the soft drop shadow; `>= 0` overrides it (`0` = no shadow), for

@@ -1111,9 +1111,11 @@ For shift-select / ctrl-toggle, read `mods` in `on_row_click`.
 keyboard focus.
 
 **Dragging rows.** Pass `on_row_drag: proc(state, row) -> (payload:
-Drag_Payload, visual: View, ok: bool)` to make rows in-window drag
-sources (see `drag_source`). Return `ok = true` to make that row
-draggable; the table runs the same threshold / ghost / pointer-capture
+Drag_Payload, visual: View, ok: bool, export_mime: string, export_data:
+[]u8)` to make rows drag sources (see `drag_source`). Return `ok = true`
+to make that row draggable; a non-empty `export_mime` (+ `export_data`)
+also lets it drag OUT to other apps on Wayland, same as `drag_source`'s
+export. The table runs the same threshold / ghost / pointer-capture
 gesture, keyed to the row's hit-zone, and it composes with
 `on_row_click` / `on_row_activate` (a press still selects, a
 double-click still activates, only a past-threshold move becomes a
