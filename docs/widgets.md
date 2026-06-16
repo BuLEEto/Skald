@@ -1544,7 +1544,8 @@ border during drag-over.
 Drag_Payload :: struct { kind: string, id: u64 }
 
 drag_source(ctx, child: View, payload: Drag_Payload, visual: View,
-            id: Widget_ID = 0, threshold: f32 = 5) -> View
+            id: Widget_ID = 0, threshold: f32 = 5,
+            export_mime: string = "", export_data: []u8 = nil) -> View
 ```
 
 Makes `child` draggable *within the window* (distinct from `drop_zone`,
@@ -1555,6 +1556,13 @@ so an inner `clickable` still registers a normal click. While dragging,
 the source owns the pointer, so it doesn't click- or hover-bleed into
 content underneath. `kind` selects which `drop_target`s accept it; `id`
 is an app handle (a row index, a file id).
+
+`export_mime` + `export_data` (optional) also make it draggable to **other
+apps**: when the drag leaves the window on a Wayland session, Skald starts a
+real `wl_data_device` drag offering `export_data` under `export_mime` (e.g. a
+`text/uri-list` naming a file), and renders `visual` as the compositor's drag
+icon. Supply them inline — they're snapshotted at drag start. No-op off Wayland;
+in-window drops are unaffected.
 
 ### drop_target
 

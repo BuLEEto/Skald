@@ -21,6 +21,14 @@ bug fixes bump the patch.
   an `on_row_drag(state, row) -> (payload, visual, ok)` callback so list-view
   rows are drag sources too, composing with `on_row_click` / `on_row_activate`.
 
+- **Drag *out* to other apps (Wayland).** `drag_source` gains optional
+  `export_mime` + `export_data`: when the drag leaves the window on a Wayland
+  session, Skald starts a real `wl_data_device` drag offering those bytes, so a
+  file drags straight from a Skald app into a browser upload box / file manager /
+  editor. The ghost View is rendered to the compositor's drag icon. No-op off
+  Wayland (libwayland is loaded at runtime, never linked — X11 / non-Linux are
+  unaffected); in-window DnD is unchanged.
+
 - **`tooltip` shadow control.** `tooltip(..., shadow := f32(-1))` — the default
   keeps the soft drop shadow; `>= 0` overrides it (`0` = no shadow), for
   rendering over a compositor backdrop-blur where a soft shadow halos into a

@@ -672,6 +672,10 @@ run :: proc(app: App($State, $Msg)) {
 		for t in r.targets { append(&plats, t.platform) }
 		windows_pump(plats[:])
 
+		// Pump the drag-OUT wayland queue (serial capture + data-source
+		// send/finished callbacks). No-op until a wayland session is wired.
+		dragout_pump()
+
 		// Resolve close requests (window ✕ / app-level quit). The primary
 		// may veto via App.on_close_request — dispatch its Msg and leave the
 		// window open; the app exits later via `cmd_quit`. Without a hook (or
@@ -869,6 +873,11 @@ run :: proc(app: App($State, $Msg)) {
 					if ms < wait_ms { wait_ms = ms }
 				}
 			}
+			// While a cross-app drag-OUT is in flight, never block: the
+			// compositor owns the pointer so no SDL events arrive, but we must
+			// keep servicing the wayland queue every iteration to answer the
+			// receiving app's data request before it times out (request 019).
+			if dragout_in_progress() { wait_ms = 0 }
 			if wait_ms > 0 { _ = sdl3.WaitEventTimeout(nil, wait_ms) }
 			free_all(context.temp_allocator)
 			continue
@@ -933,6 +942,23 @@ run :: proc(app: App($State, $Msg)) {
 				} else {
 					t_widgets.pointer_capture_id    = t_widgets.drag.source_id
 					t_widgets.pointer_capture_frame = t_widgets.frame
+
+					// Drag-OUT promotion (request 019): once the pointer leaves
+					// the window during a drag whose source supplied an `export`,
+					// hand off to a real cross-app Wayland drag. No-op off
+					// Wayland; `promoted` latches so we start it exactly once.
+					d := &t_widgets.drag
+					if d.export_mime != "" && !d.promoted {
+						mp := t_w.input.mouse_pos
+						sz := t_w.size_logical
+						if mp.x < 0 || mp.y < 0 || mp.x >= f32(sz.x) || mp.y >= f32(sz.y) {
+							if dragout_start_native(t_w.handle, []string{d.export_mime}, d.export_data,
+								d.icon_px, d.icon_w, d.icon_h,
+								int(d.grab_offset.x), int(d.grab_offset.y)) {
+								d.promoted = true
+							}
+						}
+					}
 				}
 			}
 
@@ -1004,7 +1030,7 @@ run :: proc(app: App($State, $Msg)) {
 				// The visual is the temp-arena View the active source supplied
 				// in `view` this frame — the arena outlives this draw, so no
 				// cross-frame copy is needed.
-				if t_widgets.drag.active && t_widgets.drag.visual_valid {
+				if t_widgets.drag.active && t_widgets.drag.visual_valid && !t_widgets.drag.promoted {
 					gv := t_widgets.drag.visual
 					sz := view_size(&r, gv)
 					// The grab point was captured relative to the source row,
@@ -1031,6 +1057,26 @@ run :: proc(app: App($State, $Msg)) {
 				}
 				frame_end(&r)
 			}
+
+			// Cross-app drag icon (request 019, stage 2): the frame after a
+			// drag-out begins, render the ghost View to pixels while it's still
+			// alive this frame (it's per-frame temp). Done once (need_icon
+			// latches off); the compositor shows it when the drag leaves.
+			{
+				d := &t_widgets.drag
+				if d.active && d.need_icon && d.visual_valid && !d.promoted {
+					if px, iw, ih, okp := render_view_to_pixels(&r, d.visual, 320, 320); okp {
+						d.icon_px = px; d.icon_w = iw; d.icon_h = ih
+					}
+					d.need_icon = false
+				}
+			}
+
+			// Lazily wire up cross-app drag-out the first time this window uses
+			// an exportable drag_source (request 019) — keeps the wl_data_device
+			// + serial-capture pointer off apps that never drag out. ensure() is
+			// idempotent, so calling it each frame after is a cheap no-op.
+			if t_widgets.wants_dragout { dragout_init(t_w.handle) }
 
 			// Text input mode is per-window: SDL3 tracks it on the window
 			// handle, so each target sets its own based on what this

@@ -10078,7 +10078,9 @@ Drag_Payload :: struct {
 // mutates `st`, which the caller persists.
 @(private)
 _drag_source_step :: proc(ctx: ^Ctx($Msg), id: Widget_ID, st: ^Widget_State,
-                          payload: Drag_Payload, visual: View, threshold: f32) {
+                          payload: Drag_Payload, visual: View, threshold: f32,
+                          export_mime: string = "", export_data: []u8 = nil) {
+	if export_mime != "" { ctx.widgets.wants_dragout = true } // lazy-init drag-out
 	d := &ctx.widgets.drag
 	if d.active && d.source_id == id {
 		// Live source: re-supply the ghost (a temp-arena View, drawn on top
@@ -10100,6 +10102,15 @@ _drag_source_step :: proc(ctx: ^Ctx($Msg), id: Widget_ID, st: ^Widget_State,
 			if dx + dy > threshold {
 				grab := ctx.input.mouse_pos - [2]f32{st.last_rect.x, st.last_rect.y}
 				_drag_begin_store(ctx.widgets, id, payload.kind, payload.id, st.press_pos, grab)
+				// Snapshot the cross-app export payload onto the heap (request
+				// 019), so it survives to the promotion check even though the
+				// source's view won't run again before the pointer leaves.
+				if export_mime != "" {
+					d.export_mime = strings.clone(export_mime)
+					d.export_data = make([]u8, len(export_data))
+					copy(d.export_data, export_data)
+					d.need_icon = true // render the ghost to a cross-app icon
+				}
 				ctx.widgets.pointer_capture_id    = id
 				ctx.widgets.pointer_capture_frame = ctx.widgets.frame
 			}
@@ -10108,17 +10119,24 @@ _drag_source_step :: proc(ctx: ^Ctx($Msg), id: Widget_ID, st: ^Widget_State,
 	if !ctx.input.mouse_buttons[.Left] { st.pressed = false }
 }
 
+// `export_mime` + `export_data` (optional) make the item draggable to OTHER
+// apps: when the drag leaves the window on a Wayland session, Skald starts a
+// real `wl_data_device` drag offering `export_data` under `export_mime` (e.g.
+// a `text/uri-list` naming the file). Supply them inline — they're snapshotted
+// at drag-start. No-op off Wayland; in-window drops are unaffected.
 drag_source :: proc(
-	ctx:       ^Ctx($Msg),
-	child:     View,
-	payload:   Drag_Payload,
-	visual:    View,
-	id:        Widget_ID = 0,
-	threshold: f32 = 5,
+	ctx:         ^Ctx($Msg),
+	child:       View,
+	payload:     Drag_Payload,
+	visual:      View,
+	id:          Widget_ID = 0,
+	threshold:   f32 = 5,
+	export_mime: string = "",
+	export_data: []u8 = nil,
 ) -> View {
 	id := widget_resolve_id(ctx, id)
 	st := widget_get(ctx, id, .Click_Zone)
-	_drag_source_step(ctx, id, &st, payload, visual, threshold)
+	_drag_source_step(ctx, id, &st, payload, visual, threshold, export_mime, export_data)
 	widget_set(ctx, id, st)
 	c := new(View, context.temp_allocator)
 	c^ = child

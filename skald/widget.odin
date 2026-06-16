@@ -431,6 +431,22 @@ Active_Drag :: struct {
 	// run loop draws it after render_overlays the same frame, never stored across.
 	visual:       View,
 	visual_valid: bool,
+	// export_*, when export_mime is set, make this drag promotable to a real
+	// cross-app Wayland drag once the pointer leaves the window (request 019).
+	// The app supplies them inline in `view` (where it has state); Skald
+	// snapshots them onto the heap at drag-begin (freed on end). `promoted`
+	// latches once we've handed the drag to the compositor so we never start a
+	// second wayland drag.
+	export_mime:  string, // e.g. "text/uri-list"; "" = not exportable
+	export_data:  []u8,   // the bytes the receiving app pulls
+	promoted:     bool,
+	// Cross-app drag icon (request 019, stage 2): the ghost View rendered to
+	// BGRA-premultiplied pixels, snapshotted once while the View is alive (the
+	// View itself is per-frame temp), then handed to the compositor at promote.
+	need_icon:    bool,
+	icon_px:      []u8,
+	icon_w:       int,
+	icon_h:       int,
 }
 
 Widget_Store :: struct {
@@ -476,6 +492,11 @@ Widget_Store :: struct {
 	pointer_capture_frame: u64,
 	// drag is the live in-window drag-and-drop gesture (see Active_Drag).
 	drag:                  Active_Drag,
+	// wants_dragout latches true the first time this window builds a
+	// drag_source with an `export_mime` (request 019). The run loop reads it to
+	// lazily wire up the Wayland data-device + serial-capture pointer only for
+	// apps that actually drag OUT — others never touch libwayland.
+	wants_dragout:         bool,
 	// frame is a monotonically increasing counter bumped by
 	// widget_store_frame_reset. Widget_State carries the frame value it
 	// was last written at; widget_get compares against (frame - 1) to
@@ -1331,12 +1352,16 @@ _drag_begin_store :: proc(ws: ^Widget_Store, source_id: Widget_ID, kind: string,
 	}
 }
 
-// _drag_end_store clears the drag and frees the cloned payload. Idempotent: it
-// zeroes `active` first, so a drop and the end-of-frame cancel can both call it.
+// _drag_end_store clears the drag and frees the cloned payload + export
+// snapshot. Idempotent: it zeroes `active` first, so a drop and the end-of-frame
+// cancel can both call it.
 @(private)
 _drag_end_store :: proc(ws: ^Widget_Store) {
 	if !ws.drag.active { return }
 	delete(ws.drag.payload_kind)
+	delete(ws.drag.export_mime) // "" -> nil delete is a no-op
+	delete(ws.drag.export_data)
+	delete(ws.drag.icon_px)
 	ws.drag = {}
 }
 
