@@ -21,6 +21,11 @@ bug fixes bump the patch.
   an `on_row_drag(state, row) -> (payload, visual, ok)` callback so list-view
   rows are drag sources too, composing with `on_row_click` / `on_row_activate`.
 
+- **`tooltip` shadow control.** `tooltip(..., shadow := f32(-1))` — the default
+  keeps the soft drop shadow; `>= 0` overrides it (`0` = no shadow), for
+  rendering over a compositor backdrop-blur where a soft shadow halos into a
+  frosted ring.
+
 ### Changed
 
 - **`scroll` thumb is much easier to grab.** Presses register in a wider

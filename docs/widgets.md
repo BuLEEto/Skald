@@ -1396,10 +1396,14 @@ want the higher-level widgets rather than calling `overlay` directly.
 ### tooltip
 
 ```odin
-tooltip(ctx, child: View, text: string)
+tooltip(ctx, child: View, text: string, id := 0, shadow := f32(-1))
 ```
 
 Hover-triggered popover after a short delay. Wraps any existing view.
+`shadow` controls the bubble's drop shadow: the default (`-1`) keeps the
+soft radius-based shadow; `>= 0` overrides it (`0` = no shadow — pass this
+when rendering over a compositor backdrop-blur, where a soft shadow's
+translucent pixels halo into a frosted ring).
 
 ### dialog
 

@@ -735,6 +735,7 @@ View_Tooltip :: struct {
 	radius:    f32,
 	padding:   [2]f32,
 	font_size: f32,
+	shadow:    f32, // <0 = default radius-based shadow; >=0 overrides it (0 = none)
 }
 
 // View_Zone is a pure passthrough that records its child's rect into a
@@ -3654,11 +3655,16 @@ TOOLTIP_DELAY_MS :: 500
 // Builds using the previous frame's laid-out rect for hit-testing,
 // same as every other stateful widget — one-frame lag is invisible
 // under normal pointer speeds.
+// `shadow` controls the bubble's drop shadow. The default (-1) keeps the
+// usual soft radius-based shadow; a value >= 0 overrides it (0 = no shadow).
+// Pass 0 when rendering over a compositor backdrop-blur, where a soft
+// shadow's translucent pixels otherwise halo into a frosted ring.
 tooltip :: proc(
-	ctx:   ^Ctx($Msg),
-	child: View,
-	text:  string,
-	id:    Widget_ID = 0,
+	ctx:    ^Ctx($Msg),
+	child:  View,
+	text:   string,
+	id:     Widget_ID = 0,
+	shadow: f32 = -1,
 ) -> View {
 	th := ctx.theme
 
@@ -3703,6 +3709,7 @@ tooltip :: proc(
 		radius    = th.radius.sm,
 		padding   = {th.spacing.sm, th.spacing.xs},
 		font_size = th.font.size_sm,
+		shadow    = shadow,
 	}
 }
 

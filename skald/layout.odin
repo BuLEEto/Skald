@@ -1562,11 +1562,15 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 			cross_align = .Center,
 			children    = children,
 		}
+		// shadow < 0 keeps the default radius-based shadow; >= 0 overrides
+		// it (0 = none, for compositor backdrop-blur — see tooltip docs).
+		shadow_r := vv.radius
+		if vv.shadow >= 0 { shadow_r = vv.shadow }
 		append(&r.overlays, Overlay_Entry{
 			origin        = {bx, by},
 			size          = {bubble_w, bubble_h},
 			child         = bubble,
-			shadow_radius = vv.radius,
+			shadow_radius = shadow_r,
 			opacity       = 1,
 		})
 
