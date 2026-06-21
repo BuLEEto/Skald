@@ -478,6 +478,9 @@ draw_text :: proc(
 	size:  f32 = 14,
 	font:  Font = 0,
 ) {
+	// Expand tabs so the editable text_input (which shapes its raw buffer)
+	// draws `\t` as whitespace, not missing-glyph tofu. No-ops if tab-free.
+	text := expand_tabs(text)
 	if r.text.runa_state != nil {
 		draw_text_runa(r, text, x, y, color, size, font)
 		return
@@ -531,6 +534,10 @@ measure_text :: proc(
 	size: f32 = 14,
 	font: Font = 0,
 ) -> (width, line_height: f32) {
+	// Expand tabs so a `\t` measures as TAB_WIDTH spaces (matching draw_text /
+	// text_line_advances) — keeps text_input's caret, selection, and offset
+	// accessors aligned with the drawn glyphs. No-ops if tab-free.
+	text := expand_tabs(text)
 	if r.text.runa_state != nil {
 		return measure_text_runa(r, text, size, font)
 	}
@@ -570,6 +577,21 @@ text_line_advances :: proc(
 	font: Font = 0,
 	allocator := context.temp_allocator,
 ) -> []f32 {
+	// Tab-aware, yet still indexed by RAW byte offset (the wrap + rich-text
+	// contract): shape the EXPANDED string, then map each raw byte to its
+	// expanded column (a `\t` = one byte, TAB_WIDTH columns) so tab width
+	// matches measure_text / draw_text. No-ops if tab-free.
+	if strings.contains_rune(text, '\t') {
+		exp := expand_tabs(text)
+		adv := text_line_advances(r, exp, size, font, context.temp_allocator) // tab-free → normal path
+		out := make([]f32, len(text) + 1, allocator)
+		e := 0
+		for b in 0 ..= len(text) {
+			if e < len(adv) { out[b] = adv[e] }
+			if b < len(text) { e += TAB_WIDTH if text[b] == '\t' else 1 }
+		}
+		return out
+	}
 	if r != nil && r.text.runa_state != nil {
 		return text_line_advances_runa(r, text, size, font, allocator)
 	}

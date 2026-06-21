@@ -635,6 +635,12 @@ for a text area (and `wrap = true` if you want soft-wrap). Built-in:
 selection, clipboard (Ctrl+C/X/V), Ctrl-A select all, undo/redo
 (Ctrl+Z/Y), cursor navigation, IME.
 
+Tab characters render as four spaces of visible width (same fixed
+advance as `text`) — so a tab-indented file shows whitespace, not a
+missing-glyph tofu. The buffer keeps the single `\t` byte (it saves
+unchanged), and the caret, selection, and offset accessors all measure
+the expanded width, so a tab is one atomic rune to navigate over.
+
 `font` is a `Font` handle from `font_load` (`0` = the default Inter).
 The font threads through measurement, caret positioning, wrap, and
 hit-testing — useful for a code/prose editor that wants a custom

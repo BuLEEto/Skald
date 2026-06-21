@@ -313,6 +313,115 @@ offset_accessor_single_line_roundtrip :: proc(t: ^testing.T) {
 	testing.expect(t, !ok_stale, "stale geometry must return ok=false")
 }
 
+// Regression (req 022): the editable text_input shapes its raw buffer, so a
+// literal TAB must measure + position as TAB_WIDTH spaces (parity with text())
+// instead of missing-glyph tofu — and the offset accessors must stay aligned.
+@(test)
+text_input_tab_renders_as_spaces :: proc(t: ^testing.T) {
+	#assert(TAB_WIDTH == 4) // bump the reference string below if this changes
+	r := runa_renderer()
+	defer free_runa_renderer(r)
+	if r.text.runa_state == nil { return }
+
+	fs: f32 = 16
+	// A tab measures exactly TAB_WIDTH spaces wide — the RHS is literal
+	// spaces (no tab), so this isn't circular: it pins the expansion width.
+	tab_w,   _ := measure_text(r, "\t",   fs, 0)
+	four_sp, _ := measure_text(r, "    ", fs, 0)
+	testing.expectf(t, abs(tab_w - four_sp) < 0.01,
+		"tab should measure as %d spaces: tab=%v spaces=%v", TAB_WIDTH, tab_w, four_sp)
+	testing.expect(t, tab_w > 0, "tab must have positive width (not zero/tofu)")
+
+	Msg :: distinct int
+	store: Widget_Store
+	widget_store_init(&store)
+	defer widget_store_destroy(&store)
+	store.frame = 5
+
+	id   := Widget_ID(11)
+	text := "\tindented"
+	_, line_h := measure_text(r, "Ag", fs, 0)
+	store.states[id] = Widget_State{
+		kind         = .Text_Input,
+		last_frame   = store.frame,
+		last_rect    = {10, 20, 300, 40},
+		tg_text      = text,
+		tg_fs        = fs,
+		tg_pad       = {8, 8},
+		tg_line_h    = line_h,
+		tg_multiline = false,
+	}
+	input: Input
+	ctx := Ctx(Msg){widgets = &store, input = &input, renderer = r}
+
+	// The caret just past the tab (offset 1) sits one tab-width right of the
+	// line start — i.e. the tab occupies its expanded width, not 1 glyph.
+	rect0, _ := text_input_offset_rect(&ctx, id, 0)
+	rect1, _ := text_input_offset_rect(&ctx, id, 1)
+	testing.expectf(t, abs((rect1.x - rect0.x) - tab_w) < 0.5,
+		"offset 1 should sit one tab-width right of offset 0: got %v want %v",
+		rect1.x - rect0.x, tab_w)
+
+	// A click landing past the tab gap maps to a byte at/after the tab (it's
+	// one atomic rune — nav never lands "inside" it).
+	col, ok := text_input_offset_at(&ctx, id, {rect1.x + 0.5, rect1.y + line_h * 0.5})
+	testing.expect(t, ok, "offset_at ok")
+	testing.expectf(t, col >= 1, "click past the tab should land at/after the tab byte, got %d", col)
+}
+
+// Regression (req 022): the three text leaves (measure_text, draw_text,
+// text_line_advances) must agree on a tab's width — else a layout that reserves
+// space from advances (rich_text offsets, wrap breaks) then draws with draw_text
+// overlaps. Advances stay RAW-byte-indexed, so each prefix == measure_text.
+@(test)
+text_line_advances_tab_matches_measure :: proc(t: ^testing.T) {
+	r := runa_renderer()
+	defer free_runa_renderer(r)
+	if r.text.runa_state == nil { return }
+
+	fs: f32 = 16
+	s  := "a\tb\tc" // tabs interleaved with glyphs, len 5, tabs at bytes 1 and 3
+	adv := text_line_advances(r, s, fs, 0)
+	testing.expectf(t, len(adv) == len(s) + 1,
+		"advances stay indexed by raw byte: len(adv)=%d want %d", len(adv), len(s)+1)
+
+	// Full width equals measure_text (which expands tabs).
+	full, _ := measure_text(r, s, fs, 0)
+	testing.expectf(t, abs(adv[len(s)] - full) < 0.01,
+		"full advance %v should equal measure_text %v", adv[len(s)], full)
+
+	// Every raw-byte prefix width matches measure_text of that prefix — the
+	// property rich-text layout relies on (advance reserved == width drawn).
+	for b in 0 ..= len(s) {
+		w, _ := measure_text(r, s[:b], fs, 0)
+		testing.expectf(t, abs(adv[b] - w) < 0.01,
+			"prefix[:%d]: advance %v vs measure %v", b, adv[b], w)
+	}
+
+	// Monotonic (a tab can't make the pen go backwards).
+	for b in 1 ..= len(s) {
+		testing.expectf(t, adv[b] >= adv[b-1],
+			"advances must be non-decreasing at byte %d", b)
+	}
+
+	// Tab interleaved with multi-byte UTF-8 — the remap steps its expanded
+	// cursor per raw byte, so verify advances stay aligned at every RUNE
+	// boundary (what wrap / rich-text / hit-test actually index).
+	u := "é\t€\tabc" // é=2 bytes, €=3 bytes, tabs between
+	uadv := text_line_advances(r, u, fs, 0)
+	testing.expectf(t, len(uadv) == len(u) + 1,
+		"utf8+tab advances raw-indexed: len=%d want %d", len(uadv), len(u)+1)
+	bi := 0
+	for bi <= len(u) {
+		w, _ := measure_text(r, u[:bi], fs, 0)
+		testing.expectf(t, abs(uadv[bi] - w) < 0.01,
+			"utf8+tab prefix[:%d]: advance %v vs measure %v", bi, uadv[bi], w)
+		if bi == len(u) { break }
+		_, n := utf8.decode_rune_in_string(u[bi:])
+		bi += max(n, 1)
+	}
+}
+
 @(test)
 offset_accessor_multiline :: proc(t: ^testing.T) {
 	r := runa_renderer()

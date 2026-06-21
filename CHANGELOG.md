@@ -45,6 +45,13 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`text_input` renders tabs as whitespace.** An editable field shaped its raw
+  buffer, so a literal `\t` drew as a missing-glyph tofu at every indent level of
+  a tab-indented file (read-only `text` already expanded tabs). Tabs now render
+  as four spaces of visible width, the buffer keeping its single `\t` byte (saves
+  unchanged) and the caret, selection, and `offset_at` / `offset_rect` measuring
+  the expanded width.
+
 - **Default to native Wayland on a Wayland session.** SDL3 with no
   `SDL_VIDEODRIVER` picks x11 on a Wayland desktop (where `DISPLAY` is also
   set, via XWayland), and XWayland mis-maps pointer input on outputs at
