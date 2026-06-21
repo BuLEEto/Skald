@@ -55,9 +55,9 @@ Palette_Match :: struct {
 // any further key wiring.
 //
 // `width` caps the card width (default 520 px — roomy but not
-// overwhelming). `max_rows` limits how many matching rows render
-// before the list stops appending; there's no scroll in v1, so
-// users with very long menu lists should tune `max_rows` up.
+// overwhelming). `max_rows` caps how many matching rows render; if those
+// rows are taller than the window they scroll inside a capped viewport
+// (the highlight auto-scrolls into view), so no match is unreachable.
 command_palette :: proc(
 	ctx:         ^Ctx($Msg),
 	open:        bool,
@@ -202,6 +202,7 @@ command_palette :: proc(
 	// old highlight pointing past the end; snap to 0 on any query
 	// change so the user always sees "top-of-list" after a keystroke.
 	hl := int(st.drag_donor)
+	prev_hl := hl
 	if len(ctx.input.text) > 0 || .Backspace in keys || .Delete in keys {
 		hl = 0
 	}
@@ -213,6 +214,65 @@ command_palette :: proc(
 	}
 	if hl < 0 { hl = 0 }
 	if hl >= len(matches) { hl = max(0, len(matches) - 1) }
+
+	// Hover moves the highlight too, but only when the pointer actually moved
+	// this frame — a resting cursor must not fight keyboard nav (arrows still
+	// drive the bar while the mouse sits still). Reuses the click path's per-row
+	// zone ids; disabled rows have no zone, so they can't hover-select.
+	if ctx.input.mouse_delta.x != 0 || ctx.input.mouse_delta.y != 0 {
+		hover_count := min(len(matches), max_rows)
+		for i in 0 ..< hover_count {
+			if commands[matches[i].index].disabled { continue }
+			if widget_hovered(ctx, widget_make_sub_id(id, u64(i + 1))) {
+				hl = i
+				break
+			}
+		}
+	}
+
+	// --- List viewport sizing. The palette caps row COUNT at max_rows, but the
+	// rows can still be taller than the window. Mirror `select`: cap the list to
+	// the room the centered card leaves, and scroll rows inside that viewport
+	// rather than spilling off both edges of the window. ---
+	pad        := th.spacing.lg
+	fs_q       := th.font.size_lg
+	q_pad_y    := th.spacing.sm
+	q_h        := fs_q + 2*q_pad_y + 6
+	row_h      := th.font.size_md + 2*th.spacing.sm + 4
+	ROW_GAP    :: f32(2)
+	show_count := min(len(matches), max_rows)
+	content_h  := f32(show_count)*row_h + f32(max(0, show_count-1))*ROW_GAP
+
+	list_h   := content_h   // rows' viewport height (full content when it fits)
+	scrolled := false
+	if ctx.renderer != nil && show_count > 0 {
+		fb_h := f32(ctx.renderer.fb_size.y)
+		// Card chrome around the list: query field, the two spacers flanking the
+		// list, the footer hint, and the dialog's top+bottom padding — plus a
+		// margin so the centered card never touches the window edges.
+		hint_h := th.font.size_sm + th.spacing.xs
+		chrome := q_h + th.spacing.sm + th.spacing.md + hint_h + 2*pad
+		avail  := fb_h - chrome - 2*th.spacing.xl
+		if content_h > avail && avail > row_h {
+			list_h   = avail
+			scrolled = true
+		}
+	}
+
+	// Keep the highlighted row in view — but only when nav (keys / hover / a
+	// query change) actually moved it, never while the user is wheel-scrolling,
+	// or the selection would yank the list back from under the wheel.
+	if scrolled && hl != prev_hl {
+		sid := widget_make_sub_id(id, 0) // key 0: rows use keys ≥ 1, never collides
+		sst := widget_get(ctx, sid, .Scroll)
+		row_top := f32(hl) * (row_h + ROW_GAP)
+		row_bot := row_top + row_h
+		sy := sst.scroll_y
+		if row_top < sy          { sy = row_top }
+		if row_bot > sy + list_h { sy = row_bot - list_h }
+		sst.scroll_y = clamp(sy, 0, max(0, content_h - list_h))
+		widget_set(ctx, sid, sst)
+	}
 
 	// Enter on a non-disabled highlighted row dispatches. The dialog
 	// wrapper forwards Escape to on_dismiss, so we don't handle that
@@ -242,17 +302,26 @@ command_palette :: proc(
 	st.drag_donor = hl
 	widget_set(ctx, id, st)
 
-	// --- View composition ---
-	// Card width; content width = card - 2*padding (dialog's default
-	// padding is spacing.lg).
-	pad := th.spacing.lg
-	inner_w := width - 2 * pad
+	// --- View composition --- (pad / q_h / row_h / show_count / scrolled were
+	// computed above with the viewport sizing.)
+	// Clamp the card to the window the same way `dialog` does (it caps card_w at
+	// fb_w-16). Without matching it, on a window narrower than `width` we'd size
+	// the rows + scroll viewport to the full `width` while the card is narrower,
+	// so the scrollbar would land at / past the card's right edge.
+	eff_width := width
+	if ctx.renderer != nil {
+		fb_w := f32(ctx.renderer.fb_size.x)
+		if eff_width > fb_w - 16 { eff_width = fb_w - 16 }
+	}
+	inner_w := eff_width - 2 * pad
+	// When the list scrolls, narrow the rows by the scrollbar gutter so the row
+	// background / shortcut glyph clear the bar instead of painting under it.
+	// `scroll` reserves the same 10 px on its right edge (layout.odin gutter).
+	row_w := inner_w
+	if scrolled { row_w = inner_w - 10 }
 
 	// Query field. Single-line View_Text_Input, no caller-facing on_change
 	// (we wrote the draft into state inline).
-	fs_q := th.font.size_lg
-	q_pad_y := th.spacing.sm
-	q_h := fs_q + 2*q_pad_y + 6
 	q_vline := []Visual_Line{
 		Visual_Line{start = 0, end = len(draft), consume_space = false},
 	}
@@ -278,11 +347,8 @@ command_palette :: proc(
 		visual_lines      = q_vline,
 	}
 
-	// Rows. Cap at `max_rows`; v1 has no scroll — users with very
-	// long menu sets should tune the param up.
-	row_h := th.font.size_md + 2 * th.spacing.sm + 4
-	show_count := min(len(matches), max_rows)
-
+	// Rows. Capped at `max_rows`; if they're still taller than the window
+	// they scroll inside the viewport sized above (no rows are dropped).
 	row_views := make([dynamic]View, 0, show_count + 1, context.temp_allocator)
 	for i in 0 ..< show_count {
 		m := matches[i]
@@ -313,7 +379,7 @@ command_palette :: proc(
 			text(cmd.path, fg, th.font.size_md),
 			flex(1, spacer(0)),
 			short_view,
-			width       = inner_w,
+			width       = row_w,
 			height      = row_h,
 			padding     = th.spacing.md,
 			cross_align = .Center,
@@ -338,11 +404,19 @@ command_palette :: proc(
 		))
 	}
 
-	list := col(..row_views[:],
-		width       = inner_w,
-		spacing     = 2,
+	list_col := col(..row_views[:],
+		width       = row_w,
+		spacing     = ROW_GAP,
 		cross_align = .Stretch,
 	)
+	list: View = list_col
+	if scrolled {
+		// Rows scroll inside the capped viewport. Scroll widget on sub-id 0
+		// (rows use keys ≥ 1, so it can't collide). The auto-scroll above keeps
+		// the highlighted row visible; the wheel/thumb still work freely.
+		list = scroll(ctx, {inner_w, list_h}, list_col,
+			id = widget_make_sub_id(id, 0))
+	}
 
 	// Footer hint.
 	hint := text("↑↓ navigate   ⏎ select   Esc close",
@@ -362,9 +436,10 @@ command_palette :: proc(
 	// initial_focus because the palette itself already engages IME
 	// via wants_text_input and we handle all key events inline.
 	return dialog(ctx, open, content, on_dismiss,
-		width   = width,
-		padding = pad,
-	)
+		width     = eff_width,
+		max_width = eff_width, // dialog's default max_width (480) is < our width,
+		padding   = pad,       // which would clamp the card narrower than inner_w
+	)                          // and push the scrollbar past the card's edge.
 }
 
 // palette_fuzzy_score scores a subsequence match of `q` inside `text`.

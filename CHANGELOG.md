@@ -37,6 +37,13 @@ bug fixes bump the patch.
 
 ### Changed
 
+- **`command_palette` follows the mouse and scrolls.** Hovering a row now moves
+  the highlight (it only tracked the arrow keys before); the bar stays put while
+  the cursor rests, so keyboard nav isn't yanked back to wherever the pointer
+  happens to sit. When the matched rows are taller than the window the list
+  scrolls inside a capped viewport — the highlight auto-scrolls into view — so
+  no match is unreachable instead of running off-screen.
+
 - **`scroll` thumb is much easier to grab.** Presses register in a wider
   invisible band flush to the viewport's right edge (no more dead gap at the
   window edge, no more 6px sliver target), the visible bar is 8px and expands

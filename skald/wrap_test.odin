@@ -557,3 +557,52 @@ line_starts :: proc(s: string) -> []int {
 	for ch, i in s { if ch == '\n' { append(&out, i + 1) } }
 	return out[:]
 }
+
+// Regression (req 021): a command_palette whose list overflows the window
+// scrolls the rows inside a capped viewport — and that viewport (whose right
+// edge carries the scrollbar) must stay WITHIN the card, not spill into the
+// scrim. The bug it guards: `dialog`'s default max_width (480) clamped the card
+// narrower than the palette's own `width`, so the full-width scroll viewport
+// overflowed and the bar landed past the card's right edge.
+@(test)
+command_palette_scroll_fits_card :: proc(t: ^testing.T) {
+	r := runa_renderer()
+	defer free_runa_renderer(r)
+	if r.text.runa_state == nil { return }
+	r.fb_size = {720, 600}
+	r.scale   = 1
+
+	Msg :: distinct int
+	store: Widget_Store
+	widget_store_init(&store)
+	defer widget_store_destroy(&store)
+	store.frame = 5
+	r.widgets = &store
+
+	theme  := theme_dark()
+	labels := labels_en()
+	input:  Input
+	msgs:   [dynamic]Msg
+	ctx := Ctx(Msg){ theme = &theme, labels = &labels, input = &input, msgs = &msgs, widgets = &store, renderer = r }
+
+	items: [dynamic]Menu_Item(Msg)
+	items.allocator = context.temp_allocator
+	for i in 0 ..< 30 { append(&items, Menu_Item(Msg){ label = "Command number 00", msg = Msg(i) }) }
+	entries := []Menu_Entry(Msg){ { label = "Cmds", items = items[:] } }
+
+	pid := widget_make_sub_id(Widget_ID(0), 777)
+	on_dismiss := proc() -> Msg { return Msg(0) }
+
+	view := command_palette(&ctx, true, entries, on_dismiss, id = pid, max_rows = 30)
+	clear(&r.overlays)
+	render_view(r, view, {0, 0}, {720, 600})
+	render_overlays(r)
+
+	card := store.modal_rect
+	sc   := store.states[widget_make_sub_id(pid, 0)].last_rect // the list's scroll viewport
+	testing.expect(t, sc.w > 0, "overflowing palette must wrap its list in a scroll")
+	testing.expect(t, sc.x >= card.x - 0.5, "scroll starts within the card")
+	testing.expectf(t, sc.x + sc.w <= card.x + card.w + 0.5,
+		"scroll right %.1f spills past card right %.1f (scrollbar outside the card)",
+		sc.x + sc.w, card.x + card.w)
+}
