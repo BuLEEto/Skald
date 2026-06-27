@@ -31,6 +31,7 @@ examples/*/[0-9][0-9]_*
 
 # Local planning docs (not part of the public docs set).
 docs/v2-design.md
+docs/roadmap.md
 
 # macOS
 .DS_Store

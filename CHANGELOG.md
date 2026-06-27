@@ -52,6 +52,13 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`scroll` keeps its stored offset in range.** `scroll_advance` wrote the
+  wheel / page offset back to widget state unclamped, so overscrolling an edge
+  accumulated past the bounds — the wheel went dead until you scrolled back
+  through the overshoot — and an app that set `scroll_y` to a large value to jump
+  to the end read it back permanently out of range. The persisted offset is now
+  clamped to `[0, content_h - viewport]`, matching the rendered position.
+
 - **`text_input` renders tabs as whitespace.** An editable field shaped its raw
   buffer, so a literal `\t` drew as a missing-glyph tofu at every indent level of
   a tab-indented file (read-only `text` already expanded tabs). Tabs now render
@@ -806,9 +813,9 @@ frame.
      auto-scroll only fires on a real highlight change so wheel /
      drag scrolling isn't snapped back to the highlight.
 
-  Reported via the cross-agent thread by an app with a 15-entry
-  model picker; subsequent reports caught the scrollbar grab, text
-  overlap, and drag side-effect issues during testing.
+  Reported by a consumer app with a 15-entry model picker;
+  subsequent reports caught the scrollbar grab, text overlap, and
+  drag side-effect issues during testing.
 
 ### Fixed
 
@@ -837,8 +844,8 @@ frame.
   during streaming. Now snap `off` to physical-pixel boundaries
   (`floor(off * scale) / scale`) before it becomes the render origin
   *and* before being written back to widget state, so the snap
-  persists across frames. Reported via the cross-agent thread —
-  surfaced as "top 3 chat rows flicker while assistant streams reply."
+  persists across frames. Surfaced by a consumer app as
+  "top 3 chat rows flicker while assistant streams reply."
 - **`widget_get` no longer leaves the store holding freed pointers.**
   The cleanup branch (kind-mismatch or stale-frame) freed the prior
   occupant's heap state (`undo`, `virtual_heights`, `text_buffer`)
@@ -850,9 +857,8 @@ frame.
   id read the same stale entry and re-entered the cleanup branch,
   double-freeing. Now `widget_get` persists the reset state to the
   map before returning so cleanup is idempotent regardless of
-  caller discipline. Reported by an external app via the cross-agent
-  thread (crash trace in `delete_dynamic_array` from a stale
-  `virtual_heights` slice).
+  caller discipline. Reported by a consumer app (crash trace in
+  `delete_dynamic_array` from a stale `virtual_heights` slice).
 - **`wrap_text` is now memoised per frame.** `View_Text` gets walked
   twice every frame — once in `view_size` (layout measure) and once
   in `render_view` (paint) — and each walk previously re-ran the
@@ -860,7 +866,7 @@ frame.
   adds a third call per visible row when refreshing its height
   cache. For chat-style UIs displaying long pasted content (e.g.
   a 30 KB message body in the visible window) this dominated frame
-  time. Reported via the cross-agent thread: boc-next saw avg frame
+  time. A chat-style app saw avg frame
   time go from 8.5 ms (empty chat) to 208 ms (single 30 KB visible
   message) — almost entirely double-shape work. Fix: a per-frame
   cache lives in `Renderer.wrap_cache`, keyed by
@@ -957,7 +963,7 @@ swapchain but three layers below that quietly defeated it.
      `SDL_HINT_VIDEO_X11_WINDOW_VISUALID` before window creation
      when `.TRANSPARENT` is requested.
 
-  Diagnosed and verified building Orin Spotlight on xfwm4. After all
+  Diagnosed and verified with a transparent-window app on xfwm4. After all
   three fixes: `xwininfo -id <wid>` reports Depth: 32 / Visual Class:
   TrueColor and translucent cards composite over the desktop as
   expected.
@@ -972,9 +978,9 @@ swapchain but three layers below that quietly defeated it.
 ## 1.0.0-rc2 — 2026-05-01
 
 Shake-down release after a week of cross-platform dogfood (Devuan,
-Pop!_OS COSMIC, Ubuntu 24.04, Windows). Real-app testing on
-ERSaveBackup, intralabels, and a Linux ER Trainer app surfaced a
-handful of latent bugs and one usability footgun.
+Pop!_OS COSMIC, Ubuntu 24.04, Windows). Real-app testing across
+several in-house desktop apps surfaced a handful of latent bugs and
+one usability footgun.
 
 ### Changed (small breaking)
 
@@ -1054,8 +1060,8 @@ handful of latent bugs and one usability footgun.
 
 First release candidate. The API surface here is what 1.0 will ship —
 the rc window is for shaking out anything real apps surface that
-weren't caught by the gallery and the in-house apps (Limn, Orin,
-intralabels). Nothing is expected to change between rc1 and 1.0.0
+weren't caught by the gallery and the in-house apps. Nothing is
+expected to change between rc1 and 1.0.0
 unless the rc finds something that has to.
 
 ### Core

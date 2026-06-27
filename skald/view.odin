@@ -11518,6 +11518,18 @@ scroll_advance :: proc(
 	// default mouse auto-capture (SDL_HINT_MOUSE_AUTO_CAPTURE) — no explicit
 	// SDL_CaptureMouse needed; on Wayland that's the implicit pointer grab.
 
+	// Persist the offset in range. The wheel/page paths accumulate scroll_y
+	// unclamped, so overscrolling an edge would otherwise stick until you
+	// scrolled back through the overshoot ("dead wheel"); and apps that poke
+	// scroll_y to a large value to jump to the end relied on a render-time
+	// clamp that never wrote back, so the stored value read out of range.
+	// Clamp against content_h (prior-frame cached for `scroll`, exact for
+	// virtual_list) — the same bound the thumb already uses.
+	max_persist := content_h - vp.h
+	if max_persist < 0           { max_persist = 0 }
+	if st.scroll_y < 0           { st.scroll_y = 0 }
+	if st.scroll_y > max_persist { st.scroll_y = max_persist }
+
 	widget_set(ctx, id, st)
 	return st, hover_thumb
 }
