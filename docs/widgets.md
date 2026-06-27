@@ -527,6 +527,43 @@ don't read stale levels.
 Returns false on miss (name not registered, or size mismatch) — caller
 re-seeds via `image_load_pixels` if the dimensions changed.
 
+#### image_import_dmabuf (Linux)
+
+```odin
+Dmabuf_Image :: struct { fd: int, width, height: u32, fourcc, stride, offset: u32, modifier: u64 }
+image_import_dmabuf(r: ^Renderer, name: string, img: Dmabuf_Image) -> bool
+```
+
+Imports an external **dmabuf** as a sampleable texture under `name`,
+drawn by the normal `image(ctx, name, …)` path — **zero-copy**: the
+producer (e.g. a Wayland compositor sharing a downscaled window buffer)
+keeps writing into the same buffer and the panel just re-samples it. No
+GPU→CPU readback, no upload. Import once when the source opens, release
+when it closes. Single-plane packed RGBA only (`ARGB`/`XRGB`/`ABGR`/
+`XBGR` 8888 DRM fourccs); any single-plane DRM modifier (`0` = LINEAR,
+or a single-plane tiled modifier). A multi-plane (e.g. AMD DCC) modifier
+returns `false` — allocate the shared buffer single-plane or LINEAR.
+
+Skald `dup()`s the fd and owns its copy (you keep and close yours).
+Sync is implicit (dmabuf fences) — a one-frame-stale preview during a
+write is possible and fine for a small thumbnail. Returns `false`
+(never crashes) when the device lacks the external-memory-dmabuf
+extensions or the format isn't importable — fall back to
+`image_load_pixels`. No-op off Linux.
+
+#### image_release
+
+```odin
+image_release(r: ^Renderer, name: string) -> bool
+```
+
+Drops a registered image — GPU texture, view, descriptor set, memory —
+and forgets the key, reclaiming GPU memory immediately instead of
+waiting for LRU eviction. For a dmabuf import it also closes the dup'd
+fd. Built for transient sources (a preview that closes, a thumbnail
+scrolled away). `DeviceWaitIdle`s first, so call it between frames on
+the render thread. No-op + `false` on an unknown key.
+
 #### draw_image
 
 ```odin

@@ -209,6 +209,17 @@ Renderer :: struct {
 	text:             Text,
 	images:           Image_Cache,
 
+	// dmabuf_ok: the device advertised the external-memory-dmabuf +
+	// drm-format-modifier extensions and they were enabled, so
+	// `image_import_dmabuf` can import an external buffer as a sampleable
+	// texture. False elsewhere (non-Linux, or a device without them) →
+	// import returns false and the caller falls back to a pixel upload.
+	// dmabuf_foreign: VK_EXT_queue_family_foreign is also enabled, so the
+	// import acquires the image from the foreign queue family rather than
+	// QUEUE_FAMILY_IGNORED.
+	dmabuf_ok:        bool,
+	dmabuf_foreign:   bool,
+
 	// Targets are `^Window_Target` so the slice can grow without
 	// invalidating `cur` or any previously-handed-out Window_Ids —
 	// each target is its own heap allocation, stable for its lifetime.
@@ -757,6 +768,27 @@ vk_create_device :: proc(r: ^Renderer) -> bool {
 		append(&exts, "VK_KHR_portability_subset")
 	}
 
+	when ODIN_OS == .Linux {
+		// Zero-copy dmabuf import (live thumbnails etc.). Enable the
+		// external-memory-fd + dma-buf + drm-format-modifier set only when the
+		// device advertises all three, so `image_import_dmabuf` can light up;
+		// otherwise it returns false and callers fall back to a pixel upload.
+		// VK_KHR_external_memory{,_capabilities} are core in 1.1 (we target
+		// 1.3), so they aren't listed.
+		if vk_has_device_ext(r, "VK_KHR_external_memory_fd") &&
+		   vk_has_device_ext(r, "VK_EXT_external_memory_dma_buf") &&
+		   vk_has_device_ext(r, "VK_EXT_image_drm_format_modifier") {
+			append(&exts, "VK_KHR_external_memory_fd")
+			append(&exts, "VK_EXT_external_memory_dma_buf")
+			append(&exts, "VK_EXT_image_drm_format_modifier")
+			r.dmabuf_ok = true
+			if vk_has_device_ext(r, "VK_EXT_queue_family_foreign") {
+				append(&exts, "VK_EXT_queue_family_foreign")
+				r.dmabuf_foreign = true
+			}
+		}
+	}
+
 	info := vk.DeviceCreateInfo{
 		sType = .DEVICE_CREATE_INFO,
 		pNext = &dyn,
@@ -771,6 +803,20 @@ vk_create_device :: proc(r: ^Renderer) -> bool {
 	vk.load_proc_addresses_device(r.device)
 	vk.GetDeviceQueue(r.device, r.queue_family_idx, 0, &r.queue)
 	return true
+}
+
+// vk_has_device_ext reports whether the physical device advertises `name`.
+// Used at device-create time to opt into optional extensions (dmabuf import).
+@(private)
+vk_has_device_ext :: proc(r: ^Renderer, name: string) -> bool {
+	count: u32
+	vk.EnumerateDeviceExtensionProperties(r.phys_device, nil, &count, nil)
+	props := make([]vk.ExtensionProperties, count, context.temp_allocator)
+	vk.EnumerateDeviceExtensionProperties(r.phys_device, nil, &count, raw_data(props))
+	for &p in props {
+		if string(cstring(&p.extensionName[0])) == name { return true }
+	}
+	return false
 }
 
 // ---- internal: swapchain ----

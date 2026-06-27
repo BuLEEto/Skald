@@ -4,6 +4,21 @@ Skald follows [semantic versioning](https://semver.org) on a best-effort
 basis: breaking changes bump the major, new features bump the minor,
 bug fixes bump the patch.
 
+## Unreleased
+
+### Added
+
+- **Zero-copy dmabuf textures (`image_import_dmabuf`, Linux).** Import an external
+  dmabuf as a sampleable texture drawn by the normal `image(ctx, key, …)` path —
+  the producer (e.g. a Wayland compositor sharing a downscaled window buffer for
+  live thumbnails) keeps writing into the same buffer and the app just re-samples
+  it: no readback, no upload. Single-plane packed RGBA (`ARGB`/`XRGB`/`ABGR`/`XBGR`
+  8888), any single-plane DRM modifier (LINEAR or tiled; a multi-plane/DCC modifier
+  is rejected with a clear message). Skald `dup()`s the fd and owns its copy.
+  Returns `false` (no-op off Linux, or when the device lacks the extensions) so
+  callers fall back to a pixel upload. Paired with **`image_release(r, key)`** to
+  drop an image's GPU texture + memory (and the dup'd fd) on demand.
+
 ## 1.0.0-rc13 — 2026-06-27
 
 ### Added

@@ -101,6 +101,9 @@ Image_Entry :: struct {
 	width:     u32,
 	height:    u32,
 	mip_count: u32,
+	// external = imported from a dmabuf (image_import_dmabuf): no mips, and
+	// image_update_pixels refuses it (the producer writes the memory directly).
+	external:  bool,
 	// last_use is the value of Image_Cache.use_counter stamped each time
 	// this entry is fetched. Used by the LRU eviction pass to pick the
 	// least-recently-drawn image when the cache overflows.
@@ -225,6 +228,75 @@ image_upload_level :: proc(
 // The `rgba` slice must be exactly w*h*4 bytes (RGBA8). It is consumed
 // synchronously into a staging buffer; the caller's memory does not
 // need to outlive this call.
+// image_make_view_dset builds the per-image view + descriptor set (binding 0 =
+// view + the shared sampler) that every image draw binds. Shared by the staged
+// upload and the dmabuf import. `components` is the view swizzle ({} = identity;
+// the dmabuf path forces alpha = 1 for X-formats). On failure it cleans up its
+// own objects and returns ok = false; the caller still owns image + memory.
+@(private)
+image_make_view_dset :: proc(
+	r: ^Renderer, image: vk.Image, format: vk.Format, mip_count: u32,
+	components: vk.ComponentMapping,
+) -> (view: vk.ImageView, dset: vk.DescriptorSet, ok: bool) {
+	range := vk.ImageSubresourceRange{aspectMask = {.COLOR}, levelCount = mip_count, layerCount = 1}
+	viw := vk.ImageViewCreateInfo{
+		sType = .IMAGE_VIEW_CREATE_INFO,
+		image = image, viewType = .D2, format = format,
+		components = components, subresourceRange = range,
+	}
+	if res := vk.CreateImageView(r.device, &viw, nil, &view); res != .SUCCESS {
+		fmt.eprintfln("skald: CreateImageView (image): %v", res)
+		return {}, {}, false
+	}
+	layout := r.pipeline.dset_layout
+	ai := vk.DescriptorSetAllocateInfo{
+		sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
+		descriptorPool = r.images.dset_pool,
+		descriptorSetCount = 1, pSetLayouts = &layout,
+	}
+	if res := vk.AllocateDescriptorSets(r.device, &ai, &dset); res != .SUCCESS {
+		fmt.eprintfln("skald: AllocateDescriptorSets (image): %v", res)
+		vk.DestroyImageView(r.device, view, nil)
+		return {}, {}, false
+	}
+	di := vk.DescriptorImageInfo{
+		sampler = r.pipeline.sampler, imageView = view, imageLayout = .SHADER_READ_ONLY_OPTIMAL,
+	}
+	write := vk.WriteDescriptorSet{
+		sType = .WRITE_DESCRIPTOR_SET, dstSet = dset,
+		dstBinding = 0, descriptorCount = 1, descriptorType = .COMBINED_IMAGE_SAMPLER,
+		pImageInfo = &di,
+	}
+	vk.UpdateDescriptorSets(r.device, 1, &write, 0, nil)
+	return view, dset, true
+}
+
+// image_entry_free releases an entry's GPU objects. For a dmabuf entry,
+// FreeMemory also closes the fd Skald dup'd at import. Leaves the cache map +
+// heap Image_Entry to the caller.
+@(private)
+image_entry_free :: proc(r: ^Renderer, e: ^Image_Entry) {
+	if e == nil { return }
+	if e.dset  != 0 { vk.FreeDescriptorSets(r.device, r.images.dset_pool, 1, &e.dset) }
+	if e.view  != 0 { vk.DestroyImageView(r.device, e.view, nil) }
+	if e.image != 0 { vk.DestroyImage(r.device, e.image, nil) }
+	if e.mem   != 0 { vk.FreeMemory(r.device, e.mem, nil) }
+}
+
+// image_cache_drop removes `name`: frees its GPU objects, the cloned key, and
+// the heap entry. Does NOT DeviceWaitIdle — the caller guarantees the GPU is
+// done with it. No-op on a miss.
+@(private)
+image_cache_drop :: proc(r: ^Renderer, name: string) {
+	entry, ok := r.images.entries[name]
+	if !ok { return }
+	image_entry_free(r, entry)
+	for k in r.images.entries {
+		if k == name { delete_key(&r.images.entries, k); delete(k); break }
+	}
+	free(entry)
+}
+
 @(private)
 image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> ^Image_Entry {
 	if int(w) * int(h) * 4 != len(rgba) {
@@ -322,47 +394,12 @@ image_cache_insert :: proc(r: ^Renderer, key: string, w, h: u32, rgba: []u8) -> 
 	for buf in staging_bufs { vk.DestroyBuffer(r.device, buf, nil) }
 	for m   in staging_mems { vk.FreeMemory(r.device, m, nil) }
 
-	// Image view over all mips.
-	view: vk.ImageView
-	{
-		viw := vk.ImageViewCreateInfo{
-			sType = .IMAGE_VIEW_CREATE_INFO,
-			image = image, viewType = .D2, format = .R8G8B8A8_SRGB,
-			subresourceRange = full_range,
-		}
-		if res := vk.CreateImageView(r.device, &viw, nil, &view); res != .SUCCESS {
-			fmt.eprintfln("skald: CreateImageView (image): %v", res)
-			vk.DestroyImage(r.device, image, nil); vk.FreeMemory(r.device, mem, nil)
-			return nil
-		}
-	}
-
-	// Per-image descriptor set. Same layout as Pipeline's single-
-	// binding set — binding 0 points at this image's view + sampler.
-	// fb_size is pushed via push constants, no uniform binding needed.
-	dset: vk.DescriptorSet
-	{
-		layout := r.pipeline.dset_layout
-		ai := vk.DescriptorSetAllocateInfo{
-			sType = .DESCRIPTOR_SET_ALLOCATE_INFO,
-			descriptorPool = r.images.dset_pool,
-			descriptorSetCount = 1, pSetLayouts = &layout,
-		}
-		if res := vk.AllocateDescriptorSets(r.device, &ai, &dset); res != .SUCCESS {
-			fmt.eprintfln("skald: AllocateDescriptorSets (image): %v", res)
-			vk.DestroyImageView(r.device, view, nil)
-			vk.DestroyImage(r.device, image, nil); vk.FreeMemory(r.device, mem, nil)
-			return nil
-		}
-		ii := vk.DescriptorImageInfo{
-			sampler = r.pipeline.sampler, imageView = view, imageLayout = .SHADER_READ_ONLY_OPTIMAL,
-		}
-		write := vk.WriteDescriptorSet{
-			sType = .WRITE_DESCRIPTOR_SET, dstSet = dset,
-			dstBinding = 0, descriptorCount = 1, descriptorType = .COMBINED_IMAGE_SAMPLER,
-			pImageInfo = &ii,
-		}
-		vk.UpdateDescriptorSets(r.device, 1, &write, 0, nil)
+	// Image view over all mips + the per-image descriptor set. Identity
+	// swizzle ({}); the dmabuf path passes its own for X-format alpha.
+	view, dset, vdok := image_make_view_dset(r, image, .R8G8B8A8_SRGB, mip_count, {})
+	if !vdok {
+		vk.DestroyImage(r.device, image, nil); vk.FreeMemory(r.device, mem, nil)
+		return nil
 	}
 
 	entry := new(Image_Entry)
@@ -426,21 +463,10 @@ image_load_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -> 
 	// so we don't free a VkImage the GPU is still sampling, then drop
 	// the old entry. Cheap when no replacement is happening.
 	if existing, ok := r.images.entries[name]; ok && existing != nil {
+		// Wait for in-flight frames to drain so we don't free a VkImage the
+		// GPU is still sampling, then drop the old entry.
 		vk.DeviceWaitIdle(r.device)
-		if existing.dset  != 0 { vk.FreeDescriptorSets(r.device, r.images.dset_pool, 1, &existing.dset) }
-		if existing.view  != 0 { vk.DestroyImageView(r.device, existing.view, nil) }
-		if existing.image != 0 { vk.DestroyImage(r.device, existing.image, nil) }
-		if existing.mem   != 0 { vk.FreeMemory(r.device, existing.mem, nil) }
-		// Recover the cloned key so the next insert can re-clone without
-		// leaking the prior allocation.
-		for k in r.images.entries {
-			if k == name {
-				delete_key(&r.images.entries, k)
-				delete(k)
-				break
-			}
-		}
-		free(existing)
+		image_cache_drop(r, name)
 	} else if len(r.images.entries) >= IMAGE_CACHE_MAX_ENTRIES {
 		image_cache_evict_lru(&r.images, r)
 	}
@@ -460,6 +486,22 @@ image_is_resident :: proc(r: ^Renderer, name: string) -> bool {
 	if r == nil || r.images.entries == nil { return false }
 	_, ok := r.images.entries[name]
 	return ok
+}
+
+// image_release drops a registered image — GPU texture, view, descriptor set,
+// memory — and forgets the key, reclaiming GPU memory immediately rather than
+// waiting for LRU eviction. Built for transient sources: a dmabuf preview that
+// closes, a thumbnail that scrolled away. For a dmabuf-imported image it also
+// closes the fd Skald dup'd at import (your original fd is untouched). No-op +
+// returns false on an unknown key. Call between frames on the render thread,
+// like the other image_* entry points — it DeviceWaitIdles first so it never
+// frees an image an in-flight frame still samples.
+image_release :: proc(r: ^Renderer, name: string) -> bool {
+	if r == nil || r.device == nil || r.images.entries == nil { return false }
+	if _, ok := r.images.entries[name]; !ok { return false }
+	vk.DeviceWaitIdle(r.device)
+	image_cache_drop(r, name)
+	return true
 }
 
 // image_update_pixels refreshes an already-registered image in place,
@@ -499,6 +541,7 @@ image_update_pixels :: proc(r: ^Renderer, name: string, w, h: u32, rgba: []u8) -
 	}
 	entry, ok := r.images.entries[name]
 	if !ok || entry == nil { return false }
+	if entry.external { return false } // dmabuf-imported: producer writes the memory
 	if entry.width != w || entry.height != h { return false }
 
 	full_range := vk.ImageSubresourceRange{
