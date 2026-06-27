@@ -8,6 +8,16 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Auto-growing multiline `text_input` (`min_lines` / `max_lines`).** A multiline
+  field can rest at `min_lines` rows and grow with the newline count up to
+  `max_lines`, then scroll internally — `text_input(multiline = true,
+  min_lines = 3, max_lines = 8, ...)`. This sizing used to live only inside
+  `chat_input`; it now lives in `text_input`, so any multiline editor (notes,
+  comments — where Enter inserts a newline) gets it too. `chat_input` delegates to
+  it and adds the Enter=submit policy, plus `min_lines` for a composer that rests
+  taller than one line. Default (no `max_lines`) is unchanged — the field keeps
+  its existing fixed height.
+
 - **In-window drag & drop.** `drag_source(child, payload, visual)` makes an item
   draggable — a press that moves past a threshold starts a drag carrying a
   `Drag_Payload{kind, id}`, with `visual` (any View) following the cursor as a

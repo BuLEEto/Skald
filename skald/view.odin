@@ -3994,6 +3994,13 @@ _text_input_impl :: proc(
 	// per-line stride consistently — render, content height, scrollbar,
 	// click hit-testing and caret-follow all stay in agreement.
 	line_spacing: f32 = 0,
+	// min_lines / max_lines turn a multiline field into an auto-growing box:
+	// it rests at `min_lines` rows and grows with the newline count up to
+	// `max_lines`, then scrolls internally. Both 0 (the default) disables
+	// auto-grow — the field uses the explicit `height` exactly as before. Set
+	// `max_lines > 0` to enable. `chat_input` is this plus an Enter=submit policy.
+	min_lines:    int = 0,
+	max_lines:    int = 0,
 ) -> (view: View, new_value: string, changed: bool) {
 	th := ctx.theme
 
@@ -4031,7 +4038,18 @@ _text_input_impl :: proc(
 	if invalid && border.a == 0 { br_c = th.color.danger }
 
 	h := height
-	if h == 0 {
+	if multiline && max_lines > 0 {
+		// Auto-grow: rest at min_lines, grow to max_lines by newline count.
+		// (line_h = fs + 4 matches the per-line glyph row and the old
+		// chat_input formula, so existing composers are byte-identical.)
+		min_l := min_lines
+		if min_l < 1         { min_l = 1 }
+		if min_l > max_lines { min_l = max_lines }
+		lines := strings.count(value, "\n") + 1
+		if lines < min_l     { lines = min_l }
+		if lines > max_lines { lines = max_lines }
+		h = f32(lines) * (fs + 4 + line_spacing) + 2 * pad.y
+	} else if h == 0 {
 		if multiline {
 			// ~6 visible lines by default — enough for notes / log-style
 			// input without consuming the whole view. Apps that want a
@@ -4879,6 +4897,8 @@ text_input_simple :: proc(
 	marks:        []Text_Mark = nil,
 	styles:       []Text_Style = nil,
 	line_spacing: f32 = 0,
+	min_lines:    int  = 0,
+	max_lines:    int  = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
 		ctx, value,
@@ -4904,6 +4924,8 @@ text_input_simple :: proc(
 		marks         = marks,
 		styles        = styles,
 		line_spacing  = line_spacing,
+		min_lines     = min_lines,
+		max_lines     = max_lines,
 	)
 	if changed { send(ctx, on_change(new_value)) }
 	return view
@@ -4942,6 +4964,8 @@ text_input_payload :: proc(
 	marks:        []Text_Mark = nil,
 	styles:       []Text_Style = nil,
 	line_spacing: f32 = 0,
+	min_lines:    int  = 0,
+	max_lines:    int  = 0,
 ) -> View {
 	view, new_value, changed := _text_input_impl(
 		ctx, value,
@@ -4967,6 +4991,8 @@ text_input_payload :: proc(
 		marks         = marks,
 		styles        = styles,
 		line_spacing  = line_spacing,
+		min_lines     = min_lines,
+		max_lines     = max_lines,
 	)
 	if changed { send(ctx, on_change(payload, new_value)) }
 	return view
@@ -5143,11 +5169,12 @@ search_field :: proc(
 // composer does NOT clear itself on submit — the app decides (handy
 // for optimistic rendering: clear on the resulting message-sent Msg).
 //
-// `max_lines` caps the auto-grow height. The composer starts at one
-// line and grows with the user's newlines up to `max_lines`, after
-// which it scrolls internally. Word-wrap-induced visual growth past
-// the line count isn't included in the auto-grow math today —
-// long lines will scroll inside the box rather than expand it.
+// `min_lines` / `max_lines` size the auto-grow box: it rests at
+// `min_lines` rows (default 1) and grows with the user's newlines up to
+// `max_lines`, after which it scrolls internally. Word-wrap-induced
+// visual growth past the line count isn't included today — long lines
+// scroll inside the box rather than expand it. The sizing itself lives
+// in `text_input(multiline)`; chat_input just adds the Enter=submit policy.
 chat_input :: proc(
 	ctx:         ^Ctx($Msg),
 	value:       string,
@@ -5156,6 +5183,7 @@ chat_input :: proc(
 	id:          Widget_ID = 0,
 	placeholder: string    = "",
 	width:       f32       = 0,
+	min_lines:   int       = 1,
 	max_lines:   int       = 8,
 	font_size:   f32       = 0,
 	line_spacing: f32      = 0,
@@ -5167,8 +5195,6 @@ chat_input :: proc(
 	error:       string    = "",
 	disabled:    bool      = false,
 ) -> View {
-	th := ctx.theme
-
 	// Resolve the id up front so we can hit-test focus for the submit
 	// path and then hand the same id to text_input. Same trick as
 	// search_field — otherwise text_input's auto-id counter hands out a
@@ -5192,30 +5218,18 @@ chat_input :: proc(
 		}
 	}
 
-	// Auto-grow height: one line per "\n" in the value, capped at
-	// `max_lines`. Word-wrap-induced lines aren't counted; the
-	// resulting box scrolls internally if a wrapped line overflows.
-	fs := font_size
-	if fs == 0 { fs = th.font.size_md }
-	line_h := fs + 4   // matches text_input's per-line glyph row height
-	pad_y  := padding.y
-	if pad_y == 0 { pad_y = th.spacing.sm }
-	nl_count := strings.count(value, "\n")
-	visible_lines := nl_count + 1
-	if visible_lines < 1         { visible_lines = 1 }
-	if visible_lines > max_lines { visible_lines = max_lines }
-	// Per-line stride includes the extra leading so the auto-grown box
-	// keeps every wrapped/explicit line fully visible.
-	height := f32(visible_lines) * (line_h + line_spacing) + 2 * pad_y
-
 	ph := placeholder
 	if len(ph) == 0 { ph = "Message…" }
 
+	// Height comes from text_input's auto-grow (rests at min_lines, grows to
+	// max_lines, then scrolls); chat_input is that plus the Enter=submit policy
+	// above. Both bounds pass straight through.
 	return text_input(ctx, value, on_change,
 		id           = id,
 		placeholder  = ph,
 		width        = width,
-		height       = height,
+		min_lines    = min_lines,
+		max_lines    = max_lines,
 		font_size    = font_size,
 		line_spacing = line_spacing,
 		padding      = padding,

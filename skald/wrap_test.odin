@@ -606,3 +606,73 @@ command_palette_scroll_fits_card :: proc(t: ^testing.T) {
 		"scroll right %.1f spills past card right %.1f (scrollbar outside the card)",
 		sc.x + sc.w, card.x + card.w)
 }
+
+// Regression (req 023): text_input(multiline) auto-grows between min_lines and
+// max_lines, and chat_input delegates to it. Guards the height formula (rest at
+// min, grow by newline count, cap at max) AND that a multiline field with NO
+// max_lines keeps the old fixed default — so existing callers are unaffected.
+@(test)
+text_input_min_max_lines_autogrow :: proc(t: ^testing.T) {
+	r := runa_renderer()
+	defer free_runa_renderer(r)
+	if r.text.runa_state == nil { return }
+	r.fb_size = {800, 600}
+	r.scale   = 1
+
+	Msg :: distinct int
+	store: Widget_Store
+	widget_store_init(&store)
+	defer widget_store_destroy(&store)
+	store.frame = 5
+	r.widgets = &store
+
+	theme := theme_dark()
+	input: Input
+	msgs:  [dynamic]Msg
+	ctx := Ctx(Msg){ theme = &theme, input = &input, msgs = &msgs, widgets = &store, renderer = r }
+
+	fs    := theme.font.size_md
+	pad_y := theme.spacing.sm
+	line  := fs + 4   // per-line stride, line_spacing 0
+
+	on_ch :: proc(s: string) -> Msg { return Msg(0) }
+
+	height_of :: proc(v: View) -> (f32, bool) {
+		vti, ok := v.(View_Text_Input)
+		return vti.height, ok
+	}
+
+	// Empty + min_lines=3 → rests three lines tall.
+	v := text_input(&ctx, "", on_ch, id = hash_id("ti-a"),
+		multiline = true, wrap = true, min_lines = 3, max_lines = 8)
+	h, ok := height_of(v)
+	testing.expect(t, ok, "expected a View_Text_Input")
+	testing.expect_value(t, h, 3 * line + 2 * pad_y)
+
+	// Five newlines (six lines) → grows to six.
+	v = text_input(&ctx, "a\nb\nc\nd\ne\nf", on_ch, id = hash_id("ti-b"),
+		multiline = true, wrap = true, min_lines = 3, max_lines = 8)
+	h, _ = height_of(v)
+	testing.expect_value(t, h, 6 * line + 2 * pad_y)
+
+	// Twenty newlines → capped at max_lines (8).
+	big := strings.repeat("x\n", 20, context.temp_allocator)
+	v = text_input(&ctx, big, on_ch, id = hash_id("ti-c"),
+		multiline = true, wrap = true, min_lines = 3, max_lines = 8)
+	h, _ = height_of(v)
+	testing.expect_value(t, h, 8 * line + 2 * pad_y)
+
+	// No max_lines → auto-grow OFF → the old fixed multiline default
+	// (fs*6 + 2*pad + 6). This is the "existing callers unchanged" guard.
+	v = text_input(&ctx, "a\nb\nc", on_ch, id = hash_id("ti-d"),
+		multiline = true, wrap = true)
+	h, _ = height_of(v)
+	testing.expect_value(t, h, fs * 6 + 2 * pad_y + 6)
+
+	// chat_input delegates: "a\nb\nc" is three lines, same formula.
+	on_sub :: proc(s: string) -> Msg { return Msg(0) }
+	cv := chat_input(&ctx, "a\nb\nc", on_ch, on_sub, id = hash_id("ci-a"))
+	ch, cok := height_of(cv)
+	testing.expect(t, cok, "chat_input should build a View_Text_Input")
+	testing.expect_value(t, ch, 3 * line + 2 * pad_y)
+}

@@ -627,13 +627,19 @@ text_input(ctx, value: string, on_change: proc(new: string) -> Msg,
            clear_button = false, escape_clears = false,
            invalid = false, error = "", max_chars = 0,
            marks: []Text_Mark = nil, styles: []Text_Style = nil,
-           line_spacing = 0)
+           line_spacing = 0, min_lines = 0, max_lines = 0)
 ```
 
 Editable text field. Single-line by default; set `multiline = true`
 for a text area (and `wrap = true` if you want soft-wrap). Built-in:
 selection, clipboard (Ctrl+C/X/V), Ctrl-A select all, undo/redo
 (Ctrl+Z/Y), cursor navigation, IME.
+
+For a multiline field, set `max_lines > 0` to auto-grow: the box rests
+at `min_lines` rows and grows with the newline count up to `max_lines`,
+then scrolls internally — a composer/notes box that sizes to its
+content. Both `0` (the default) keeps the explicit `height` (fixed-size
+text area). `chat_input` is this plus an Enter=submit policy.
 
 Tab characters render as four spaces of visible width (same fixed
 advance as `text`) — so a tab-indented file shows whitespace, not a
@@ -722,7 +728,7 @@ affordances, no `on_submit` requirement.
 
 ```odin
 chat_input(ctx, value, on_change, on_submit: proc(value: string) -> Msg,
-           placeholder = "Message…", max_lines = 8, ...)
+           placeholder = "Message…", min_lines = 1, max_lines = 8, ...)
 ```
 
 Multi-line composer for chat / comment-box surfaces. Wraps
@@ -735,8 +741,10 @@ the app can distinguish "send" from "newline":
 - **Ctrl+Enter** — also fires `on_submit` (Slack/Discord muscle
   memory).
 
-Auto-grows from one line up to `max_lines` based on newline count;
-beyond `max_lines` the field scrolls internally. The composer does
+Rests at `min_lines` tall and grows to `max_lines` based on newline
+count; beyond `max_lines` the field scrolls internally. Set
+`min_lines = 3` (etc.) for a composer that starts as a multi-line box
+instead of a single line. The composer does
 **not** clear itself on submit — the app decides (handy for
 optimistic message rendering: clear on the resulting send-Msg).
 
