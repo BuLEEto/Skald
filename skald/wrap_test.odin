@@ -676,3 +676,24 @@ text_input_min_max_lines_autogrow :: proc(t: ^testing.T) {
 	testing.expect(t, cok, "chat_input should build a View_Text_Input")
 	testing.expect_value(t, ch, 3 * line + 2 * pad_y)
 }
+
+// draw_stroke `aa = true` keeps the same path but adds a feathered fringe, so it
+// emits strictly more geometry than the default hard-edged strip (and the default
+// path still works). Guards the opt-in AA without needing a GPU.
+@(test)
+draw_stroke_aa_adds_fringe :: proc(t: ^testing.T) {
+	r := runa_renderer()
+	defer free_runa_renderer(r)
+	samples := []Stroke_Sample{ {{0, 0}, 1}, {{10, 6}, 1}, {{20, 0}, 1}, {{30, 8}, 1} }
+
+	clear(&r.batch.vertices)
+	draw_stroke(r, samples, 6, Color{1, 1, 1, 1})           // aa = false (default)
+	hard := len(r.batch.vertices)
+
+	clear(&r.batch.vertices)
+	draw_stroke(r, samples, 6, Color{1, 1, 1, 1}, aa = true)
+	aa := len(r.batch.vertices)
+
+	testing.expect(t, hard > 0, "default stroke emits a strip")
+	testing.expect(t, aa > hard, "aa stroke emits more geometry (the fringe)")
+}

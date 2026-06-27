@@ -414,32 +414,36 @@ Stroke_Sample :: struct {
 
 // draw_stroke renders a pressure-varying filled polyline as a triangle
 // ribbon. Width at sample i is `base_width * clamp(pressure_i, 0, 1)`.
-// Endpoints are flat (no end caps) — circular caps and round joins are
-// deferred until there's a showcase app asking for them. Zero-length or
-// single-sample inputs draw nothing.
+// Endpoints are flat (no end caps). Zero-length or single-sample inputs
+// draw nothing.
 //
-// Ribbon math: for each sample, the perpendicular to the local tangent
-// direction is used to emit a left/right vertex pair. Interior samples
-// use the averaged direction of the adjacent segments so corners stay
-// continuous; endpoints use the single adjacent segment. This produces
-// a single triangle strip with no duplicated vertices and no
-// pipeline / pass changes.
+// `aa = true` adds a 1px alpha-0 fringe along each edge so the ribbon is
+// anti-aliased (via draw_tris_vc). Opt-in: it ~triples the vertex count and
+// softens edges (a hard / pixel brush doesn't want that). Default off keeps the
+// original hard-edged strip byte-identical.
 //
-// Allocates on `context.temp_allocator` — the ribbon vertices live as
-// long as the frame arena, which matches the render pass's lifetime
-// exactly.
+// Ribbon math: for each sample, the perpendicular to the local tangent direction
+// gives a left/right vertex pair; interior samples average the adjacent segment
+// directions so corners stay continuous, endpoints use the single adjacent
+// segment. Allocates on `context.temp_allocator`.
 draw_stroke :: proc(r: ^Renderer, samples: []Stroke_Sample,
-                    base_width: f32, color: Color) {
+                    base_width: f32, color: Color, aa: bool = false) {
 	n := len(samples)
 	if n < 2 || base_width <= 0 { return }
 
-	verts := make([dynamic][2]f32, 0, n * 2, context.temp_allocator)
+	// Per-sample inner (R/L) edge points, plus the feathered outer points when AA.
+	R := make([][2]f32, n, context.temp_allocator)
+	L := make([][2]f32, n, context.temp_allocator)
+	Rf, Lf: [][2]f32
+	if aa {
+		Rf = make([][2]f32, n, context.temp_allocator)
+		Lf = make([][2]f32, n, context.temp_allocator)
+	}
 
-	// Previous perpendicular direction, carried between samples. When a
-	// segment is too short to trust (duplicate points, sub-pixel jitter)
-	// we re-use the previous perp instead of falling back to a fixed
-	// axis — that's what was causing the ribbon to flip 90° at low
-	// pen velocity and produce horn-shaped spikes in the render.
+	// Previous perpendicular, carried between samples. When a segment is too
+	// short to trust (duplicate points, sub-pixel jitter) we reuse the previous
+	// perp rather than snapping to a fixed axis, which used to flip the ribbon
+	// 90° at low pen velocity and spike the render.
 	prev_px:  f32 = 0
 	prev_py:  f32 = -1 // points "up" in a y-down coord space
 	have_prev: bool = false
@@ -457,11 +461,10 @@ draw_stroke :: proc(r: ^Renderer, samples: []Stroke_Sample,
 		half_w := base_width * clamp(s.pressure, 0, 1) * 0.5
 		if half_w <= 0 { half_w = 0.5 }
 
-		// Average the unit-length segment directions going in and out
-		// of this sample. Unit vectors bound the sum to [0, 2] so two
-		// nearly opposite segments (hairpin) cancel to a small vector
-		// and we fall back to the previous perp rather than producing
-		// a wildly-rotated one.
+		// Average the unit-length segment directions in and out of this sample.
+		// Unit vectors bound the sum to [0, 2] so a hairpin (near-opposite
+		// segments) cancels to a small vector and we fall back to the previous
+		// perp instead of a wildly-rotated one.
 		in_dx,  in_dy,  has_in  := f32(0), f32(0), false
 		out_dx, out_dy, has_out := f32(0), f32(0), false
 		if i > 0     { in_dx,  in_dy,  has_in  = unit_seg(samples[i - 1].pos, s.pos) }
@@ -492,11 +495,36 @@ draw_stroke :: proc(r: ^Renderer, samples: []Stroke_Sample,
 			px, py = 0, -1
 		}
 
-		append(&verts, [2]f32{s.pos.x + px * half_w, s.pos.y + py * half_w}) // right
-		append(&verts, [2]f32{s.pos.x - px * half_w, s.pos.y - py * half_w}) // left
+		R[i] = {s.pos.x + px * half_w, s.pos.y + py * half_w}
+		L[i] = {s.pos.x - px * half_w, s.pos.y - py * half_w}
+		if aa {
+			hwf := half_w + 1
+			Rf[i] = {s.pos.x + px * hwf, s.pos.y + py * hwf}
+			Lf[i] = {s.pos.x - px * hwf, s.pos.y - py * hwf}
+		}
 	}
 
-	draw_triangle_strip(r, verts[:], color)
+	if !aa {
+		// Original hard-edged strip: interleaved right/left, drawn as one strip.
+		verts := make([dynamic][2]f32, 0, n * 2, context.temp_allocator)
+		for i in 0 ..< n { append(&verts, R[i], L[i]) }
+		draw_triangle_strip(r, verts[:], color)
+		return
+	}
+
+	core := [4]f32{color.r, color.g, color.b, color.a}
+	edge := [4]f32{color.r, color.g, color.b, 0}
+	vp := make([dynamic][2]f32, 0, (n - 1) * 18, context.temp_allocator)
+	vc := make([dynamic][4]f32, 0, (n - 1) * 18, context.temp_allocator)
+	for i in 0 ..< n - 1 {
+		append(&vp, R[i], R[i + 1], L[i + 1], R[i], L[i + 1], L[i])    // core band
+		append(&vc, core, core, core, core, core, core)
+		append(&vp, Rf[i], Rf[i + 1], R[i + 1], Rf[i], R[i + 1], R[i]) // right fringe
+		append(&vc, edge, edge, core, edge, core, core)
+		append(&vp, L[i], L[i + 1], Lf[i + 1], L[i], Lf[i + 1], Lf[i]) // left fringe
+		append(&vc, core, core, edge, core, edge, edge)
+	}
+	draw_tris_vc(r, vp[:], vc[:])
 }
 
 @(private)

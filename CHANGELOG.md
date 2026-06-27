@@ -18,6 +18,11 @@ bug fixes bump the patch.
   are canvas-backed and take their data from the app — keep a rolling buffer per
   metric and hand over the slice. Example `54_charts`.
 
+- **`draw_stroke` opt-in anti-aliasing (`aa`).** `draw_stroke(…, aa = true)`
+  feathers the ribbon edges (1px alpha-0 fringe) so brush / vector strokes don't
+  stair-step. Default `aa = false` is byte-identical to before, so a hard / pixel
+  brush stays crisp; AA roughly triples the vertex count when on.
+
 - **Auto-growing multiline `text_input` (`min_lines` / `max_lines`).** A multiline
   field can rest at `min_lines` rows and grow with the newline count up to
   `max_lines`, then scroll internally — `text_input(multiline = true,
