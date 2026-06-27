@@ -355,6 +355,27 @@ draw_triangles :: proc(r: ^Renderer, verts: [][2]f32, color: Color) {
 	}
 }
 
+// draw_tris_vc is draw_triangles with a per-vertex colour (kind = 3, triangle
+// list). Used for anti-aliased vector geometry: emit the shape's core verts at
+// full alpha and a 1px fringe of alpha-0 verts, and the rasteriser's colour
+// interpolation feathers the edge — the same AA trick the SDF path gets for
+// free, but for arbitrary (rotated) polylines / arcs the SDF box can't express.
+// `verts` and `cols` are parallel; length must be a multiple of 3.
+draw_tris_vc :: proc(r: ^Renderer, verts: [][2]f32, cols: [][4]f32) {
+	n := min(len(verts), len(cols))
+	if n < 3 { return }
+	base := u32(len(r.batch.vertices))
+	for i in 0 ..< n {
+		c := cols[i]
+		c[3] *= r.alpha_multiplier
+		append(&r.batch.vertices, Vertex{pos = verts[i], color = c, kind = 3})
+	}
+	for i in 0 ..< n / 3 {
+		idx := u32(i * 3)
+		append(&r.batch.indices, base + idx, base + idx + 1, base + idx + 2)
+	}
+}
+
 // draw_triangle_strip queues a strip-ordered vertex list: triangles are
 // formed from each consecutive triple (v[i], v[i+1], v[i+2]) for i in
 // 0..N-3. Equivalent to GL's TRIANGLE_STRIP topology but expanded into

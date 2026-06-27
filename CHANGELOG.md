@@ -8,6 +8,16 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Charts: `sparkline`, `sparkline_multi`, `gauge`.** The resource-monitor
+  widgets. `sparkline(values, …)` draws one rolling time-series line; `_multi`
+  overlays several traces on shared axes; `gauge(value, …)` draws a radial donut.
+  Optional area `fill`, `grid`, fixed-or-auto value range, value-axis labels
+  (`y_unit`, left by default / `y_right` for the cosmic-monitor side, with tick
+  density adapting to height) and a `x_secs` time axis. The line/arc geometry is
+  anti-aliased via a feathered alpha-0 fringe (no MSAA / shader change). All three
+  are canvas-backed and take their data from the app — keep a rolling buffer per
+  metric and hand over the slice. Example `54_charts`.
+
 - **Auto-growing multiline `text_input` (`min_lines` / `max_lines`).** A multiline
   field can rest at `min_lines` rows and grow with the newline count up to
   `max_lines`, then scroll internally — `text_input(multiline = true,

@@ -585,6 +585,47 @@ the same way as any other interactive widget.
 pressure-varying strokes; `cursor = .Crosshair` shows how the OS
 pointer shape switches when you hover.
 
+### sparkline / gauge
+
+```odin
+Trace :: struct { values: []f32, color: Color, fill: f32 }
+
+sparkline(ctx, values: []f32, width, height,
+          min = 0, max = 0, color = {}, fill = 0,
+          grid = false, y_unit = "", y_right = false, x_secs = 0)
+
+sparkline_multi(ctx, traces: []Trace, width, height,
+          min = 0, max = 0, grid = false,
+          y_unit = "", y_right = false, x_secs = 0)
+
+gauge(ctx, value: f32, size = 64, thickness = 0, color = {}, track = {})
+```
+
+Resource-monitor widgets (CPU/RAM history, a memory-used donut).
+`sparkline` plots one rolling series, `sparkline_multi` several on
+shared axes, `gauge` a radial donut filled clockwise to `value` (0..1).
+All three are canvas-backed; the app owns the data — keep a rolling
+buffer per metric (trim it to roughly the pixel width) and hand the
+slice over each frame.
+
+`values` is oldest → newest. `width = 0` fills the slot (drop one into
+`flex(1, …)`); `height` is fixed. `max = 0` auto-scales to the window's
+peak, otherwise pins the top (`max = 100` for a 0–100 % axis). `fill`
+shades the area under the line at that alpha (`0` = line only, GNOME
+style; `> 0` = filled, cosmic style). `color = {}` is the theme accent.
+
+`grid` draws faint gridlines. `y_unit != ""` labels the value axis (e.g.
+`"%"`, or `"B/s"` — big numbers get `k`/`M`/`G` prefixes); labels sit on
+the **left** by default (`y_right = true` for the right edge), and the
+tick density adapts to the height so a short graph doesn't crowd. `x_secs`
+labels the time axis along the bottom (the window's span in seconds,
+newest at the right). Lines and arcs are anti-aliased.
+
+The legend, current-value text, and a gauge's centre `%` are composed
+from `text` / `row` / `col` — e.g. `col(gauge(…), text("53%"))`.
+
+**Example: `examples/54_charts`.**
+
 ---
 
 ## Buttons and links

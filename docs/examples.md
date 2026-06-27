@@ -49,6 +49,7 @@ meant to exercise — the one-liners below are a jumping-off point.
 | `51_text_styles` | `text_input` `styles`: restyle byte ranges of the editable buffer — live Odin syntax highlighting via `core:odin/tokenizer` (keywords bold, comments italic, strings/numbers coloured) and `# `/`## ` headings (per-run size → taller lines). Caret/selection/clicks measure per run, so styled metrics stay exact. |
 | `50_clickable` | `clickable` (left, or left+right) over any view, and the `zone` query layer beneath it (`widget_clicked` / `widget_pressed` / `widget_active` / `widget_click_count`): tiles that style hover/press/focus themselves, a disabled one, single-vs-double-click, and a clickable circle. |
 | `53_drag_drop` | In-window `drag_source` / `drop_target`: drag folders between two panes with a cursor-following ghost. Shows how selection and multi-item drag (Ctrl-click, "N items" ghost, click-collapses-vs-drag-preserves) compose from `widget_pressed` / `widget_clicked` — no special multi-select API. |
+| `54_charts` | `sparkline` / `sparkline_multi` / `gauge`: a resource-monitor dashboard (CPU, per-core, memory, network) — filled + multi-trace lines with grid, value axis (left/right, adaptive ticks) and a time axis, plus a radial memory gauge. Anti-aliased; app supplies the rolling buffers. |
 
 ### Composition and identity
 
