@@ -209,14 +209,11 @@ Renderer :: struct {
 	text:             Text,
 	images:           Image_Cache,
 
-	// dmabuf_ok: the device advertised the external-memory-dmabuf +
-	// drm-format-modifier extensions and they were enabled, so
-	// `image_import_dmabuf` can import an external buffer as a sampleable
-	// texture. False elsewhere (non-Linux, or a device without them) →
-	// import returns false and the caller falls back to a pixel upload.
-	// dmabuf_foreign: VK_EXT_queue_family_foreign is also enabled, so the
-	// import acquires the image from the foreign queue family rather than
-	// QUEUE_FAMILY_IGNORED.
+	// dmabuf_ok: the external-memory-dmabuf + drm-format-modifier extensions
+	// were available and enabled, so image_import_dmabuf works (false → non-Linux
+	// or unsupported device → import returns false). dmabuf_foreign: also
+	// VK_EXT_queue_family_foreign, so the import acquires from the foreign queue
+	// family rather than QUEUE_FAMILY_IGNORED.
 	dmabuf_ok:        bool,
 	dmabuf_foreign:   bool,
 

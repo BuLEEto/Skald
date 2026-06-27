@@ -61,19 +61,12 @@ dmabuf_modifier_planes :: proc(r: ^Renderer, format: vk.Format, modifier: u64) -
 }
 
 // image_import_dmabuf imports an external dmabuf as a sampleable texture under
-// `key`, drawn by the normal `image(ctx, key, …)` path (and `image_is_resident`
-// / `image_release`). The producer keeps writing into the same buffer — import
-// once when a preview opens, `image_release` when it closes; no per-frame
-// re-import.
-//
-// Skald dup()s the fd and owns its copy: the caller keeps and closes the fd it
-// passed; Vulkan owns the dup once imported and closes it on `image_release`.
-// Returns false (never crashes) when the device lacks dmabuf support or the
-// format/modifier isn't importable — fall back to `image_load_pixels`.
-//
-// Sync is implicit (dmabuf fences). A torn / one-frame-stale preview during a
-// producer write is possible and fine for a small live thumbnail; an explicit
-// per-update acquire-fence is a later addition.
+// `key`, drawn by the normal `image(ctx, key, …)` path. The producer keeps
+// writing into the buffer — import once, `image_release` when done. Skald dup()s
+// the fd (you keep + close yours); the dup is freed on `image_release`. Returns
+// false (no crash) when the device lacks dmabuf support or the format/modifier
+// isn't importable — fall back to `image_load_pixels`. Sync is implicit (dmabuf
+// fences); an explicit acquire-fence is a later addition.
 image_import_dmabuf :: proc(r: ^Renderer, key: string, img: Dmabuf_Image) -> bool {
 	if r == nil || r.device == nil || !r.dmabuf_ok { return false }
 	if img.width == 0 || img.height == 0 { return false }

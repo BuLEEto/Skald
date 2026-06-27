@@ -488,14 +488,12 @@ image_is_resident :: proc(r: ^Renderer, name: string) -> bool {
 	return ok
 }
 
-// image_release drops a registered image — GPU texture, view, descriptor set,
-// memory — and forgets the key, reclaiming GPU memory immediately rather than
-// waiting for LRU eviction. Built for transient sources: a dmabuf preview that
-// closes, a thumbnail that scrolled away. For a dmabuf-imported image it also
-// closes the fd Skald dup'd at import (your original fd is untouched). No-op +
-// returns false on an unknown key. Call between frames on the render thread,
-// like the other image_* entry points — it DeviceWaitIdles first so it never
-// frees an image an in-flight frame still samples.
+// image_release drops a registered image — texture, view, descriptor set, memory
+// — and forgets the key, reclaiming GPU memory immediately instead of waiting for
+// LRU eviction (a dmabuf preview that closes, a thumbnail scrolled away). For a
+// dmabuf import it also closes the dup'd fd (yours is untouched). No-op + false
+// on an unknown key. DeviceWaitIdles first, so call it between frames on the
+// render thread like the other image_* procs.
 image_release :: proc(r: ^Renderer, name: string) -> bool {
 	if r == nil || r.device == nil || r.images.entries == nil { return false }
 	if _, ok := r.images.entries[name]; !ok { return false }
