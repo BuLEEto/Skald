@@ -226,14 +226,18 @@ outside gets scissored away.
 
 ```odin
 scroll(ctx, size: [2]f32, content: View, wheel_step = 40,
-       focusable = false)
+       focusable = false, reveal_focus = true)
 ```
 
 Clipped viewport with an autohiding scrollbar. Zero on an axis means
 "fill what my flex parent gives me"; pass real numbers to fix the
 viewport size. `wheel_step` is the pixel distance one wheel notch
 scrolls. `focusable = true` lets the viewport take keyboard focus
-for PageUp/PageDown/arrow-key scrolling.
+for PageUp/PageDown/arrow-key scrolling. `reveal_focus` (default on)
+scrolls the keyboard-focused descendant back into view when Tab/arrow
+navigation moves focus past the fold; it acts only on focus change, so
+it never fights a manual wheel/drag. Turn it off for a scroll whose
+offset you drive yourself.
 
 ### split
 

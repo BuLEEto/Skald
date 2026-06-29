@@ -164,6 +164,10 @@ Widget_State :: struct {
 	// changes, so app-driven focus moves (typeahead, Backspace) reveal
 	// without a steady reveal_row fighting the user's manual scroll.
 	reveal_marker: int,
+	// reveal_focus_id is the focused descendant id `scroll` last revealed
+	// (0 = none). Acting only when focused_id *changes* keeps a steady focus
+	// from re-snapping the viewport — the focus analogue of reveal_marker.
+	reveal_focus_id: Widget_ID,
 	open:        bool, // popover-style widgets (select/combo) use this to toggle their overlay
 	// anchor_pos remembers a cursor-space point for widgets whose popover
 	// position is set by the triggering gesture — context_menu stores the

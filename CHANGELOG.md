@@ -8,6 +8,14 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`scroll` reveals its keyboard-focused descendant.** When Tab or arrow
+  navigation moves focus to a control scrolled out of view, the viewport now
+  scrolls the minimum amount to bring it back (default-on `reveal_focus`). It
+  fires only on focus *change*, so a steady focus never fights a manual
+  wheel/drag — same discipline as the table's `reveal_row`. Fixes off-screen
+  focus rings in any long, keyboard-navigable scrolled view. Set
+  `reveal_focus = false` to opt a self-driven scroll out.
+
 - **Zero-copy dmabuf textures (`image_import_dmabuf`, Linux).** Import an external
   dmabuf as a sampleable texture drawn by the normal `image(ctx, key, …)` path —
   the producer (e.g. a Wayland compositor sharing a downscaled window buffer for

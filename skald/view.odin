@@ -11548,19 +11548,64 @@ scroll_advance :: proc(
 	return st, hover_thumb
 }
 
+// scroll_reveal_focus brings scroll `id`'s keyboard-focused descendant into
+// view, but only when focus *changed* since the last reveal — a steady focus
+// must not fight the user's wheel/drag (the table reveal_row discipline).
+// `prev_off` (the scroll's prior-frame offset) reconstructs the target's
+// content-space position independent of any scroll applied this frame.
+//
+// Descendant test, no hierarchy needed: a child renders under the scroll's
+// pushed viewport clip, so its clip_rect is contained in the viewport rect.
+// Read its state directly — widget_get with a guessed kind would reset the slot.
+@(private)
+scroll_reveal_focus :: proc(ctx: ^Ctx($Msg), id: Widget_ID, in_st: Widget_State, prev_off, content_h: f32) -> Widget_State {
+	st := in_st
+	fid := ctx.widgets.focused_id
+	if fid == st.reveal_focus_id { return st } // steady focus → leave scroll alone
+
+	vp := st.last_rect
+	if vp.w <= 0 || vp.h <= 0 { return st } // geometry unknown (frame 1) → retry next frame
+
+	// Viewport known: acknowledge this target (so we don't re-evaluate until
+	// it changes) and reveal it if it's our descendant and out of view.
+	max_off := content_h - vp.h
+	if max_off > 0 && fid != 0 && fid != id {
+		if fst, ok := ctx.widgets.states[fid]; ok {
+			fc := fst.clip_rect
+			if fc.w > 0 && fc.h > 0 && rect_contains_rect(vp, fc) {
+				MARGIN :: f32(8)
+				top    := fst.last_rect.y - vp.y + prev_off // content-space y
+				bottom := top + fst.last_rect.h
+				off    := st.scroll_y
+				// Bottom first, then top, so an item taller than the
+				// viewport ends up top-aligned (its label/start visible).
+				if bottom + MARGIN > off + vp.h { off = bottom + MARGIN - vp.h }
+				if top    - MARGIN < off        { off = top - MARGIN           }
+				if off < 0       { off = 0       }
+				if off > max_off { off = max_off }
+				st.scroll_y = off
+			}
+		}
+	}
+	st.reveal_focus_id = fid
+	widget_set(ctx, id, st)
+	return st
+}
+
 // Scroll_Params mirrors `scroll`'s parameters so the fill-mode path can
 // hand the full call across the `sized` deferred boundary. Private — the
 // caller never constructs it; scroll packs it internally when `size` has
 // a zero axis.
 @(private)
 Scroll_Params :: struct($Msg: typeid) {
-	content:     View,
-	id:          Widget_ID,
-	wheel_step:  f32,
-	track_color: Color,
-	thumb_color: Color,
-	focusable:   bool,
-	min:         [2]f32,
+	content:      View,
+	id:           Widget_ID,
+	wheel_step:   f32,
+	track_color:  Color,
+	thumb_color:  Color,
+	focusable:    bool,
+	reveal_focus: bool,
+	min:          [2]f32,
 }
 
 // scroll wraps `content` in a clipped viewport with an autohiding
@@ -11576,17 +11621,23 @@ Scroll_Params :: struct($Msg: typeid) {
 // captured focus — the default is off because most scrollers live
 // under a text_input or list that should own the keyboard instead.
 //
+// `reveal_focus` (default on) keeps the keyboard-focused descendant
+// visible: Tab/arrow nav to a control past the fold scrolls it back into
+// view by the minimum amount. Acts only on focus *change*, so it never
+// fights a manual wheel/drag. Turn off for a scroll you drive yourself.
+//
 // Supply `id` only when you have two scrolls at the same call site
 // that the auto-id hash can't tell apart; otherwise leave it zero.
 scroll :: proc(
-	ctx:         ^Ctx($Msg),
-	size:        [2]f32,
-	content:     View,
-	id:          Widget_ID = 0,
-	wheel_step:  f32 = 40,
-	track_color: Color = {},
-	thumb_color: Color = {},
-	focusable:   bool = false,
+	ctx:          ^Ctx($Msg),
+	size:         [2]f32,
+	content:      View,
+	id:           Widget_ID = 0,
+	wheel_step:   f32 = 40,
+	track_color:  Color = {},
+	thumb_color:  Color = {},
+	focusable:    bool = false,
+	reveal_focus: bool = true,
 ) -> View {
 	th := ctx.theme
 
@@ -11601,13 +11652,14 @@ scroll :: proc(
 		P :: Scroll_Params(Msg)
 		p := new(P, context.temp_allocator)
 		p^ = P{
-			content     = content,
-			id          = id,
-			wheel_step  = wheel_step,
-			track_color = track_color,
-			thumb_color = thumb_color,
-			focusable   = focusable,
-			min         = size,
+			content      = content,
+			id           = id,
+			wheel_step   = wheel_step,
+			track_color  = track_color,
+			thumb_color  = thumb_color,
+			focusable    = focusable,
+			reveal_focus = reveal_focus,
+			min          = size,
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, sz: [2]f32) -> View {
 			// Tight-window guard: if the parent had no space left to
@@ -11624,11 +11676,12 @@ scroll :: proc(
 				ctx,
 				sz,
 				data.content,
-				id          = data.id,
-				wheel_step  = data.wheel_step,
-				track_color = data.track_color,
-				thumb_color = data.thumb_color,
-				focusable   = data.focusable,
+				id           = data.id,
+				wheel_step   = data.wheel_step,
+				track_color  = data.track_color,
+				thumb_color  = data.thumb_color,
+				focusable    = data.focusable,
+				reveal_focus = data.reveal_focus,
 			)
 		}
 		return sized(ctx, p, fill_builder,
@@ -11653,6 +11706,12 @@ scroll :: proc(
 		}
 	}
 	st, hover_thumb := scroll_advance(ctx, id, prior.content_h, wheel_step)
+
+	// Keep the keyboard-focused child in view. After scroll_advance so a
+	// focus change wins over a stale wheel value; fires only on focus change.
+	if reveal_focus {
+		st = scroll_reveal_focus(ctx, id, st, prior.scroll_y, prior.content_h)
+	}
 
 	tc := track_color; if tc[3] == 0 { tc = th.color.surface }
 	uc := thumb_color; if uc[3] == 0 { uc = th.color.fg_muted }
