@@ -792,11 +792,17 @@ Image_Fit :: enum {
 // `tint` modulates the sampled RGBA — pass `{1, 1, 1, 1}` (the default
 // the builder supplies) for no tint. Handy for fade-in animations
 // (scale the alpha) or theming monochrome assets.
+//
+// `radius`/`border`/`border_color` round the corners and stroke a matte
+// frame — see the `image` builder for the semantics.
 View_Image :: struct {
-	path:  string,
-	size:  [2]f32,
-	fit:   Image_Fit,
-	tint:  Color,
+	path:         string,
+	size:         [2]f32,
+	fit:          Image_Fit,
+	tint:         Color,
+	radius:       f32,
+	border:       f32,
+	border_color: Color,
 }
 
 // View_Split is a two-pane container with a draggable divider between
@@ -10451,13 +10457,21 @@ alert_dialog :: proc(
 // `tint` defaults to white (no tint). Multiplies the sampled RGBA
 // per-pixel, so e.g. `tint = {1,1,1,0.5}` fades the image to half
 // opacity and `tint = th.color.primary` recolors a monochrome asset.
+//
+// `radius` rounds the corners (antialiased, 0 = off / no cost). With the
+// default `.Cover` the rounding hugs the box, so `image(radius =
+// th.radius.md)` matches a sibling `col(radius = md)`. `border` (with
+// `border_color`) strokes a concentric frame of that width around it.
 image :: proc(
-	ctx:    ^Ctx($Msg),
-	path:   string,
-	width:  f32        = 0,
-	height: f32        = 0,
-	fit:    Image_Fit  = .Cover,
-	tint:   Color      = {1, 1, 1, 1},
+	ctx:          ^Ctx($Msg),
+	path:         string,
+	width:        f32        = 0,
+	height:       f32        = 0,
+	fit:          Image_Fit  = .Cover,
+	tint:         Color      = {1, 1, 1, 1},
+	radius:       f32        = 0,
+	border:       f32        = 0,
+	border_color: Color      = {},
 ) -> View {
 	w := width
 	h := height
@@ -10470,10 +10484,13 @@ image :: proc(
 		}
 	}
 	return View_Image{
-		path = path,
-		size = {w, h},
-		fit  = fit,
-		tint = tint,
+		path         = path,
+		size         = {w, h},
+		fit          = fit,
+		tint         = tint,
+		radius       = radius,
+		border       = border,
+		border_color = border_color,
 	}
 }
 

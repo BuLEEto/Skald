@@ -1677,15 +1677,26 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		if entry == nil {
 			// Decode failure — draw a magenta placeholder so the bad
 			// path is visually obvious without crashing.
-			draw_rect(r, box, {1, 0, 1, 1}, 0)
+			draw_rect(r, box, {1, 0, 1, 1}, vv.radius)
 			return
 		}
-		pos, uv := image_fit_rects(box, f32(entry.width), f32(entry.height), vv.fit)
+		// A border is a filled rounded rect behind the image; inset the
+		// image by its width and shrink the radius to keep corners
+		// concentric — no border logic needed in the shader.
+		img_box := box
+		radius  := vv.radius
+		if vv.border > 0 && vv.border_color.a > 0 {
+			draw_rect(r, box, vv.border_color, vv.radius)
+			b := vv.border
+			img_box = Rect{box.x + b, box.y + b, max(0, box.w - 2*b), max(0, box.h - 2*b)}
+			radius  = max(0, vv.radius - b)
+		}
+		pos, uv := image_fit_rects(img_box, f32(entry.width), f32(entry.height), vv.fit)
 		// Clip to the declared box so `.None` with a larger native size
 		// (or any future fit that extends past the slot) can't bleed
 		// into neighboring widgets. Matches CSS `object-fit` behavior.
-		push_clip(r, box)
-		batch_push_image(r, entry.dset, pos, uv, vv.tint)
+		push_clip(r, img_box)
+		batch_push_image(r, entry.dset, pos, uv, vv.tint, radius)
 		pop_clip(r)
 
 	case View_Split:

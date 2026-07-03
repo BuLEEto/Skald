@@ -277,6 +277,7 @@ batch_push_image :: proc(
 	pos:        Rect,
 	uv:         [4]f32,
 	tint:       Color,
+	radius:     f32 = 0,
 ) {
 	// Current clip intersection. Mirrors clip_open_range's behavior so the
 	// image honors any active push_clip without us tracking clip state here.
@@ -307,6 +308,13 @@ batch_push_image :: proc(
 	t[3] *= r.alpha_multiplier
 	base := u32(len(r.batch.vertices))
 	v := Vertex{color = t, kind = 2}
+	// radius>0 arms the fragment shader's rounded-corner mask over the
+	// drawn quad. Clamp to the shorter half-extent so it can't degenerate.
+	if radius > 0 {
+		v.center    = {pos.x + pos.w * 0.5, pos.y + pos.h * 0.5}
+		v.half_size = {pos.w * 0.5,         pos.h * 0.5}
+		v.radius    = min(radius, min(v.half_size.x, v.half_size.y))
+	}
 	v.pos = {pos.x,         pos.y        }; v.uv = {uv[0], uv[1]}; append(&r.batch.vertices, v)
 	v.pos = {pos.x + pos.w, pos.y        }; v.uv = {uv[2], uv[1]}; append(&r.batch.vertices, v)
 	v.pos = {pos.x + pos.w, pos.y + pos.h}; v.uv = {uv[2], uv[3]}; append(&r.batch.vertices, v)

@@ -52,7 +52,16 @@ void main() {
     }
     if (v_kind < 2.5) {
         vec4 tex = texture(atlas, v_uv);
-        out_color = tex * v_color;
+        vec4 c   = tex * v_color;
+        // Optional rounded corners: v_radius=0 skips (plain image), else the
+        // same SDF that rounds rects masks the quad's corners.
+        if (v_radius > 0.0) {
+            vec2  local = v_frag_pos - v_center;
+            float d     = sd_rounded_box(local, v_half_size, v_radius);
+            float aa    = fwidth(d) * 0.5;
+            c.a        *= 1.0 - smoothstep(-aa, aa, d);
+        }
+        out_color = c;
         return;
     }
     if (v_kind < 3.5) {

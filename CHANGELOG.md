@@ -8,6 +8,13 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Rounded corners (and optional border) on `image`.** `image(…, radius =
+  th.radius.md)` rounds the drawn quad, antialiased through the same SDF that
+  rounds `rect`/`col`; with `.Cover` the rounding hugs the box, so a photo
+  matches its card's radius flush (no more sharp corners poking past a rounded
+  card). `border`/`border_color` paint a concentric frame — a photo matte.
+  `radius = 0` is the zero-cost, byte-identical default (no regression).
+
 - **`scroll` reveals its keyboard-focused descendant.** When Tab or arrow
   navigation moves focus to a control scrolled out of view, the viewport now
   scrolls the minimum amount to bring it back (default-on `reveal_focus`). It

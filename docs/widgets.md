@@ -468,13 +468,20 @@ leave it off. Color falls back to theme border.
 
 ```odin
 image(ctx, path: string, width = 0, height = 0,
-      fit = .Cover, tint = {1, 1, 1, 1})
+      fit = .Cover, tint = {1, 1, 1, 1},
+      radius = 0, border = 0, border_color = {})
 ```
 
 Loads an image from `path` and draws it scaled to fit. `fit` is
 `.Cover` (fill, crop), `.Contain` (fit, letterbox), `.Fill` (stretch),
 or `.None` (pixel-exact). Images are cached by path — cheap to use
 the same one in many places.
+
+`radius` rounds the corners (antialiased; `0` is off with no cost). With
+`.Cover`/`.Fill` the rounding hugs the box, so `image(radius = th.radius.md)`
+matches a sibling `col(radius = md)` — a `.Cover` photo rounds flush to its
+card. `border` (with `border_color`) paints a concentric frame of that width
+around it — a photo matte.
 
 `path` can be a file path **or** a synthetic name registered through
 `image_load_pixels` (see below) — the widget treats both the same.
