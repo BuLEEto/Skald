@@ -8,6 +8,13 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`reveal_row` on `virtual_list`.** Pass a row index and the list scrolls the
+  minimum amount to bring it into view — the same change-gated knob `table`
+  already has, now for virtualized lists and grids (type-ahead / jump-to-item).
+  A steady value never re-snaps, so it won't fight the user's manual scroll. For
+  a grid, pass the focused item's grid row (`focus_index / columns`). Works in
+  both fixed- and variable-height modes; `reveal_row = -1` (default) is a no-op.
+
 - **Rounded corners (and optional border) on `image`.** `image(…, radius =
   th.radius.md)` rounds the drawn quad, antialiased through the same SDF that
   rounds `rect`/`col`; with `.Cover` the rounding hugs the box, so a photo

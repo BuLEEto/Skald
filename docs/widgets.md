@@ -1124,7 +1124,8 @@ virtual_list(ctx, state: T, total_count: int, item_height: f32,
              row_builder: proc(ctx, state: T, index: int) -> View,
              row_key:     proc(state: T, index: int) -> u64,
              overscan = 4, variable_height = false,
-             estimated_height = 0, focusable = false)
+             estimated_height = 0, focusable = false,
+             reveal_row = -1)
 ```
 
 Renders only the rows currently visible in `viewport`. `state` is
@@ -1156,6 +1157,12 @@ A nil `row_key` safely falls back to index-keying.
 Set `variable_height = true` with `estimated_height` as a seed when
 rows differ in height; the list measures each row on first render and
 caches. Most apps don't need this.
+
+`reveal_row` (default -1) scrolls a row into view when its value
+*changes* — for type-ahead / jump-to-item, mirroring `table`'s knob. A
+steady value never re-snaps the viewport, so it won't fight the user's
+wheel or drag between reveals. For a virtualized grid, pass the focused
+item's grid row (`focus_index / columns`).
 
 **Examples: `examples/16_virtual_list`, `examples/27_fill_list`,
 `examples/29_fill_scroll`, `examples/24_chat`.**

@@ -11826,6 +11826,7 @@ Virtual_List_Params :: struct($Msg: typeid, $T: typeid) {
 	variable_height:  bool,
 	estimated_height: f32,
 	focusable:        bool,
+	reveal_row:       int,
 	min:              [2]f32,
 }
 
@@ -11845,6 +11846,11 @@ Virtual_List_Params :: struct($Msg: typeid, $T: typeid) {
 // "fill whatever my flex parent gives me" (see `scroll`'s fill mode).
 // Track/thumb colors fall back to the theme when zero. `focusable` lets
 // the list take keyboard focus for PageUp/PageDown/arrow-key scrolling.
+//
+// `reveal_row` (default -1) scrolls a row into view when its value
+// changes — the change-gated knob `table` has, for type-ahead /
+// jump-to-item; a steady value won't fight the user's scroll. For a
+// grid, pass the focused item's grid row (`focus_index / columns`).
 virtual_list :: proc(
 	ctx:         ^Ctx($Msg),
 	state:       $T,
@@ -11861,6 +11867,7 @@ virtual_list :: proc(
 	variable_height:  bool = false,
 	estimated_height: f32  = 0,
 	focusable:        bool = false,
+	reveal_row:       int  = -1,
 ) -> View {
 	th := ctx.theme
 
@@ -11904,6 +11911,7 @@ virtual_list :: proc(
 			variable_height  = variable_height,
 			estimated_height = estimated_height,
 			focusable        = focusable,
+			reveal_row       = reveal_row,
 			min              = viewport, // min-size hints
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, size: [2]f32) -> View {
@@ -11925,6 +11933,7 @@ virtual_list :: proc(
 				variable_height  = data.variable_height,
 				estimated_height = data.estimated_height,
 				focusable        = data.focusable,
+				reveal_row       = data.reveal_row,
 			)
 		}
 		return sized(ctx, p, fill_builder,
@@ -11935,7 +11944,7 @@ virtual_list :: proc(
 		return virtual_list_variable(
 			ctx, state, total_count, viewport, row_builder, row_key,
 			id, overscan, wheel_step, track_color, thumb_color,
-			estimated_height, item_height, focusable)
+			estimated_height, item_height, focusable, reveal_row)
 	}
 
 	// viewport is now guaranteed non-zero on both axes.
@@ -11960,6 +11969,21 @@ virtual_list :: proc(
 	if max_off  < 0         { max_off  = 0         }
 	if scroll_y < 0         { scroll_y = 0         }
 	if scroll_y > max_off   { scroll_y = max_off   }
+
+	// App-driven reveal: on a *change* to reveal_row, scroll the minimum
+	// to bring it into view. reveal_marker (row+1) gates on change so a
+	// steady value never re-snaps over the user's manual scroll — as `table`.
+	if reveal_row >= 0 && reveal_row < total_count && st.reveal_marker != reveal_row + 1 {
+		top    := f32(reveal_row) * item_height
+		bottom := top + item_height
+		if top    < scroll_y        { scroll_y = top          }
+		if bottom > scroll_y + vp_y { scroll_y = bottom - vp_y }
+		if scroll_y > max_off       { scroll_y = max_off       }
+		if scroll_y < 0             { scroll_y = 0             }
+		st.scroll_y      = scroll_y
+		st.reveal_marker = reveal_row + 1
+		widget_set(ctx, id, st)
+	}
 
 	first := int(scroll_y / item_height) - overscan
 	last  := int((scroll_y + vp_y) / item_height) + overscan + 1
@@ -12062,6 +12086,7 @@ virtual_list_variable :: proc(
 	estimated_height: f32,
 	fallback_height: f32,
 	focusable:   bool,
+	reveal_row:  int,
 ) -> View {
 	th := ctx.theme
 
@@ -12142,6 +12167,25 @@ virtual_list_variable :: proc(
 	scroll_y := st2.scroll_y
 	if scroll_y < 0 { scroll_y = 0 }
 	dragging := st2.pressed
+
+	// App-driven reveal (change-gated, as the fixed path). Offset is the
+	// prefix sum of cached heights — estimate-based for unmeasured rows,
+	// but the same heights drive the visible-range search so the row lands
+	// in view regardless.
+	if reveal_row >= 0 && reveal_row < total_count && st2.reveal_marker != reveal_row + 1 {
+		top: f32 = 0
+		for i in 0..<reveal_row { top += heights[i] }
+		bottom := top + heights[reveal_row]
+		if top    < scroll_y                { scroll_y = top                }
+		if bottom > scroll_y + viewport.y   { scroll_y = bottom - viewport.y }
+		mo := content_h_pre - viewport.y
+		if mo < 0             { mo = 0             }
+		if scroll_y > mo      { scroll_y = mo      }
+		if scroll_y < 0       { scroll_y = 0       }
+		st2.scroll_y      = scroll_y
+		st2.reveal_marker = reveal_row + 1
+		widget_set(ctx, id, st2)
+	}
 	// Was the user pinned to the bottom going into this frame?
 	// scroll_advance has already clamped scroll_y against content_h_pre
 	// (last frame's cached heights), so `scroll_y == max_off_pre` is
