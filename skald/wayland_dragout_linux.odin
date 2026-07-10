@@ -75,6 +75,9 @@ Argument :: struct #raw_union {
 @(private="file") DND_ACTION_MOVE      :: u32(2)
 @(private="file") SHM_FORMAT_ARGB8888  :: u32(0)
 
+// wl_seat.capabilities bitmask (wayland.xml): pointer=1, keyboard=2, touch=4.
+@(private="file") WL_SEAT_CAPABILITY_POINTER :: u32(1)
+
 // dlsym'd function-pointer types
 @(private="file") Marshal_Proc          :: #type proc "c" (p: Proxy, opcode: u32, iface: Interface, version: u32, flags: u32, args: [^]Argument) -> Proxy
 @(private="file") Add_Listener_Proc      :: #type proc "c" (p: Proxy, impl: rawptr, data: rawptr) -> i32
@@ -120,6 +123,11 @@ Registry_Listener :: struct {
 	global_remove: proc "c" (data: rawptr, reg: Proxy, name: u32),
 }
 @(private="file")
+Seat_Listener :: struct {
+	capabilities: proc "c" (data: rawptr, seat: Proxy, capabilities: u32),
+	name:         proc "c" (data: rawptr, seat: Proxy, name: cstring),
+}
+@(private="file")
 Pointer_Listener :: struct {
 	enter:  proc "c" (data: rawptr, p: Proxy, serial: u32, surface: rawptr, sx, sy: i32),
 	leave:  proc "c" (data: rawptr, p: Proxy, serial: u32, surface: rawptr),
@@ -154,7 +162,9 @@ g: struct {
 	display:     rawptr,
 	queue:       rawptr,
 	bound:       bool,
+	unavailable: bool, // drag-out determined impossible (e.g. pointer-less seat); latched
 	seat:        Proxy,
+	seat_caps:   u32,  // wl_seat.capabilities bitmask
 	ddm:         Proxy,
 	ddm_version: u32,
 	pointer:     Proxy,
@@ -172,6 +182,9 @@ g: struct {
 
 @(private="file") reg_listener := Registry_Listener{
 	global = on_global, global_remove = on_global_remove,
+}
+@(private="file") seat_listener := Seat_Listener{
+	capabilities = on_seat_capabilities, name = on_seat_name,
 }
 // Every event the compositor can deliver to a v1 pointer / a data source MUST
 // have a non-nil handler — the dispatcher indexes the vtable by event opcode and
@@ -261,6 +274,10 @@ on_global :: proc "c" (data: rawptr, reg: Proxy, name: u32, iface: cstring, vers
 	switch string(iface) {
 	case "wl_seat":
 		g.seat = registry_bind(reg, name, g.api.iface_seat, "wl_seat", 1)
+		// Listen for capabilities the instant the proxy exists, before any
+		// dispatch of its events, so `ensure` can read whether this seat has a
+		// pointer at all before it tries to bind one.
+		g.api.add_listener(g.seat, &seat_listener, nil)
 	case "wl_data_device_manager":
 		g.ddm_version = min(version, 3)
 		g.ddm = registry_bind(reg, name, g.api.iface_ddm, "wl_data_device_manager", g.ddm_version)
@@ -271,6 +288,9 @@ on_global :: proc "c" (data: rawptr, reg: Proxy, name: u32, iface: cstring, vers
 	}
 }
 @(private="file") on_global_remove :: proc "c" (data: rawptr, reg: Proxy, name: u32) {}
+
+@(private="file") on_seat_capabilities :: proc "c" (data: rawptr, seat: Proxy, capabilities: u32) { g.seat_caps = capabilities }
+@(private="file") on_seat_name :: proc "c" (data: rawptr, seat: Proxy, name: cstring) {}
 
 @(private="file") on_p_enter :: proc "c" (data: rawptr, p: Proxy, serial: u32, surface: rawptr, sx, sy: i32) { g.last_serial = serial }
 @(private="file") on_p_button :: proc "c" (data: rawptr, p: Proxy, serial: u32, time: u32, button: u32, state: u32) { g.last_serial = serial }
@@ -303,6 +323,7 @@ on_src_done :: proc "c" (data: rawptr, src: Proxy) {
 ensure :: proc(display: rawptr) -> bool {
 	if !g.tried { g.tried = true; g.ok = load_lib() }
 	if !g.ok || display == nil { return false }
+	if g.unavailable { return false } // determined once (e.g. no pointer); don't rebind every frame
 	if g.bound && g.display == display { return true }
 	context = runtime.default_context()
 
@@ -320,6 +341,18 @@ ensure :: proc(display: rawptr) -> bool {
 	g.api.roundtrip_queue(display, g.queue) // globals -> on_global binds seat + ddm
 
 	if g.seat == nil || g.ddm == nil { dlog("no seat/ddm"); return false }
+
+	// A seat can lack a pointer entirely — touch-only, or a headless comp with
+	// no input devices. Binding wl_pointer on such a seat is a fatal protocol
+	// error that kills the whole client, so read the seat's capabilities first
+	// (delivered on the roundtrip after bind) and, if there's no pointer, leave
+	// drag-out permanently inert — it can't work without one anyway.
+	g.api.roundtrip_queue(display, g.queue) // -> on_seat_capabilities
+	if g.seat_caps & WL_SEAT_CAPABILITY_POINTER == 0 {
+		dlog("seat has no pointer capability; drag-out inert")
+		g.unavailable = true
+		return false
+	}
 
 	// second pointer (serial capture) + our own data device
 	g.pointer = req_new(g.seat, OP_SEAT_GET_POINTER, g.api.iface_pointer,

@@ -561,6 +561,10 @@ run :: proc(app: App($State, $Msg)) {
 	last_window_state := app.initial_window_state
 
 	r: Renderer
+	// Lazy-redraw apps get MAILBOX (non-blocking present) so a hidden window
+	// can't freeze the loop; always_redraw apps keep FIFO's vsync cap. See
+	// vk_create_swapchain. Must be set before renderer_init builds the swapchain.
+	r.lazy_present = !app.always_redraw
 	if !renderer_init(&r, &w) { return }
 	defer renderer_destroy(&r)
 
@@ -643,6 +647,18 @@ run :: proc(app: App($State, $Msg)) {
 	first_frame := true
 	last_render := time.now()
 	had_focus   := false
+
+	// Frame period for the MAILBOX pacing sleep below; 60 Hz if the platform
+	// reports no refresh rate.
+	frame_period := time.Duration(16_666_667)
+	if disp := sdl3.GetDisplayForWindow(w.handle); disp != 0 {
+		if mode := sdl3.GetCurrentDisplayMode(disp); mode != nil && mode.refresh_rate > 1 {
+			frame_period = time.Duration(1_000_000_000.0 / f64(mode.refresh_rate))
+		}
+	}
+	// Monotonic (not wall clock) so the pacing sleep survives NTP steps /
+	// suspend / clock changes. Zero until the first MAILBOX frame.
+	last_frame_tick: time.Tick
 	// Set true when the previous iteration's update loop ran any msg.
 	// State may have changed without any input event to trigger the next
 	// render, so we force a render this iteration to paint the new state.
@@ -1152,6 +1168,19 @@ run :: proc(app: App($State, $Msg)) {
 
 		// `cmd_quit` from any update above exits the loop next iteration.
 		if quit_requested { w.should_close = true }
+
+		// Software vsync: MAILBOX doesn't self-pace like FIFO, so cap
+		// back-to-back dirty frames (drag / scroll / held key) to the refresh.
+		// An idle gap longer than the period leaves rem negative — no sleep —
+		// so animation and lazy repaint are untouched. FIFO/IMMEDIATE skip this.
+		if r.present_mode == .MAILBOX {
+			if last_frame_tick != (time.Tick{}) {
+				if rem := frame_period - time.tick_since(last_frame_tick); rem > 0 {
+					time.sleep(rem)
+				}
+			}
+			last_frame_tick = time.tick_now()
+		}
 
 		free_all(context.temp_allocator)
 	}

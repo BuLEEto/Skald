@@ -41,6 +41,25 @@ bug fixes bump the patch.
   callers fall back to a pixel upload. Paired with **`image_release(r, key)`** to
   drop an image's GPU texture + memory (and the dup'd fd) on demand.
 
+### Fixed
+
+- **A hidden window no longer freezes the whole app.** Under vsync'd FIFO,
+  hiding a window (minimize, hidden workspace, full occlusion) made the next
+  `QueuePresentKHR` block on a compositor frame callback that never comes —
+  wedging the whole run loop, so timers, `cmd_delay` and `cmd_thread` results
+  stalled until it reappeared. Lazy-redraw apps now present via MAILBOX when the
+  driver offers it: it doesn't block, so the loop stays live while hidden (0 fps)
+  and recovers instantly. A software frame cap keeps MAILBOX paced to the display
+  refresh. `always_redraw` apps stay on FIFO.
+
+- **Drag-out no longer crashes on a pointer-less seat.** The Wayland drag-out
+  module bound `wl_pointer` unconditionally at init; on a seat that never had a
+  pointer (touch-only, or a headless compositor with no input devices) that's a
+  fatal protocol error that killed the whole client. It now reads the seat's
+  advertised capabilities first and, with no pointer, leaves drag-out inert —
+  it can't work without one anyway. Real desktops are unaffected. Fixes apps
+  using `drag_source(export_mime = …)` dying under headless test harnesses.
+
 ## 1.0.0-rc13 — 2026-06-27
 
 ### Added

@@ -187,6 +187,15 @@ Renderer :: struct {
 	queue:            vk.Queue,
 	queue_family_idx: u32,
 	mem_props:        vk.PhysicalDeviceMemoryProperties,
+	// lazy_present prefers MAILBOX over FIFO at swapchain creation (see
+	// vk_create_swapchain). Set by run() from `!App.always_redraw` before
+	// renderer_init, so lazy-redraw apps get a non-blocking present that can't
+	// freeze the loop when a window is hidden. Default false → FIFO.
+	lazy_present:     bool,
+	// present_mode is the mode the swapchain was actually created with. The run
+	// loop reads it: MAILBOX doesn't block to vsync, so the loop paces itself in
+	// software (else continuous input would render unbounded); FIFO self-paces.
+	present_mode:     vk.PresentModeKHR,
 	// wrap_cache memoises `wrap_text` results for the current frame.
 	// Allocated fresh in frame_begin against the temp arena, so it's
 	// auto-collected at frame_end with the rest of the frame's
@@ -841,15 +850,23 @@ vk_create_swapchain :: proc(r: ^Renderer, w: ^Window) -> bool {
 	count := caps.minImageCount + 1
 	if caps.maxImageCount > 0 && count > caps.maxImageCount { count = caps.maxImageCount }
 
-	// Default to vsync'd FIFO (battery-friendly, tear-free). Benchmarks
-	// can set `SKALD_BENCH_UNCAP=1` to opt into IMMEDIATE so measured
-	// frame times reflect real CPU+GPU cost instead of the display's
-	// refresh period. IMMEDIATE may not be available everywhere — if
-	// the driver rejects the mode, this branch still succeeds via the
-	// guaranteed FIFO fallback below.
+	// Present mode. FIFO (vsync, tear-free, always supported) is the floor.
+	// Lazy-redraw apps prefer MAILBOX: unlike FIFO its present doesn't block on
+	// the compositor's frame callback, so a hidden window (callbacks stop) can't
+	// wedge QueuePresentKHR and freeze the whole run loop — that was 030. Still
+	// tear-free, and since lazy redraw only presents on dirty frames it costs
+	// nothing extra. always_redraw stays on FIFO (its vsync wait is the frame
+	// cap); benchmarks force IMMEDIATE to measure cost past the refresh.
+	pm_count: u32
+	vk.GetPhysicalDeviceSurfacePresentModesKHR(r.phys_device, r.surface, &pm_count, nil)
+	pms := make([]vk.PresentModeKHR, pm_count, context.temp_allocator)
+	vk.GetPhysicalDeviceSurfacePresentModesKHR(r.phys_device, r.surface, &pm_count, raw_data(pms))
 	present_mode: vk.PresentModeKHR = .FIFO
-	if len(os.get_env("SKALD_BENCH_UNCAP", context.temp_allocator)) > 0 {
+	switch {
+	case len(os.get_env("SKALD_BENCH_UNCAP", context.temp_allocator)) > 0 && slice.contains(pms, vk.PresentModeKHR.IMMEDIATE):
 		present_mode = .IMMEDIATE
+	case r.lazy_present && slice.contains(pms, vk.PresentModeKHR.MAILBOX):
+		present_mode = .MAILBOX
 	}
 	// Pick the best compositeAlpha the driver exposes. POST_MULTIPLIED
 	// is strictly preferred because our shader writes straight-alpha
@@ -888,6 +905,7 @@ vk_create_swapchain :: proc(r: ^Renderer, w: ^Window) -> bool {
 		fmt.eprintfln("skald: CreateSwapchainKHR: %v", res)
 		return false
 	}
+	r.present_mode = present_mode
 	r.swap_format = chosen.format
 	r.swap_extent = extent
 
