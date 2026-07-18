@@ -31,9 +31,10 @@ import "vendor:sdl3"
 
 // File_Read_Result is what `cmd_read_file`'s handler receives. `err ==
 // .None` means success — `bytes` is a fresh heap allocation the caller
-// now owns. On failure, `bytes` is empty. `path` is echoed back so a
-// single handler can fan across multiple concurrent reads without the
-// app having to pair result-to-request itself.
+// now owns — empty when the file itself was empty (a 0-byte file reads
+// successfully). On failure, `bytes` is empty too. `path` is echoed back
+// so a single handler can fan across multiple concurrent reads without
+// the app having to pair result-to-request itself.
 File_Read_Result :: struct {
 	path:  string,
 	bytes: []u8,
@@ -412,6 +413,17 @@ dialog_slot_free_filters :: proc(slot: ^Dialog_Slot($Msg)) {
 	if slot.default_location != nil { delete(slot.default_location) }
 }
 
+// read_is_empty_regular reports whether `path` is a zero-length regular
+// file — the one case nbio's read chain can't service: it sizes the read
+// buffer from stat, and `prep_read` asserts `len(buf) > 0`. A failed stat
+// returns false so nbio still owns the error.
+@(private)
+read_is_empty_regular :: proc(path: string) -> bool {
+	fi, err := os.stat(path, context.temp_allocator)
+	if err != nil { return false }
+	return fi.type == .Regular && fi.size == 0
+}
+
 // process_async dispatches an Async_Op by scheduling the underlying
 // nbio call and registering an in-flight slot. Called from
 // `process_command` for the `.Async` command kind.
@@ -427,14 +439,22 @@ process_async :: proc(
 		slot.path      = path_clone
 		slot.on_result = v.on_result
 
-		// nbio owns the bytes buffer and allocates it on the heap
-		// we pass here — the runtime allocator, same as the slot.
-		// The handler gets those bytes and is responsible for them.
-		nbio.read_entire_file(
-			path      = path_clone,
-			user_data = &slot.pending,
-			cb        = on_read_complete,
-		)
+		// An empty file is an ordinary thing to open, but nbio's read
+		// chain asserts on the zero-length buffer it sizes from stat.
+		// Same skip-the-op trick as the empty save in `on_write_open`.
+		if read_is_empty_regular(path_clone) {
+			// bytes stays nil, err stays .None: an ordinary success.
+			slot.pending.done = true
+		} else {
+			// nbio owns the bytes buffer and allocates it on the heap
+			// we pass here — the runtime allocator, same as the slot.
+			// The handler gets those bytes and is responsible for them.
+			nbio.read_entire_file(
+				path      = path_clone,
+				user_data = &slot.pending,
+				cb        = on_read_complete,
+			)
+		}
 
 		append(&io.reads, slot)
 

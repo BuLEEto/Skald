@@ -43,6 +43,14 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`cmd_read_file` no longer kills the process on a 0-byte file.** Opening an
+  empty file aborted the app outright — `core:nbio` sizes its read buffer from
+  stat and `prep_read` asserts `len(buf) > 0`, which no app-level error handling
+  could catch, so the window just vanished. An empty regular file now completes
+  as an ordinary successful read (`bytes` empty, `err == .None`); missing paths,
+  directories and every other error still flow through nbio unchanged. Only the
+  async path was affected — synchronous `os.read_entire_file` was always fine.
+
 - **A hidden window no longer freezes the whole app.** Under vsync'd FIFO,
   hiding a window (minimize, hidden workspace, full occlusion) made the next
   `QueuePresentKHR` block on a compositor frame callback that never comes —
