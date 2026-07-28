@@ -8,6 +8,10 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`marks` on `chat_input`.** The composer now forwards a `[]Text_Mark` to its
+  `text_input`, so a chat field can show spell-check squiggles / search hits.
+  Additive — `nil` (the default) leaves existing callers unchanged.
+
 - **`reveal_row` on `virtual_list`.** Pass a row index and the list scrolls the
   minimum amount to bring it into view — the same change-gated knob `table`
   already has, now for virtualized lists and grids (type-ahead / jump-to-item).

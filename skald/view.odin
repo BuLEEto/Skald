@@ -5200,6 +5200,9 @@ chat_input :: proc(
 	invalid:     bool      = false,
 	error:       string    = "",
 	disabled:    bool      = false,
+	// Decorate byte ranges in `value` (spell-check squiggles, search hits);
+	// forwarded to text_input, which renders them. nil = none.
+	marks:       []Text_Mark = nil,
 ) -> View {
 	// Resolve the id up front so we can hit-test focus for the submit
 	// path and then hand the same id to text_input. Same trick as
@@ -5247,6 +5250,7 @@ chat_input :: proc(
 		invalid      = invalid,
 		error        = error,
 		disabled     = disabled,
+		marks        = marks,
 	)
 }
 
