@@ -6,6 +6,8 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+## 1.0.0-rc14 — 2026-08-01
+
 ### Added
 
 - **`marks` on `chat_input`.** The composer now forwards a `[]Text_Mark` to its
