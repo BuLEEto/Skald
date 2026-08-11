@@ -669,19 +669,20 @@ vk_create_instance :: proc(r: ^Renderer, w: ^Window) -> bool {
 		exts_slice = slice.from_ptr(exts_raw, int(n))
 	}
 
-	// macOS has no fully-conformant Vulkan driver; MoltenVK is a
-	// "portability subset" implementation. To opt into that on the
-	// Vulkan loader we have to request VK_KHR_portability_enumeration
-	// at instance level AND set the ENUMERATE_PORTABILITY flag, or
-	// CreateInstance returns ERROR_INCOMPATIBLE_DRIVER. Without this
-	// block a Linux/Windows build just works; macOS needs the opt-in.
-	// Every other platform ignores the extra extension + flag.
+	// macOS has no conformant Vulkan driver — MoltenVK is a "portability
+	// subset". Opting in needs VK_KHR_portability_enumeration + the
+	// ENUMERATE_PORTABILITY flag, but that extension is loader-provided and
+	// leaner macOS loaders don't expose it; requesting it unconditionally then
+	// fails CreateInstance (ERROR_EXTENSION_NOT_PRESENT). Enable only if present
+	// — MoltenVK still enumerates without it. Other platforms skip this block.
 	exts := make([dynamic]cstring, 0, len(exts_slice) + 1, context.temp_allocator)
 	for e in exts_slice { append(&exts, e) }
 	flags: vk.InstanceCreateFlags
 	when ODIN_OS == .Darwin {
-		append(&exts, "VK_KHR_portability_enumeration")
-		flags = {.ENUMERATE_PORTABILITY_KHR}
+		if vk_has_instance_ext("VK_KHR_portability_enumeration") {
+			append(&exts, "VK_KHR_portability_enumeration")
+			flags = {.ENUMERATE_PORTABILITY_KHR}
+		}
 	}
 
 	info := vk.InstanceCreateInfo{
@@ -809,6 +810,22 @@ vk_create_device :: proc(r: ^Renderer) -> bool {
 	vk.load_proc_addresses_device(r.device)
 	vk.GetDeviceQueue(r.device, r.queue_family_idx, 0, &r.queue)
 	return true
+}
+
+// vk_has_instance_ext reports whether the Vulkan loader advertises instance
+// extension `name`. Queried with a null instance, so it's valid before
+// CreateInstance — used to opt into VK_KHR_portability_enumeration (macOS)
+// only when the loader actually offers it.
+@(private)
+vk_has_instance_ext :: proc(name: string) -> bool {
+	count: u32
+	vk.EnumerateInstanceExtensionProperties(nil, &count, nil)
+	props := make([]vk.ExtensionProperties, count, context.temp_allocator)
+	vk.EnumerateInstanceExtensionProperties(nil, &count, raw_data(props))
+	for &p in props {
+		if string(cstring(&p.extensionName[0])) == name { return true }
+	}
+	return false
 }
 
 // vk_has_device_ext reports whether the physical device advertises `name`.

@@ -6,6 +6,15 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Fixed
+
+- **macOS no longer fails to start when the loader lacks
+  `VK_KHR_portability_enumeration`.** The instance was requesting that
+  extension unconditionally, so `CreateInstance` returned
+  `ERROR_EXTENSION_NOT_PRESENT` on macOS loaders that don't expose it. It's now
+  enabled only when the loader advertises it; MoltenVK still enumerates without
+  it. No effect on Linux/Windows.
+
 ## 1.0.0-rc14 — 2026-08-01
 
 ### Added
