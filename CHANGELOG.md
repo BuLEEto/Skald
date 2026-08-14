@@ -19,6 +19,12 @@ bug fixes bump the patch.
 - **Humane time-axis labels.** The `x_secs` axis formats by magnitude (`6h`,
   `3d`) instead of raw seconds; pass `x_label` to override the format entirely.
 
+- **Explicit Y ticks + reference bands on `bar_chart`.** `y_ticks = []f32{…}`
+  labels the value axis at exact levels (e.g. `{0, 3, 5, 7, 9}`) instead of the
+  adaptive quarter ticks, which mislabel a meaningful-integer scale like Kp 0–9;
+  works on `sparkline` too. `bands` now applies to `bar_chart` as well, matching
+  the sparkline reference bands.
+
 ### Fixed
 
 - **macOS no longer fails to start when the loader lacks

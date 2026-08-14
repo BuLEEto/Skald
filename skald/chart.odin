@@ -48,6 +48,7 @@ Chart_Axis :: struct {
 	x_secs:      f32,
 	x_label:     proc(secs_ago: f32) -> string,  // nil = auto (humane units)
 	bands:       []Ref_Band,
+	y_ticks:     []f32,        // explicit value ticks; nil = adaptive / decades
 	label_color: Color,
 	label_size:  f32,
 }
@@ -72,6 +73,7 @@ sparkline :: proc(
 	x_secs:  f32 = 0,
 	scale:   Scale = .Linear,
 	bands:   []Ref_Band = nil,
+	y_ticks: []f32 = nil,
 	x_label: proc(secs_ago: f32) -> string = nil,
 	id:      Widget_ID = 0,
 ) -> View {
@@ -79,7 +81,7 @@ sparkline :: proc(
 		[]Trace{ {values = values, color = color, fill = fill} },
 		width, height, min = min, max = max, grid = grid,
 		y_unit = y_unit, y_right = y_right, x_secs = x_secs,
-		scale = scale, bands = bands, x_label = x_label, id = id)
+		scale = scale, bands = bands, y_ticks = y_ticks, x_label = x_label, id = id)
 }
 
 @(private)
@@ -104,6 +106,7 @@ sparkline_multi :: proc(
 	x_secs:  f32 = 0,
 	scale:   Scale = .Linear,
 	bands:   []Ref_Band = nil,
+	y_ticks: []f32 = nil,
 	x_label: proc(secs_ago: f32) -> string = nil,
 	id:      Widget_ID = 0,
 ) -> View {
@@ -125,7 +128,7 @@ sparkline_multi :: proc(
 
 	data := new(Sparkline_Data, context.temp_allocator)
 	data^ = Sparkline_Data{
-		axis   = chart_axis(th, lo, hi, scale, grid, y_unit, y_right, x_secs, x_label, bands),
+		axis   = chart_axis(th, lo, hi, scale, grid, y_unit, y_right, x_secs, x_label, bands, y_ticks),
 		traces = cp,
 	}
 
@@ -177,7 +180,9 @@ sparkline_draw :: proc(d: ^Sparkline_Data, p: Canvas_Painter) {
 // bar_chart draws vertical bars from `values` (oldest → newest). `width = 0`
 // fills the slot; `max = 0` auto-scales (else pins the top). Bars use `color`,
 // or `color_of(v)` for a per-bar colour (storm level, alert band); `gap` is the
-// pixel spacing, and negative data draws below a zero baseline.
+// pixel spacing, and negative data draws below a zero baseline. `bands` shades
+// reference ranges behind the bars; `y_ticks` pins the value labels to exact
+// levels (e.g. `{0, 3, 5, 7, 9}`) instead of the adaptive quarter ticks.
 bar_chart :: proc(
 	ctx:      ^Ctx($Msg),
 	values:   []f32,
@@ -192,6 +197,8 @@ bar_chart :: proc(
 	y_unit:   string = "",
 	y_right:  bool = false,
 	x_secs:   f32 = 0,
+	bands:    []Ref_Band = nil,
+	y_ticks:  []f32 = nil,
 	id:       Widget_ID = 0,
 ) -> View {
 	th := ctx.theme
@@ -219,7 +226,7 @@ bar_chart :: proc(
 
 	data := new(Bar_Chart_Data, context.temp_allocator)
 	data^ = Bar_Chart_Data{
-		axis   = chart_axis(th, min, hi, .Linear, grid, y_unit, y_right, x_secs, nil, nil),
+		axis   = chart_axis(th, min, hi, .Linear, grid, y_unit, y_right, x_secs, nil, bands, y_ticks),
 		values = vc,
 		colors = cols,
 		gap    = gap,
@@ -305,7 +312,7 @@ chart_bounds :: proc(traces: []Trace, min, max: f32, scale: Scale) -> (lo, hi: f
 @(private)
 chart_axis :: proc(th: ^Theme, lo, hi: f32, scale: Scale, grid: bool, y_unit: string,
                    y_right: bool, x_secs: f32, x_label: proc(secs_ago: f32) -> string,
-                   bands: []Ref_Band) -> Chart_Axis {
+                   bands: []Ref_Band, y_ticks: []f32) -> Chart_Axis {
 	gc := th.color.border
 	gc.a *= 0.6
 	bc: []Ref_Band
@@ -316,35 +323,44 @@ chart_axis :: proc(th: ^Theme, lo, hi: f32, scale: Scale, grid: bool, y_unit: st
 			bc[i].label = strings.clone(band.label, context.temp_allocator)
 		}
 	}
+	yt: []f32
+	if len(y_ticks) > 0 {
+		yt = make([]f32, len(y_ticks), context.temp_allocator)
+		copy(yt, y_ticks)
+	}
 	return Chart_Axis{
 		min = lo, max = hi, scale = scale, grid = grid, grid_color = gc,
 		y_unit = y_unit, y_right = y_right, x_secs = x_secs, x_label = x_label,
-		bands = bc, label_color = th.color.fg_muted, label_size = th.font.size_sm,
+		bands = bc, y_ticks = yt, label_color = th.color.fg_muted, label_size = th.font.size_sm,
 	}
 }
 
-// chart_y_show: draw the Y value labels/gutter on demand when a unit is set, and
-// always for a log axis (its decade labels are the whole point).
+// chart_y_show: draw the Y value labels/gutter when a unit is set, when explicit
+// ticks are given, and always for a log axis (its decade labels are the point).
 @(private)
 chart_y_show :: proc(ax: ^Chart_Axis) -> bool {
-	return ax.y_unit != "" || ax.scale == .Log10
+	return ax.y_unit != "" || ax.scale == .Log10 || len(ax.y_ticks) > 0
+}
+
+// chart_norm maps a data value to its 0..1 axis position (0 = min/bottom,
+// 1 = max/top), honouring the scale.
+@(private)
+chart_norm :: proc(ax: ^Chart_Axis, v: f32) -> f32 {
+	if ax.scale == .Log10 {
+		span := math.log10(ax.max) - math.log10(ax.min)
+		if span <= 0 { span = 1 }
+		vv := v > 0 ? v : ax.min
+		return clamp((math.log10(vv) - math.log10(ax.min)) / span, 0, 1)
+	}
+	rng := ax.max - ax.min
+	if rng <= 0 { rng = 1 }
+	return clamp((v - ax.min) / rng, 0, 1)
 }
 
 // chart_y_at maps a data value to a pixel Y inside `plot`, honouring the scale.
 @(private)
 chart_y_at :: proc(ax: ^Chart_Axis, plot: Rect, v: f32) -> f32 {
-	f: f32
-	if ax.scale == .Log10 {
-		span := math.log10(ax.max) - math.log10(ax.min)
-		if span <= 0 { span = 1 }
-		vv := v > 0 ? v : ax.min
-		f = clamp((math.log10(vv) - math.log10(ax.min)) / span, 0, 1)
-	} else {
-		rng := ax.max - ax.min
-		if rng <= 0 { rng = 1 }
-		f = clamp((v - ax.min) / rng, 0, 1)
-	}
-	return plot.y + plot.h * (1 - f)
+	return plot.y + plot.h * (1 - chart_norm(ax, v))
 }
 
 // chart_plot_rect insets the widget bounds by the label gutters (Y values on the
@@ -383,6 +399,17 @@ chart_yticks :: proc(ax: ^Chart_Axis, r: ^Renderer, plot: Rect) -> []Chart_Tick 
 	fs := ax.label_size
 	_, lh := measure_text(r, "0", fs)
 	out := make([dynamic]Chart_Tick, 0, 8, context.temp_allocator)
+
+	// Explicit ticks: one per caller-supplied value, drawn at its true position —
+	// overrides the adaptive/decade tick logic (meaningful integer levels).
+	if len(ax.y_ticks) > 0 {
+		for v in ax.y_ticks {
+			num := ax.scale == .Log10 ? chart_fmt_log(v) : chart_fmt_num(v)
+			lab := fmt.tprintf("%s%s", num, ax.y_unit)
+			append(&out, Chart_Tick{frac = 1 - chart_norm(ax, v), label = lab})
+		}
+		return out[:]
+	}
 
 	if ax.scale == .Log10 {
 		lmin := math.log10(ax.min)

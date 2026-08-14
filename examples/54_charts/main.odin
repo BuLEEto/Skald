@@ -162,9 +162,16 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 			bands = flare_bands, fill = 0.10, grid = true, y_unit = "", x_secs = 6 * 3600))
 
 	// Kp index — a bar chart, one bar per 3-hour sample, coloured by storm level.
+	// Explicit ticks label the meaningful levels (5 = G1 threshold), and G-scale
+	// bands carry the same labelled-range language as the flux flare bands.
+	storm_bands := []skald.Ref_Band{
+		{lo = 5, hi = 6, color = {0.95, 0.75, 0.20, 0.12}, label = "G1"},
+		{lo = 6, hi = 8, color = {0.95, 0.45, 0.20, 0.12}, label = "G2"},
+		{lo = 8, hi = 9, color = {0.85, 0.20, 0.22, 0.14}, label = "G4"},
+	}
 	kp := card(ctx, "Planetary Kp", fmt.tprintf("Kp %.0f", last(s.kp)),
-		skald.bar_chart(ctx, s.kp, 0, 110, max = 9, color_of = kp_color,
-			gap = 4, grid = true, y_unit = ""))
+		skald.bar_chart(ctx, s.kp, 0, 110, max = 9, color_of = kp_color, gap = 4,
+			grid = true, y_ticks = []f32{0, 3, 5, 7, 9}, bands = storm_bands))
 
 	return skald.scroll(ctx, {620, 740},
 		skald.col(

@@ -41,6 +41,22 @@ chart_fmt_secs_humane :: proc(t: ^testing.T) {
 	testing.expect_value(t, chart_fmt_secs(259200),  "3d")    // 3 d
 }
 
+@(test)
+chart_norm_maps_true_position :: proc(t: ^testing.T) {
+	// A 0..9 axis: 5 sits at 5/9, the real height — not a rounded quarter tick.
+	// This is what explicit y_ticks rely on to label meaningful levels correctly.
+	lin := Chart_Axis{min = 0, max = 9, scale = .Linear}
+	testing.expect_value(t, chart_norm(&lin, 0), f32(0))
+	testing.expect_value(t, chart_norm(&lin, 9), f32(1))
+	testing.expectf(t, abs(chart_norm(&lin, 5) - 5.0 / 9.0) < 1e-6, "5 maps to 5/9")
+
+	// Log axis: 1e-4 is two decades up a 1e-6..1e-3 span → 2/3.
+	log := Chart_Axis{min = 1e-6, max = 1e-3, scale = .Log10}
+	testing.expect_value(t, chart_norm(&log, 1e-6), f32(0))
+	testing.expect_value(t, chart_norm(&log, 1e-3), f32(1))
+	testing.expectf(t, abs(chart_norm(&log, 1e-4) - 2.0 / 3.0) < 1e-5, "1e-4 maps to 2/3")
+}
+
 @(private = "file")
 chart_ctx :: proc(ws: ^Widget_Store, th: ^Theme, input: ^Input) -> Ctx(C_Msg) {
 	return Ctx(C_Msg){widgets = ws, theme = th, input = input}
@@ -122,7 +138,9 @@ bar_chart_builds_canvas :: proc(t: ^testing.T) {
 	kp_color :: proc(v: f32) -> Color {
 		return v >= 5 ? Color{1, 0, 0, 1} : Color{0, 1, 0, 1}
 	}
-	v := bar_chart(&ctx, []f32{2, 4, 6, 3}, 200, 80, max = 9, color_of = kp_color, grid = true)
+	v := bar_chart(&ctx, []f32{2, 4, 6, 3}, 200, 80, max = 9, color_of = kp_color,
+		grid = true, y_ticks = []f32{0, 3, 5, 7, 9},
+		bands = []Ref_Band{{lo = 5, hi = 6, color = Color{1, 0.7, 0, 0.2}, label = "G1"}})
 	cv, ok := v.(View_Canvas)
 	testing.expect(t, ok, "bar_chart should build a View_Canvas")
 	testing.expect_value(t, cv.size, [2]f32{200, 80})
