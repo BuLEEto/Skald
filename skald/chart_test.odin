@@ -22,6 +22,25 @@ chart_fmt_num_formats :: proc(t: ^testing.T) {
 	testing.expect_value(t, chart_fmt_num(2.5e9),   "2.5G")
 }
 
+@(test)
+chart_fmt_log_formats_decades :: proc(t: ^testing.T) {
+	testing.expect_value(t, chart_fmt_log(1),     "1")
+	testing.expect_value(t, chart_fmt_log(10),    "10")
+	testing.expect_value(t, chart_fmt_log(100),   "100")
+	testing.expect_value(t, chart_fmt_log(1000),  "1k")
+	testing.expect_value(t, chart_fmt_log(1e-3),  "1e-3")
+	testing.expect_value(t, chart_fmt_log(1e-6),  "1e-6")
+	testing.expect_value(t, chart_fmt_log(0),     "0")
+}
+
+@(test)
+chart_fmt_secs_humane :: proc(t: ^testing.T) {
+	testing.expect_value(t, chart_fmt_secs(30),      "30s")
+	testing.expect_value(t, chart_fmt_secs(600),     "10m")   // 10 min
+	testing.expect_value(t, chart_fmt_secs(21600),   "6h")    // 6 h
+	testing.expect_value(t, chart_fmt_secs(259200),  "3d")    // 3 d
+}
+
 @(private = "file")
 chart_ctx :: proc(ws: ^Widget_Store, th: ^Theme, input: ^Input) -> Ctx(C_Msg) {
 	return Ctx(C_Msg){widgets = ws, theme = th, input = input}
@@ -67,6 +86,52 @@ sparkline_multi_builds_canvas :: proc(t: ^testing.T) {
 	cv, ok := v.(View_Canvas)
 	testing.expect(t, ok, "sparkline_multi should build a View_Canvas")
 	testing.expect_value(t, cv.size, [2]f32{300, 80})
+}
+
+@(test)
+sparkline_log_with_bands_builds :: proc(t: ^testing.T) {
+	ws: Widget_Store
+	widget_store_init(&ws)
+	defer widget_store_destroy(&ws)
+	ws.frame = 1
+	th := theme_dark()
+	input: Input
+	ctx := chart_ctx(&ws, &th, &input)
+
+	bands := []Ref_Band{
+		{lo = 1e-6, hi = 1e-5, color = Color{0, 1, 0, 0.2}, label = "C"},
+		{lo = 1e-5, hi = 1e-4, color = Color{1, 1, 0, 0.2}, label = "M"},
+	}
+	v := sparkline(&ctx, []f32{1e-8, 1e-6, 1e-5, 1e-4}, 240, 100,
+		min = 1e-9, max = 1e-3, scale = .Log10, bands = bands, y_unit = "W/m²")
+	cv, ok := v.(View_Canvas)
+	testing.expect(t, ok, "log sparkline with bands should build a View_Canvas")
+	testing.expect_value(t, cv.size, [2]f32{240, 100})
+}
+
+@(test)
+bar_chart_builds_canvas :: proc(t: ^testing.T) {
+	ws: Widget_Store
+	widget_store_init(&ws)
+	defer widget_store_destroy(&ws)
+	ws.frame = 1
+	th := theme_dark()
+	input: Input
+	ctx := chart_ctx(&ws, &th, &input)
+
+	kp_color :: proc(v: f32) -> Color {
+		return v >= 5 ? Color{1, 0, 0, 1} : Color{0, 1, 0, 1}
+	}
+	v := bar_chart(&ctx, []f32{2, 4, 6, 3}, 200, 80, max = 9, color_of = kp_color, grid = true)
+	cv, ok := v.(View_Canvas)
+	testing.expect(t, ok, "bar_chart should build a View_Canvas")
+	testing.expect_value(t, cv.size, [2]f32{200, 80})
+
+	// width 0 fills its slot; the intrinsic fallback is the 120px min.
+	v0 := bar_chart(&ctx, []f32{1, 2, 3}, 0, 50)
+	c0, _ := v0.(View_Canvas)
+	testing.expect_value(t, c0.size.x, f32(0))
+	testing.expect_value(t, c0.min.x, f32(120))
 }
 
 @(test)

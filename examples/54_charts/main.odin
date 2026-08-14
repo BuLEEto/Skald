@@ -4,11 +4,12 @@ import "core:fmt"
 import "core:math"
 import "gui:skald"
 
-// Sparklines + gauge: the resource-monitor widgets. `sparkline` draws one rolling
-// series, `sparkline_multi` several on shared axes, and `gauge` a radial donut.
-// All three are canvas-backed and take their data from the app — here it's
-// synthetic (generated once in `init`) so the example is portable; a real
-// monitor would keep a rolling buffer per metric sampled from the OS.
+// The chart widgets: `sparkline` (one rolling series), `sparkline_multi` (several
+// on shared axes), `bar_chart` (per-bar colours), and `gauge` (a radial donut).
+// The flux plot shows the log axis with reference bands + an hours time axis; the
+// Kp plot shows a bar chart coloured by value. All are canvas-backed and take
+// their data from the app — here it's synthetic (generated once in `init`) so the
+// example is portable; a real monitor would sample a rolling buffer per metric.
 
 N :: 120
 
@@ -17,9 +18,21 @@ State :: struct {
 	mem:    []f32,
 	cores:  [][]f32,
 	dl, ul: []f32,
+	flux:   []f32,   // log-scale series (solar X-ray flux, W/m²)
+	kp:     []f32,   // bar-chart series (Kp index, 0..9)
 }
 
 Msg :: enum { Nop }
+
+// NOAA-style G-scale colour for a Kp bar: green (quiet) → red (severe storm).
+kp_color :: proc(v: f32) -> skald.Color {
+	switch {
+	case v >= 8: return {0.85, 0.20, 0.22, 1}   // G4–G5
+	case v >= 6: return {0.95, 0.45, 0.20, 1}   // G2–G3
+	case v >= 5: return {0.95, 0.75, 0.20, 1}   // G1
+	case:        return {0.45, 0.75, 0.45, 1}   // below storm level
+	}
+}
 
 CORE_COLORS := [4]skald.Color{
 	{0.91, 0.34, 0.34, 1}, {0.95, 0.60, 0.22, 1},
@@ -49,12 +62,29 @@ init :: proc() -> State {
 	for i in 0 ..< 4 {
 		cores[i] = series(28 + f32(i) * 6, 22, 0.10 + f32(i) * 0.015, f32(i) * 1.3, 18, 0, 100)
 	}
+	// X-ray flux: build it in log space (a quiet B/C background with an M-class
+	// flare bump) so it spans several decades — the case the log axis is for.
+	flux := make([]f32, N)
+	for i in 0 ..< N {
+		t := f32(i)
+		e := -6.6 + 0.4 * math.sin(t * 0.05) + (noise(i, 3.0) - 0.5) * 0.4
+		e += 1.9 * math.exp(-((t - 78) * (t - 78)) / 120)   // the flare
+		flux[i] = math.pow(10, e)
+	}
+
+	// Kp index: eight 3-hour samples building into a storm.
+	kp := []f32{2, 3, 2, 4, 5, 6, 7, 5}
+	kp_buf := make([]f32, len(kp))
+	copy(kp_buf, kp)
+
 	return State{
 		cpu   = series(40, 30, 0.09, 0.0, 22, 0, 100),
 		mem   = series(56, 6, 0.04, 2.0, 4, 0, 100),
 		cores = cores,
 		dl    = series(1.1e6, 0.9e6, 0.13, 0.5, 0.8e6, 0, 4e6),
 		ul    = series(2.2e5, 1.8e5, 0.17, 2.4, 1.5e5, 0, 1e6),
+		flux  = flux,
+		kp    = kp_buf,
 	}
 }
 
@@ -119,10 +149,27 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 	net := card(ctx, "Network", "↓ download   ↑ upload",
 		skald.sparkline_multi(ctx, net_traces, 0, 90, grid = true, y_unit = "B/s", y_right = true))
 
+	// X-ray flux — log axis with flare-class reference bands, over a 6-hour window
+	// so the time labels read in hours, not raw seconds.
+	flare_bands := []skald.Ref_Band{
+		{lo = 1e-7, hi = 1e-6, color = {0.45, 0.75, 0.45, 0.14}, label = "B"},
+		{lo = 1e-6, hi = 1e-5, color = {0.95, 0.75, 0.20, 0.14}, label = "C"},
+		{lo = 1e-5, hi = 1e-4, color = {0.95, 0.45, 0.20, 0.16}, label = "M"},
+		{lo = 1e-4, hi = 1e-3, color = {0.85, 0.20, 0.22, 0.18}, label = "X"},
+	}
+	flux := card(ctx, "Solar X-ray flux", fmt.tprintf("%.0e W/m²", last(s.flux)),
+		skald.sparkline(ctx, s.flux, 0, 130, min = 1e-8, max = 1e-3, scale = .Log10,
+			bands = flare_bands, fill = 0.10, grid = true, y_unit = "", x_secs = 6 * 3600))
+
+	// Kp index — a bar chart, one bar per 3-hour sample, coloured by storm level.
+	kp := card(ctx, "Planetary Kp", fmt.tprintf("Kp %.0f", last(s.kp)),
+		skald.bar_chart(ctx, s.kp, 0, 110, max = 9, color_of = kp_color,
+			gap = 4, grid = true, y_unit = ""))
+
 	return skald.scroll(ctx, {620, 740},
 		skald.col(
-			skald.text("Charts — sparkline / gauge", th.color.fg, th.font.size_lg),
-			cpu, cores, mem, net,
+			skald.text("Charts — sparkline / bar / gauge", th.color.fg, th.font.size_lg),
+			cpu, cores, mem, net, flux, kp,
 			spacing = th.spacing.lg, padding = th.spacing.xl, cross_align = .Start,
 		))
 }

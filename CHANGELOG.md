@@ -6,6 +6,19 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Added
+
+- **`bar_chart` widget.** Vertical bars from a `[]f32` with `min`/`max` pinning,
+  a uniform `color` or per-bar `color_of(v)` (colour-by-value makes a threshold
+  visible at a glance), and the same grid / axis labels as `sparkline`.
+
+- **Log Y axis + reference bands for sparklines.** `scale = .Log10` gives a
+  base-10 decade axis for order-of-magnitude data; `bands = []Ref_Band{…}` shades
+  [lo, hi] ranges behind the traces. Both default off — existing charts unchanged.
+
+- **Humane time-axis labels.** The `x_secs` axis formats by magnitude (`6h`,
+  `3d`) instead of raw seconds; pass `x_label` to override the format entirely.
+
 ### Fixed
 
 - **macOS no longer fails to start when the loader lacks
