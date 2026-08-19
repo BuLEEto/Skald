@@ -442,8 +442,7 @@ vk_end_one_shot :: proc(r: ^Renderer, cb: vk.CommandBuffer) {
 
 @(private)
 vk_copy_bytes :: proc(dst, src: rawptr, n: int) {
-	d := cast([^]u8)dst; s := cast([^]u8)src
-	for i in 0..<n { d[i] = s[i] }
+	if n > 0 { copy((cast([^]u8)dst)[:n],(cast([^]u8)src)[:n]) }
 }
 
 @(private)
