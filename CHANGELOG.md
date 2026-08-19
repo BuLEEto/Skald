@@ -34,6 +34,13 @@ bug fixes bump the patch.
   enabled only when the loader advertises it; MoltenVK still enumerates without
   it. No effect on Linux/Windows.
 
+### Performance
+
+- **Faster per-frame GPU uploads.** `vk_copy_bytes` — the vertex / index / image
+  staging copy — used a scalar byte loop; it now uses `copy()` (`memmove`), a
+  measurable CPU saving for apps that redraw heavily. Thanks to @Ashe-Sterling
+  for profiling it and sending the fix.
+
 ## 1.0.0-rc14 — 2026-08-01
 
 ### Added
