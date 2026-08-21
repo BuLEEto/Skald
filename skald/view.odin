@@ -11440,25 +11440,31 @@ scroll_advance :: proc(
 	// Nested-scroll wheel routing: only the *innermost* hovered scrollable
 	// viewport eats the wheel delta; outer scrollers pass. We consult the
 	// previous frame's stamp list (one-frame lag is imperceptible for wheel
-	// UX and avoids a second render pass). Iterating backwards picks the
-	// deepest rect first — it's the one that was stamped most recently in
-	// last frame's render walk, which for a properly-nested tree is the
-	// innermost scroller at the mouse position.
+	// UX and avoids a second render pass).
+	//
+	// Innermost is the smallest viewport under the cursor — not the last one
+	// stamped. Stamp order only runs outer -> inner when every scroller
+	// resolves at the same stage; a fill-mode scroll(ctx, {0,0}, ...) defers
+	// through `sized` and stamps *after* an inner fixed-size scroll built as
+	// its own argument, so a combobox/select popup inside a fill-mode page
+	// would read as outer and its wheel went dead. Area is order-independent:
+	// nested viewports strictly contain one another (inner is smaller), and
+	// siblings don't overlap (at most one contains the point).
 	claim_wheel := false
 	if hovered && scrollable && ctx.input.scroll.y != 0 {
-		found := false
-		for i := len(ctx.widgets.scroll_rects_prev) - 1; i >= 0; i -= 1 {
-			cand := ctx.widgets.scroll_rects_prev[i]
-			if rect_contains_point(cand.rect, ctx.input.mouse_pos) {
-				claim_wheel = cand.id == id
-				found = true
-				break
+		best_id: Widget_ID
+		best_area := max(f32)
+		for cand in ctx.widgets.scroll_rects_prev {
+			if !rect_contains_point(cand.rect, ctx.input.mouse_pos) { continue }
+			area := cand.rect.w * cand.rect.h
+			if area < best_area {
+				best_area = area
+				best_id   = cand.id
 			}
 		}
-		// Fallback for the very first frame (no prev stamps yet): let the
-		// outer-most hovered scroller claim, so a plain single-scroll page
-		// isn't inert on frame 1.
-		if !found { claim_wheel = true }
+		// No stamps yet (very first frame): let the hovered scroller claim,
+		// so a plain single-scroll page isn't inert on frame 1.
+		claim_wheel = best_id == 0 || best_id == id
 	}
 
 	if claim_wheel {

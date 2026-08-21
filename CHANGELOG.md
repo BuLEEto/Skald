@@ -27,6 +27,13 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Wheel now scrolls a dropdown nested inside a scrolling page.** A scrollable
+  `select` / `combobox` popup (or any inner scroller) inside a fill-mode
+  `scroll` had a dead wheel — the page behind it moved instead. Wheel routing
+  now sends the delta to the smallest viewport under the cursor rather than the
+  last-stamped one, which is order-independent regardless of when each scroller
+  resolves during layout.
+
 - **macOS no longer fails to start when the loader lacks
   `VK_KHR_portability_enumeration`.** The instance was requesting that
   extension unconditionally, so `CreateInstance` returned
