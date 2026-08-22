@@ -7214,7 +7214,13 @@ _combobox_impl :: proc(
 	}
 
 	// Option-row click (must run before the overlay-click consume below).
-	if st.open && ctx.input.mouse_released[.Left] && in_row_area && !scroll_dragging {
+	// A release over the trigger isn't a row pick — it's the mouse-up ending
+	// the click that opened the popover. When the dropdown flips up and clamps
+	// over the trigger, that release would otherwise commit the row painted on
+	// it, so the popover only seemed to stay open while held.
+	release_on_trigger := rect_contains_point(trigger_rect, ctx.input.mouse_pos)
+	if st.open && ctx.input.mouse_released[.Left] && in_row_area && !scroll_dragging &&
+		!release_on_trigger {
 		content_y := overlay_rect.y + overlay_pad + BORDER_W
 		rel_y := ctx.input.mouse_pos.y - content_y + dropdown_scroll_y
 		idx := int(rel_y / opt_h)

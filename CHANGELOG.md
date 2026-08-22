@@ -27,6 +27,11 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`combobox` popover no longer closes on the release that opened it.** When the
+  dropdown can't fit below the trigger it flips up and clamps over it; the mouse-up
+  ending the opening click then landed on a row painted across the trigger and
+  committed it, so the popover only seemed to stay open while held.
+
 - **Widget gallery example reflows instead of clipping its inputs when narrow.**
   `examples/00_gallery` hard-wired three columns at every width, so a half-screen
   window shrank each column below the fixed-width inputs and the cards sheared off
