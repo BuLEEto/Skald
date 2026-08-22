@@ -895,29 +895,53 @@ view :: proc(s: State, ctx: ^skald.Ctx(Msg)) -> skald.View {
 		table_section(ctx, s),
 	}
 
-	// Three-column layout, balanced so everything fits on one wide-screen
-	// monitor without scrolling. Columns: [0,1,8] / [2,3,4] / [5,6,7]
-	// — Inputs (tall) + Table (compact) stack on the left, mid column
-	// holds the form-heavy sections, right column holds the decorations.
-	col_a := make([dynamic]skald.View, 0, 5, context.temp_allocator)
-	col_b := make([dynamic]skald.View, 0, 6, context.temp_allocator)
-	col_c := make([dynamic]skald.View, 0, 6, context.temp_allocator)
-	for i in 0 ..< len(SECTION_TITLES) {
-		dest: ^[dynamic]skald.View
-		switch {
-		case i < 2:  dest = &col_a
-		case i < 5:  dest = &col_b
-		case i < 8:  dest = &col_c
-		case:        dest = &col_a  // Table goes bottom-left
-		}
-		append(dest, section(ctx, i, bodies[i], s.open_section[i]))
-		append(dest, skald.spacer(th.spacing.md))
+	// Responsive column count. Each form row is ~412 px wide (140 label +
+	// 260 control), so a section card needs ~438 px to render one without
+	// shearing it off the card edge. Pick the most columns whose width
+	// clears that for the current window, reflowing to 2-up / 1-up as the
+	// window narrows instead of clipping. `fb_size` is logical px; falls
+	// back to 3-up when there's no live renderer (headless).
+	win_w: f32 = 1680
+	if ctx.renderer != nil {
+		win_w = f32(ctx.renderer.fb_size.x)
+	}
+	ncols := 3
+	switch {
+	case win_w < 980:  ncols = 1
+	case win_w < 1480: ncols = 2
 	}
 
-	two_col := skald.row(
-		skald.flex(1, skald.col(..col_a[:], spacing = 0, cross_align = .Stretch)),
-		skald.flex(1, skald.col(..col_b[:], spacing = 0, cross_align = .Stretch)),
-		skald.flex(1, skald.col(..col_c[:], spacing = 0, cross_align = .Stretch)),
+	// Section -> column. 3-up keeps the hand-balanced grouping
+	// ([0,1,8] / [2,3,4] / [5,6,7] — tall Inputs paired with short
+	// Buttons + Table); 2-up spreads the tall sections across both.
+	cols := make([][dynamic]skald.View, ncols, context.temp_allocator)
+	for i in 0 ..< ncols {
+		cols[i] = make([dynamic]skald.View, 0, 6, context.temp_allocator)
+	}
+	for i in 0 ..< len(bodies) {
+		c: int
+		switch ncols {
+		case 1:
+			c = 0
+		case 2:
+			c = 0 if (i == 0 || i == 1 || i == 4 || i == 6) else 1
+		case:
+			switch i {
+			case 0, 1, 8: c = 0
+			case 2, 3, 4: c = 1
+			case:         c = 2
+			}
+		}
+		append(&cols[c], section(ctx, i, bodies[i], s.open_section[i]))
+		append(&cols[c], skald.spacer(th.spacing.md))
+	}
+
+	col_views := make([dynamic]skald.View, 0, ncols, context.temp_allocator)
+	for i in 0 ..< ncols {
+		append(&col_views,
+			skald.flex(1, skald.col(..cols[i][:], spacing = 0, cross_align = .Stretch)))
+	}
+	two_col := skald.row(..col_views[:],
 		spacing     = th.spacing.xl,
 		cross_align = .Start,
 	)

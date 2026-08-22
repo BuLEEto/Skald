@@ -27,6 +27,13 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Widget gallery example reflows instead of clipping its inputs when narrow.**
+  `examples/00_gallery` hard-wired three columns at every width, so a half-screen
+  window shrank each column below the fixed-width inputs and the cards sheared off
+  their right edges. It now picks 3 / 2 / 1 columns from the window width, keeping
+  every card wide enough for its controls. Example-only — no framework change.
+  Thanks to @yokdalton for the report (#7).
+
 - **Wheel now scrolls a dropdown nested inside a scrolling page.** A scrollable
   `select` / `combobox` popup (or any inner scroller) inside a fill-mode
   `scroll` had a dead wheel — the page behind it moved instead. Wheel routing
