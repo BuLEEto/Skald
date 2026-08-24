@@ -12571,6 +12571,8 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 	hairline:        bool,
 	on_row_context:  proc(row: int) -> Msg,
 	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool, export_mime: string, export_data: []u8),
+	hover_row_bg:    Maybe(Color),
+	zebra_row_bg:    Maybe(Color),
 }
 
 // table is a virtualized, sortable, resizable, selectable data grid.
@@ -12649,6 +12651,17 @@ table_full :: proc(
 	// select, button). Selected / focused rows render under the
 	// hairline so it still reads consistently.
 	hairline:        bool      = false,
+	// hover_row_bg tints the row under the pointer when it's neither
+	// selected nor the keyboard focus cursor — the "about to select"
+	// highlight native lists show. nil (default) keeps the flat look.
+	// You supply the color (there's no hover theme token): a low-alpha
+	// `fg` or `elevated` sits one notch under `selection`, which the
+	// click then promotes to the real focus cursor.
+	hover_row_bg:    Maybe(Color) = nil,
+	// zebra_row_bg tints alternating (odd-index) plain rows for a striped
+	// listing. Drawn under hover/selection/focus so those still win. nil
+	// (default) = no striping. Opt-in, same as hover_row_bg.
+	zebra_row_bg:    Maybe(Color) = nil,
 ) -> View {
 	th := ctx.theme
 
@@ -12702,6 +12715,8 @@ table_full :: proc(
 			hairline        = hairline,
 			on_row_context  = on_row_context,
 			on_row_drag     = on_row_drag,
+			hover_row_bg    = hover_row_bg,
+			zebra_row_bg    = zebra_row_bg,
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, size: [2]f32) -> View {
 			// Tight-window guard — same as scroll() / grid() / virtual_list().
@@ -12730,6 +12745,8 @@ table_full :: proc(
 				header_height  = data.header_height,
 				hairline       = data.hairline,
 				on_row_drag    = data.on_row_drag,
+				hover_row_bg   = data.hover_row_bg,
+				zebra_row_bg   = data.zebra_row_bg,
 			)
 		}
 		return sized(ctx, p, fill_builder,
@@ -13108,21 +13125,42 @@ table_full :: proc(
 			))
 		}
 
-		// Row background layers three states:
-		//   * selected + table-focused    → primary   (solid accent)
-		//   * table-focused cursor row    → selection (translucent primary)
-		//   * selected, table unfocused   → elevated  (subtle stand-out)
-		//   * everything else             → surface   (default)
+		// The row's interactive/hover zone. Allocated when the row is
+		// clickable/right-clickable/draggable OR when hover tinting is on,
+		// since hover hit-tests against this zone's laid-out rect (the same
+		// z- and clip-aware test row-click uses). Kept after row_builder so
+		// cell auto-ids are unchanged — it's the last id in the row scope.
+		needs_zone := on_row_click != nil || on_row_context != nil ||
+			on_row_drag != nil || hover_row_bg != nil
+		row_id: Widget_ID
+		row_st: Widget_State
+		hovered_row := false
+		if needs_zone {
+			row_id = widget_auto_id(ctx)
+			row_st = widget_get(ctx, row_id, .Click_Zone)
+			hovered_row = widget_hovered(ctx, row_id)
+		}
+
+		// Row background layers, highest priority first:
+		//   * selected + table-focused    → primary      (solid accent)
+		//   * table-focused cursor row    → selection    (translucent primary)
+		//   * selected, table unfocused   → elevated     (subtle stand-out)
+		//   * pointer over a plain row    → hover_row_bg (opt-in)
+		//   * alternating plain row       → zebra_row_bg (opt-in base)
+		//   * everything else             → surface      (default)
 		// When the table loses focus (user clicks elsewhere), the
 		// primary bg fades back to elevated so the selection stays
 		// readable but visibly "inactive" — matches native toolkits.
 		selected := is_selected != nil && is_selected(state, i)
 		focused_cursor := table_focused && i == focus_row
 		row_bg := th.color.surface
+		if zebra, ok := zebra_row_bg.?; ok && i % 2 == 1 { row_bg = zebra }
 		switch {
 		case selected && focused_cursor: row_bg = th.color.primary
 		case focused_cursor:              row_bg = th.color.selection
 		case selected:                    row_bg = selected_inactive_bg_for(th^)
+		case hovered_row:
+			if h, ok := hover_row_bg.?; ok { row_bg = h }
 		}
 
 		// hairline mode: split the row's height between an inner
@@ -13164,9 +13202,7 @@ table_full :: proc(
 			)
 		}
 
-		if on_row_click != nil || on_row_context != nil || on_row_drag != nil {
-			row_id := widget_auto_id(ctx)
-			row_st := widget_get(ctx, row_id, .Click_Zone)
+		if needs_zone {
 			if on_row_click != nil && ctx.input.mouse_pressed[.Left] &&
 			   widget_hovered(ctx, row_id) {
 				send(ctx, on_row_click(i, ctx.input.modifiers))
@@ -13260,6 +13296,8 @@ table_simple :: proc(
 	overscan:        int       = 4,
 	header_height:   f32       = 32,
 	hairline:        bool      = false,
+	hover_row_bg:    Maybe(Color) = nil,
+	zebra_row_bg:    Maybe(Color) = nil,
 ) -> View {
 	return table_full(
 		ctx, state, columns, row_count, item_height, viewport,
@@ -13268,6 +13306,7 @@ table_simple :: proc(
 		sort_column = sort_column, sort_ascending = sort_ascending,
 		focus_row = focus_row, reveal_row = reveal_row, id = id,
 		overscan = overscan, header_height = header_height, hairline = hairline,
+		hover_row_bg = hover_row_bg, zebra_row_bg = zebra_row_bg,
 	)
 }
 

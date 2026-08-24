@@ -8,6 +8,13 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`table` row hover + zebra backgrounds.** Two opt-in `Maybe(Color)` params —
+  `hover_row_bg` tints the row under the pointer (the "about to select"
+  highlight; you supply the tint, e.g. a low-alpha `fg`), and `zebra_row_bg`
+  stripes alternating rows. Both draw under selection/focus so those still win,
+  both default `nil` = unchanged. The app can't do this itself: `row_builder`
+  returns per-column cells, so only the table owns the full-width row background.
+
 - **`bar_chart` widget.** Vertical bars from a `[]f32` with `min`/`max` pinning,
   a uniform `color` or per-bar `color_of(v)` (colour-by-value makes a threshold
   visible at a glance), and the same grid / axis labels as `sparkline`.
