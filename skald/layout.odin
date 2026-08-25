@@ -1487,11 +1487,13 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 		op := vv.opacity
 		if op == 0 { op = 1 } // legacy call sites that don't set opacity
+		shadow_r: f32 = 8
+		if vv.no_shadow { shadow_r = 0 }
 		append(&r.overlays, Overlay_Entry{
 			origin        = {x, y},
 			size          = cs,
 			child         = vv.child^,
-			shadow_radius = 8,
+			shadow_radius = shadow_r,
 			opacity       = op,
 		})
 

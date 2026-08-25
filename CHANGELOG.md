@@ -8,6 +8,17 @@ bug fixes bump the patch.
 
 ### Added
 
+- **`table` rubber-band (marquee) multi-select.** Opt-in `on_marquee(rows, mods,
+  begin)` plus `marquee_bg` / `marquee_border` (`Maybe(Color)`). A left press-drag
+  that starts past the leading cell's content (its icon + name extent, not the
+  whole often-flex column) — a row's trailing whitespace, or the empty body —
+  draws a selection box and streams the visible-row indices it covers; a press on
+  the name itself is unchanged (select, and where a drag-out starts). `begin`
+  flags the first fire so the app snapshots its base selection, making additive
+  (Ctrl/Shift) drags retract an overshoot. The table owns row geometry and every
+  row press, so only it can draw the box and disambiguate the gesture. Default
+  `nil` = no marquee.
+
 - **`table` row hover + zebra backgrounds.** Two opt-in `Maybe(Color)` params —
   `hover_row_bg` tints the row under the pointer (the "about to select"
   highlight; you supply the tint, e.g. a low-alpha `fg`), and `zebra_row_bg`

@@ -715,6 +715,12 @@ View_Overlay :: struct {
 	// = fully visible for backwards compatibility with existing call
 	// sites that don't animate.
 	opacity:   f32,
+	// no_shadow drops the soft drop shadow every overlay otherwise casts.
+	// Popover cards want the shadow (depth); a flat fill drawn at an exact
+	// screen position — a selection marquee band — does not, since the
+	// shadow reads as a dark halo around the box. Zero-value false keeps
+	// today's shadow for every existing call site.
+	no_shadow: bool,
 }
 
 // View_Tooltip wraps a `child` view and conditionally queues a small
@@ -3581,6 +3587,7 @@ overlay :: proc(
 	placement: Overlay_Placement = .Below,
 	offset:    [2]f32            = {0, 0},
 	opacity:   f32               = 1,
+	no_shadow: bool              = false,
 ) -> View {
 	c := new(View, context.temp_allocator)
 	c^ = child
@@ -3590,6 +3597,7 @@ overlay :: proc(
 		offset    = offset,
 		child     = c,
 		opacity   = opacity,
+		no_shadow = no_shadow,
 	}
 }
 
@@ -12435,6 +12443,18 @@ RESIZE_HANDLE_W :: f32(6)
 @(private)
 MIN_COLUMN_W :: f32(40)
 
+// TABLE_MARQUEE_KEY salts the table's dedicated rubber-band state slot off
+// the body id (widget_make_sub_id). A large, distinctive key so it never
+// aliases an app-supplied row_key's scope.
+@(private)
+TABLE_MARQUEE_KEY :: u64(0xF00D_5E1E_C700)
+
+// MARQUEE_THRESHOLD is how far (Manhattan px) a press in the marquee zone
+// must travel before it becomes a drag-box rather than a plain click —
+// same feel as drag_source's start threshold.
+@(private)
+MARQUEE_THRESHOLD :: f32(5)
+
 // compute_column_widths distributes `total` horizontal pixels
 // across `columns`: fixed widths first, then flex-weighted shares
 // of what's left. Returns a temp-allocator slice of widths in the
@@ -12573,6 +12593,9 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 	on_row_drag:     proc(state: T, row: int) -> (payload: Drag_Payload, visual: View, ok: bool, export_mime: string, export_data: []u8),
 	hover_row_bg:    Maybe(Color),
 	zebra_row_bg:    Maybe(Color),
+	on_marquee:      proc(rows: []int, mods: Modifiers, begin: bool) -> Msg,
+	marquee_bg:      Maybe(Color),
+	marquee_border:  Maybe(Color),
 }
 
 // table is a virtualized, sortable, resizable, selectable data grid.
@@ -12662,6 +12685,22 @@ table_full :: proc(
 	// listing. Drawn under hover/selection/focus so those still win. nil
 	// (default) = no striping. Opt-in, same as hover_row_bg.
 	zebra_row_bg:    Maybe(Color) = nil,
+	// on_marquee turns on rubber-band (drag-box) multi-select. A press-drag
+	// that starts past a row's name (its trailing whitespace) or in the empty
+	// body draws a box and streams the visible-row indices it covers (as
+	// `on_row_click` numbers them), `mods` latched at the press; a press on the
+	// name itself is unchanged, and a press on a selected row grabs it. `begin`
+	// is true on the gesture's first fire: snapshot the selection as the base
+	// then, and each fire set selection = (base if `mods` has Ctrl/Shift, else
+	// {}) ∪ covered — rebuilding from the base is what lets an overshoot
+	// retract. A click on empty space fires once, empty (clears; no-op under
+	// Ctrl/Shift). nil (default) = no marquee.
+	on_marquee:      proc(rows: []int, mods: Modifiers, begin: bool) -> Msg = nil,
+	// marquee_bg / marquee_border are the band's fill and outline. You
+	// supply them (no theme token), same as hover_row_bg — a low-alpha
+	// accent fill reads right; the border is optional. nil skips that part.
+	marquee_bg:      Maybe(Color) = nil,
+	marquee_border:  Maybe(Color) = nil,
 ) -> View {
 	th := ctx.theme
 
@@ -12717,6 +12756,9 @@ table_full :: proc(
 			on_row_drag     = on_row_drag,
 			hover_row_bg    = hover_row_bg,
 			zebra_row_bg    = zebra_row_bg,
+			on_marquee      = on_marquee,
+			marquee_bg      = marquee_bg,
+			marquee_border  = marquee_border,
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, size: [2]f32) -> View {
 			// Tight-window guard — same as scroll() / grid() / virtual_list().
@@ -12747,6 +12789,9 @@ table_full :: proc(
 				on_row_drag    = data.on_row_drag,
 				hover_row_bg   = data.hover_row_bg,
 				zebra_row_bg   = data.zebra_row_bg,
+				on_marquee     = data.on_marquee,
+				marquee_bg     = data.marquee_bg,
+				marquee_border = data.marquee_border,
 			)
 		}
 		return sized(ctx, p, fill_builder,
@@ -13062,6 +13107,23 @@ table_full :: proc(
 	if last  > row_count  { last  = row_count  }
 	if first > last       { first = last       }
 
+	// Marquee (rubber-band) select, request 038. The leading (first visible)
+	// column is the file-grab zone — a press there is unchanged (select +
+	// on_row_drag). A press anywhere to its right arms a marquee. Fetched
+	// before the row loop so a press on a row's whitespace can arm it there;
+	// the arm→active→draw state machine runs after the loop.
+	marquee_on := on_marquee != nil
+	mq_id:   Widget_ID
+	mq:      Widget_State
+	mq_vp := st.last_rect          // body viewport, screen space (last frame)
+	lead_w:  f32 = 0
+	lead_ci: int = -1
+	if marquee_on {
+		mq_id = widget_make_sub_id(body_id, TABLE_MARQUEE_KEY)
+		mq    = widget_get(ctx, mq_id, .Click_Zone)
+		for c, ci in columns { if !c.hidden { lead_w = widths[ci]; lead_ci = ci; break } }
+	}
+
 	body_rows := make([dynamic]View, 0, (last - first) + 2, context.temp_allocator)
 	append(&body_rows, spacer(f32(first) * item_height))
 	when ODIN_DEBUG {
@@ -13131,7 +13193,7 @@ table_full :: proc(
 		// z- and clip-aware test row-click uses). Kept after row_builder so
 		// cell auto-ids are unchanged — it's the last id in the row scope.
 		needs_zone := on_row_click != nil || on_row_context != nil ||
-			on_row_drag != nil || hover_row_bg != nil
+			on_row_drag != nil || hover_row_bg != nil || marquee_on
 		row_id: Widget_ID
 		row_st: Widget_State
 		hovered_row := false
@@ -13203,7 +13265,40 @@ table_full :: proc(
 		}
 
 		if needs_zone {
-			if on_row_click != nil && ctx.input.mouse_pressed[.Left] &&
+			// Marquee arm: a press on this row past the leading column (its
+			// whitespace) starts a rubber-band instead of a plain select —
+			// so the mouse-down select and file-drag below are skipped for
+			// it. The leading column keeps both. hovered_row is the same
+			// z-aware hit-test row-click uses.
+			arm_row := false
+			// A press on an already-selected row grabs the group (today's
+			// select + on_row_drag), never a marquee — otherwise pressing a
+			// selected row to drag the whole selection would rubber-band and
+			// collapse it to that one row. Rubber-band only starts from
+			// unselected space (or the empty body).
+			if marquee_on && !selected && ctx.input.mouse_pressed[.Left] && hovered_row &&
+			   !mq.pressed && !mq.marquee_armed {
+				// Grab zone = the leading cell's measured content (icon + name),
+				// not the whole flex-wide column — else a short name's trailing
+				// whitespace grabs, which is where people drag from. Measured
+				// once for the pressed row; a name filling the column caps to it.
+				grab_w := lead_w
+				if ctx.renderer != nil && lead_ci >= 0 && lead_ci < len(cells) {
+					tw := view_size(ctx.renderer, cells[lead_ci]).x
+					if tw > 0 {
+						cg := th.spacing.sm + tw
+						if cg < grab_w { grab_w = cg }
+					}
+				}
+				if ctx.input.mouse_pos.x >= mq_vp.x + grab_w {
+					arm_row         = true
+					mq.marquee_armed = true
+					mq.anchor_pos   = ctx.input.mouse_pos
+					mq.marquee_mods = ctx.input.modifiers
+					mq.marquee_row  = i
+				}
+			}
+			if on_row_click != nil && !arm_row && ctx.input.mouse_pressed[.Left] &&
 			   widget_hovered(ctx, row_id) {
 				send(ctx, on_row_click(i, ctx.input.modifiers))
 				// Clicking a row moves keyboard focus to the table
@@ -13229,8 +13324,9 @@ table_full :: proc(
 			}
 			// Drag source: the app decides per row whether it's draggable and
 			// what payload/ghost it carries. Same gesture as `drag_source`,
-			// keyed to this row's zone.
-			if on_row_drag != nil {
+			// keyed to this row's zone. Skipped for a press that armed a
+			// marquee (whitespace) so a file-drag and a box don't both start.
+			if on_row_drag != nil && !arm_row {
 				if payload, visual, ok, emime, edata := on_row_drag(state, i); ok {
 					_drag_source_step(ctx, row_id, &row_st, payload, visual, 5, emime, edata)
 				}
@@ -13263,7 +13359,120 @@ table_full :: proc(
 		dragging    = st.pressed,
 	}
 
-	return col(header, body_view,
+	// --- Marquee (rubber-band) multi-select. A press on a row's whitespace
+	// armed the gesture up in the row loop; here we also arm on a press in
+	// the empty body below the last row, run the arm→active threshold, and
+	// draw the box. Once active we stream the covered rows every frame and
+	// draw the box clipped to the viewport.
+	marquee_floats: [dynamic]View // allocated only while a band actually draws
+	if marquee_on {
+		vp    := mq_vp
+		mouse := ctx.input.mouse_pos
+		// just_activated is the arm→active edge: the first active frame of a
+		// gesture, which the stream reports as `begin` so the app snapshots
+		// its base selection.
+		just_activated := false
+
+		// Empty-body arm: a left press past the last row, clear of the
+		// scrollbar gutter, z-gated to the body so a press through an open
+		// popover doesn't arm underneath. marquee_row -1 marks "no row".
+		if !mq.pressed && !mq.marquee_armed && ctx.input.mouse_pressed[.Left] && vp.w > 0 &&
+		   rect_contains_point(vp, mouse) && mouse.x < vp.x + vp.w - gutter &&
+		   widget_hovered(ctx, body_id) {
+			if (mouse.y - vp.y) + scroll_y >= content_h {
+				mq.marquee_armed        = true
+				mq.anchor_pos   = mouse
+				mq.marquee_mods = ctx.input.modifiers
+				mq.marquee_row  = -1
+			}
+		}
+
+		// Armed: a move past threshold promotes to an active box; a release
+		// under threshold is a plain click — select the row (whitespace) or
+		// clear the selection (empty body), the deselect-on-empty edge.
+		if mq.marquee_armed {
+			if !ctx.input.mouse_buttons[.Left] {
+				if mq.marquee_row >= 0 {
+					if on_row_click != nil {
+						send(ctx, on_row_click(mq.marquee_row, mq.marquee_mods))
+						widget_focus(ctx, body_id)
+					}
+				} else {
+					send(ctx, on_marquee(nil, mq.marquee_mods, true))
+				}
+				mq.marquee_armed = false
+			} else {
+				d := mouse - mq.anchor_pos
+				if abs(d.x) + abs(d.y) > MARQUEE_THRESHOLD {
+					mq.marquee_armed = false
+					mq.pressed       = true
+					just_activated   = true
+				}
+			}
+		}
+		// End on release.
+		if mq.pressed && !ctx.input.mouse_buttons[.Left] {
+			mq.pressed = false
+		}
+		// Active: stream covered rows + draw the band.
+		if mq.pressed {
+			// Band clipped to the viewport, so it never spills over the
+			// header or past the table — and staying inside the window
+			// keeps the drawing overlay from auto-flipping.
+			bx0 := max(min(mq.anchor_pos.x, mouse.x), vp.x)
+			by0 := max(min(mq.anchor_pos.y, mouse.y), vp.y)
+			bx1 := min(max(mq.anchor_pos.x, mouse.x), vp.x + vp.w)
+			by1 := min(max(mq.anchor_pos.y, mouse.y), vp.y + vp.h)
+
+			// Covered rows: vertical overlap of the clipped band with each
+			// uniform-height row, in content space. Contiguous by
+			// construction, so a [lo,hi) range names the whole set. Same
+			// indices on_row_click delivers.
+			top := (by0 - vp.y) + scroll_y
+			bot := (by1 - vp.y) + scroll_y
+			lo  := int(top / item_height)
+			hi  := int((bot - 0.0001) / item_height) + 1
+			if lo < 0         { lo = 0 }
+			if hi > row_count { hi = row_count }
+			if lo > hi        { lo = hi }
+
+			rows := make([]int, hi - lo, context.temp_allocator)
+			for r in lo ..< hi { rows[r - lo] = r }
+			send(ctx, on_marquee(rows, mq.marquee_mods, just_activated))
+
+			// Paint the box: fill first (queued first → under), then the
+			// 1-px outline edges. Shadow-free so it reads as a flat band,
+			// not a floating card.
+			if bx1 > bx0 && by1 > by0 {
+				bw := bx1 - bx0
+				bh := by1 - by0
+				marquee_floats = make([dynamic]View, 0, 5, context.temp_allocator)
+				if fill, ok := marquee_bg.?; ok {
+					append(&marquee_floats,
+						overlay(Rect{bx0, by0, 0, 0}, rect({bw, bh}, fill),
+							.Below, {0, 0}, 1, no_shadow = true))
+				}
+				if bd, ok := marquee_border.?; ok {
+					append(&marquee_floats,
+						overlay(Rect{bx0, by0, 0, 0}, rect({bw, 1}, bd), .Below, {0, 0}, 1, no_shadow = true),
+						overlay(Rect{bx0, by1 - 1, 0, 0}, rect({bw, 1}, bd), .Below, {0, 0}, 1, no_shadow = true),
+						overlay(Rect{bx0, by0, 0, 0}, rect({1, bh}, bd), .Below, {0, 0}, 1, no_shadow = true),
+						overlay(Rect{bx1 - 1, by0, 0, 0}, rect({1, bh}, bd), .Below, {0, 0}, 1, no_shadow = true))
+				}
+			}
+		}
+		widget_set(ctx, mq_id, mq)
+	}
+
+	// No band this frame → return exactly as a non-marquee table would.
+	if len(marquee_floats) == 0 {
+		return col(header, body_view,
+			width = viewport.x, spacing = 0, cross_align = .Start)
+	}
+	children := make([dynamic]View, 0, 2 + len(marquee_floats), context.temp_allocator)
+	append(&children, header, body_view)
+	append(&children, ..marquee_floats[:])
+	return col(..children[:],
 		width       = viewport.x,
 		spacing     = 0,
 		cross_align = .Start,
@@ -13298,6 +13507,9 @@ table_simple :: proc(
 	hairline:        bool      = false,
 	hover_row_bg:    Maybe(Color) = nil,
 	zebra_row_bg:    Maybe(Color) = nil,
+	on_marquee:      proc(rows: []int, mods: Modifiers, begin: bool) -> Msg = nil,
+	marquee_bg:      Maybe(Color) = nil,
+	marquee_border:  Maybe(Color) = nil,
 ) -> View {
 	return table_full(
 		ctx, state, columns, row_count, item_height, viewport,
@@ -13307,6 +13519,7 @@ table_simple :: proc(
 		focus_row = focus_row, reveal_row = reveal_row, id = id,
 		overscan = overscan, header_height = header_height, hairline = hairline,
 		hover_row_bg = hover_row_bg, zebra_row_bg = zebra_row_bg,
+		on_marquee = on_marquee, marquee_bg = marquee_bg, marquee_border = marquee_border,
 	)
 }
 
