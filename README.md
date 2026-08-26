@@ -292,6 +292,12 @@ Skald stands on good shoulders. Credit and thanks to:
 If you build something nice with Skald, no obligation — but I'd love
 to see it.
 
+## Development
+
+Skald started as internal tooling and is used daily in production. It's
+built with heavy AI assistance (Claude Code) for implementation and docs
+— every change is reviewed, tested, and maintained.
+
 ## Contributing
 
 Small fixes: send a PR. Larger changes: open an issue first. The
