@@ -5,6 +5,7 @@
 #   ./build.sh                       # builds 01_hello (default)
 #   ./build.sh 01_hello              # builds examples/01_hello
 #   ./build.sh 01_hello run          # builds and runs
+#   ./build.sh all                   # type-checks every example (pre-push guard)
 #   RELEASE=1 ./build.sh …           # strips the F12 debug inspector
 #
 # Examples build with -debug by default so the F12 inspector is
@@ -37,6 +38,28 @@ fi
 RUNA_DEFINE=""
 if [[ "${SKALD_RUNA:-}" == "0" ]]; then
     RUNA_DEFINE="-define:SKALD_RUNA=false"
+fi
+
+# `all` type-checks every example — a fast (~15s) guard so a signature change
+# that breaks an example's call can't slip past `odin test` (which only checks
+# the skald package, not examples/). Run it before pushing.
+if [[ "$EXAMPLE" == "all" ]]; then
+    fail=0
+    for dir in examples/*/; do
+        ex="$(basename "$dir")"
+        [[ -f "${dir}main.odin" ]] || continue
+        if ! odin check "examples/${ex}" -collection:gui=. ${RUNA_DEFINE} >/dev/null 2>&1; then
+            echo "FAIL  ${ex}"
+            fail=1
+        fi
+    done
+    if [[ "$fail" == "0" ]]; then
+        echo "all examples check clean"
+    else
+        echo "some examples FAILED to check" >&2
+        exit 1
+    fi
+    exit 0
 fi
 
 odin build "examples/${EXAMPLE}" \
