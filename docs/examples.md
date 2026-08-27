@@ -29,6 +29,7 @@ meant to exercise — the one-liners below are a jumping-off point.
 | `04_clip`    | Clip regions and nested scissor rects. |
 | `05_views`   | Declarative view tree (`col`, `row`, `rect`, `text`, `spacer`). |
 | `06_flex`    | Flex layout in containers: fixed vs flex children, nested rows/cols. |
+| `55_node_graph` | Vector primitives (`draw_line` / `draw_circle` / `draw_rect_outline` / `draw_bezier`) driving a pan/zoom node editor. The reference for a custom canvas widget: graph-space hit-testing, drag-latch, wire creation, node/wire selection + delete, and in-place rename via a `text_input` floated on `overlay(pin)`. All interaction state lives in the app's `State`, not per-widget. |
 
 ### Widgets
 

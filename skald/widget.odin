@@ -735,13 +735,13 @@ widget_store_destroy :: proc(ws: ^Widget_Store) {
 // widget_store_frame_reset is called by `run` at the top of each frame so
 // auto-IDs start from zero again and per-frame flags (like wants_text_input)
 // clear. The persistent fields — state map, focused_id — are untouched.
-@(private)
 // Cursor_Shape names the small subset of OS cursor styles Skald
 // widgets need to express. Maps 1:1 onto SDL's SystemCursor catalogue,
 // minus the ones we don't have a use case for yet. Default is the
 // zero value so `Widget_Store.wants_cursor` resets to the regular
 // arrow at the top of each frame without explicit reset code beyond
-// the assignment.
+// the assignment. Exported so canvas authors can store a per-tool
+// cursor in their own state (it's part of the public `canvas` signature).
 Cursor_Shape :: enum {
 	Default,
 	Pointer,        // hand — links, clickable spans

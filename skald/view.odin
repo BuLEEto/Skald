@@ -721,6 +721,11 @@ View_Overlay :: struct {
 	// shadow reads as a dark halo around the box. Zero-value false keeps
 	// today's shadow for every existing call site.
 	no_shadow: bool,
+	// pin renders the child at exactly `anchor` (+ offset) with no auto-flip
+	// and no screen-edge clamp — the popover behaviours a dropdown wants but
+	// a widget pinned onto a moving canvas element (a field on a node, a
+	// handle) does not. Zero-value false keeps the popover placement.
+	pin: bool,
 }
 
 // View_Tooltip wraps a `child` view and conditionally queues a small
@@ -3581,6 +3586,12 @@ canvas :: proc(
 // renderer auto-flips to `.Above` if there's no room. `offset` is a
 // pixel nudge applied after placement — handy for a small gap between
 // the trigger and the popover.
+//
+// `pin = true` disables both the auto-flip and the screen-edge clamp and
+// renders the child at exactly `anchor` (+ `offset`). Use it to float a real
+// widget onto a computed position — a `text_input` over a node in a `canvas`,
+// say — where the child must stay pinned to that spot rather than reposition
+// itself to stay fully on-screen.
 overlay :: proc(
 	anchor:    Rect,
 	child:     View,
@@ -3588,6 +3599,7 @@ overlay :: proc(
 	offset:    [2]f32            = {0, 0},
 	opacity:   f32               = 1,
 	no_shadow: bool              = false,
+	pin:       bool              = false,
 ) -> View {
 	c := new(View, context.temp_allocator)
 	c^ = child
@@ -3598,6 +3610,7 @@ overlay :: proc(
 		child     = c,
 		opacity   = opacity,
 		no_shadow = no_shadow,
+		pin       = pin,
 	}
 }
 

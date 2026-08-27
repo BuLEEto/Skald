@@ -1462,28 +1462,34 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		cs := view_size(r, vv.child^)
 		x := vv.anchor.x + vv.offset.x
 		y: f32
-		switch vv.placement {
-		case .Below:
-			y = vv.anchor.y + vv.anchor.h + vv.offset.y
-			if y + cs.y > f32(r.fb_size.y) && vv.anchor.y - cs.y >= 0 {
-				y = vv.anchor.y - cs.y - vv.offset.y
-			}
-		case .Above:
-			y = vv.anchor.y - cs.y - vv.offset.y
-			if y < 0 && vv.anchor.y + vv.anchor.h + cs.y <= f32(r.fb_size.y) {
+		if vv.pin {
+			// Pinned: exact placement, no flip, no clamp. The child tracks a
+			// moving element (a field on a canvas node) and must stay put.
+			y = vv.anchor.y + vv.offset.y
+		} else {
+			switch vv.placement {
+			case .Below:
 				y = vv.anchor.y + vv.anchor.h + vv.offset.y
+				if y + cs.y > f32(r.fb_size.y) && vv.anchor.y - cs.y >= 0 {
+					y = vv.anchor.y - cs.y - vv.offset.y
+				}
+			case .Above:
+				y = vv.anchor.y - cs.y - vv.offset.y
+				if y < 0 && vv.anchor.y + vv.anchor.h + cs.y <= f32(r.fb_size.y) {
+					y = vv.anchor.y + vv.anchor.h + vv.offset.y
+				}
 			}
+			// Clamp into the surface so the overlay doesn't spill off screen —
+			// common when a dropdown sits near the right edge, or a tall picker
+			// near the bottom where neither below nor the flipped-above fits.
+			// Top/left edge wins if the overlay is larger than the surface, so
+			// its origin stays visible rather than rendering partly outside (on
+			// a real compositor, out-of-surface pixels can't receive clicks).
+			if x + cs.x > f32(r.fb_size.x) { x = f32(r.fb_size.x) - cs.x }
+			if x < 0                       { x = 0 }
+			if y + cs.y > f32(r.fb_size.y) { y = f32(r.fb_size.y) - cs.y }
+			if y < 0                       { y = 0 }
 		}
-		// Clamp into the surface so the overlay doesn't spill off screen —
-		// common when a dropdown sits near the right edge, or a tall picker
-		// near the bottom where neither below nor the flipped-above fits.
-		// Top/left edge wins if the overlay is larger than the surface, so
-		// its origin stays visible rather than rendering partly outside (on
-		// a real compositor, out-of-surface pixels can't receive clicks).
-		if x + cs.x > f32(r.fb_size.x) { x = f32(r.fb_size.x) - cs.x }
-		if x < 0                       { x = 0 }
-		if y + cs.y > f32(r.fb_size.y) { y = f32(r.fb_size.y) - cs.y }
-		if y < 0                       { y = 0 }
 
 		op := vv.opacity
 		if op == 0 { op = 1 } // legacy call sites that don't set opacity

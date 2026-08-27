@@ -8,6 +8,22 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Vector draw primitives for `canvas` widgets.** `draw_line`, `draw_polyline`,
+  `draw_rect_outline` (rounded, for node/selection borders), `draw_circle`,
+  `draw_ring`, `draw_arc` (radians, 0 at +x, clockwise), `draw_bezier` (cubic) /
+  `draw_bezier_quad`, and a filled `draw_polygon` (ear-clipped, convex or
+  concave). All take an opt-in `aa` flag and layer on the existing triangle path,
+  so custom widgets stop re-tessellating the same shapes by hand. New
+  `examples/55_node_graph` shows them driving a pan/zoom node editor.
+
+- **`overlay(pin = true)`.** Renders the child at exactly `anchor` (+ offset) with
+  no auto-flip and no screen-edge clamp — for floating a real widget onto a
+  computed spot (a field on a `canvas` node) that must stay pinned rather than
+  reposition itself to stay on-screen. Defaults off (popover placement unchanged).
+
+- **`Cursor_Shape` is now exported.** It's the type of the public `canvas(cursor:)`
+  param, so canvas authors can store a per-tool cursor in their own state.
+
 - **`table` rubber-band (marquee) multi-select.** Opt-in `on_marquee(rows, mods,
   begin)` plus `marquee_bg` / `marquee_border` (`Maybe(Color)`). A left press-drag
   that starts past the leading cell's content (its icon + name extent, not the

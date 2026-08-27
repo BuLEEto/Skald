@@ -633,6 +633,35 @@ the same way as any other interactive widget.
 pressure-varying strokes; `cursor = .Crosshair` shows how the OS
 pointer shape switches when you hover.
 
+#### Drawing primitives
+
+Inside a `draw` callback (or any code holding a `^Renderer`) you have,
+beyond `draw_rect` / `draw_text` / `draw_image` / `draw_stroke`:
+
+```odin
+draw_line(r, a, b: [2]f32, width, color, aa = false)
+draw_polyline(r, points: [][2]f32, width, color, aa = false)
+draw_rect_outline(r, rect, width, color, radius = 0, aa = false)  // rounded ok
+draw_circle(r, center: [2]f32, radius, color, aa = false)         // filled disc
+draw_ring(r, center: [2]f32, radius, width, color, aa = false)    // outline
+draw_arc(r, center: [2]f32, radius, a0, a1, width, color, aa = false)
+draw_bezier(r, p0, p1, p2, p3: [2]f32, width, color, aa = false)  // cubic
+draw_bezier_quad(r, p0, p1, p2: [2]f32, width, color, aa = false)
+draw_polygon(r, points: [][2]f32, color, aa = false)             // ear-clipped
+```
+
+All are logical-pixel, y-down, and layer on the batch's triangle path.
+Arc angles are radians, `0` at +x, sweeping clockwise. `aa` opts into a
+1px feathered edge (off by default). For lower-level control there's also
+`draw_triangles` / `draw_tris_vc` / `draw_triangle_strip`.
+
+**Example: `examples/55_node_graph`** — a pan/zoom node editor built on
+these: rounded outlines for nodes, circles for ports, cubic béziers for
+wires, plus the interaction patterns a canvas widget needs — graph-space
+hit-testing, drag, wire creation, node/wire selection, and in-place rename
+via a `text_input` floated on `overlay(pin)`. Interaction state lives in the
+app's `State`, not per-widget.
+
 ### sparkline / gauge
 
 ```odin
