@@ -12641,10 +12641,9 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 // extra rows rendered outside the viewport for smooth scrolling.
 // `viewport` follows the same zero-axis fill convention as `scroll`.
 //
-// `table` is a proc group: the plain form, plus `table_full` which adds the
-// optional `on_row_context`. Odin can't default a `proc(...) -> Msg` param on
-// a `^Ctx($Msg)` widget, so the overload keeps the common form non-breaking.
-table :: proc{table_simple, table_full}
+// This is `table_full`. Most apps call `table` (below) — the same widget with
+// every callback optional, including `on_row_context` for a right-click menu.
+// `table_full` additionally exposes `on_row_drag` for dragging rows out.
 
 table_full :: proc(
 	ctx:             ^Ctx($Msg),
@@ -13492,11 +13491,11 @@ table_full :: proc(
 	)
 }
 
-// table_simple is the plain `table` overload (no right-click handler). It
-// forwards to `table_full` with `on_row_context` nil; see there for the
-// parameter docs. The split exists only because Odin can't default an
-// optional `proc(...) -> Msg` param on a `^Ctx($Msg)` widget.
-table_simple :: proc(
+// table is the common entry point for the virtualized table widget — every
+// callback is optional (pass nil to disable). `on_row_context` fires on a
+// right-click for a context menu. It forwards to `table_full` (see there for
+// the full parameter docs); use `table_full` directly only for `on_row_drag`.
+table :: proc(
 	ctx:             ^Ctx($Msg),
 	state:           $T,
 	columns:         []Table_Column,
@@ -13523,11 +13522,14 @@ table_simple :: proc(
 	on_marquee:      proc(rows: []int, mods: Modifiers, begin: bool) -> Msg = nil,
 	marquee_bg:      Maybe(Color) = nil,
 	marquee_border:  Maybe(Color) = nil,
+	// Appended, not grouped with the callbacks above, so it doesn't shift the
+	// positional slots of the existing optionals — this stays a purely additive change.
+	on_row_context:  proc(row: int) -> Msg = nil,
 ) -> View {
 	return table_full(
 		ctx, state, columns, row_count, item_height, viewport,
 		row_builder, row_key, on_row_click, is_selected, on_sort_change,
-		on_resize, on_row_activate, nil,
+		on_resize, on_row_activate, on_row_context,
 		sort_column = sort_column, sort_ascending = sort_ascending,
 		focus_row = focus_row, reveal_row = reveal_row, id = id,
 		overscan = overscan, header_height = header_height, hairline = hairline,
@@ -13535,6 +13537,11 @@ table_simple :: proc(
 		on_marquee = on_marquee, marquee_bg = marquee_bg, marquee_border = marquee_border,
 	)
 }
+
+// table_simple is a backward-compat alias for `table`. The old `table` proc
+// group exposed a concrete `table_simple`; some apps call it directly (they
+// had to, while the group failed to resolve), so keep the name building.
+table_simple :: table
 
 // Menu_Item is one row in a menu_bar dropdown. `label` is the command
 // name; `shortcut` is an optional accelerator rendered right-aligned in
