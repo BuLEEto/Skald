@@ -1223,6 +1223,11 @@ sorted-table pattern is `proc(s: ^State, visible: int) -> u64 {
 return u64(s.sorted[visible]) }` where `s.sorted[visible]` maps the
 visible row position to the underlying source row.
 
+**Which name to call.** `table` is the form you want almost always.
+`table_simple` is an identical alias kept for back-compat. `table_full`
+is the same table with row-drag (`on_row_drag`) exposed — call it *by
+name* when you need rows to be drag sources; otherwise stay on `table`.
+
 **Hairlines**: `hairline = true` draws a 1-px divider along the
 bottom of every row in `theme.color.border`. This is the modern
 data-table look (Stripe, Linear, GitHub PR list) — separates rows
@@ -1258,8 +1263,8 @@ export. The table runs the same threshold / ghost / pointer-capture
 gesture, keyed to the row's hit-zone, and it composes with
 `on_row_click` / `on_row_activate` (a press still selects, a
 double-click still activates, only a past-threshold move becomes a
-drag). It's on the full `table` form, so pass `on_row_context` (e.g.
-`nil`) to select it. The callback has no `ctx`, so build the ghost
+drag). Row-drag lives on `table_full` — call it by name (it takes the
+same arguments as `table`, plus `on_row_drag`). The callback has no `ctx`, so build the ghost
 `visual` with literal colours. Wrap the table (or its container) in a
 `drop_target` to receive drops.
 
