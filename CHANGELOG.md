@@ -61,6 +61,10 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`gauge` no longer clips its own anti-aliased rim.** The radial gauge drew its
+  AA fringe 1px past its canvas rect; the ring is now inset by the feather to stay
+  inside. Thanks @Ashe-Sterling (#9).
+
 - **`combobox` popover no longer closes on the release that opened it.** When the
   dropdown can't fit below the trigger it flips up and clamps over it; the mouse-up
   ending the opening click then landed on a row painted across the trigger and
