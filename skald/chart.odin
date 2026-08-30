@@ -640,7 +640,7 @@ gauge_draw :: proc(d: ^Gauge_Data, p: Canvas_Painter) {
 	b  := p.bounds
 	cx := b.x + b.w * 0.5
 	cy := b.y + b.h * 0.5
-	r_out := min(b.w, b.h) * 0.5
+	r_out := min(b.w, b.h) * 0.5 - AA_FEATHER // keep the AA fringe inside the canvas clip
 	r_in  := r_out - d.thickness
 	if r_in < 0 { r_in = 0 }
 
