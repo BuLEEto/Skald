@@ -3509,6 +3509,15 @@ responsive :: proc(
 // via the trampoline. Typical usage is `canvas(ctx, &app_state, paint)`
 // where `paint :: proc(s: ^App_State, p: skald.Canvas_Painter)`.
 //
+// `user` is held as a raw pointer — the canvas never copies the
+// pointee, and `draw` runs later the same frame during render. So
+// everything reachable through it must outlive that render and be
+// owned, not borrowed: a `[]T{...}` literal or `arr[:]` of a local
+// dangles the moment its building proc returns. A shallow snapshot
+// (`snap^ = state`) copies only the top-level struct — its nested
+// slices and strings still alias their original backing, so own those
+// too.
+//
 // Sizing follows the sentinel convention used everywhere else: `width`
 // or `height = 0` means "fill the parent's assigned extent on that
 // axis." Most apps flex-wrap the canvas (`flex(1, canvas(...))`) so it

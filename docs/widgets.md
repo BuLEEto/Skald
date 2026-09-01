@@ -609,10 +609,14 @@ the callback, so draws outside the rect are scissored away.
 
 `user` is an opaque pointer the builder passes through to the callback
 — pass app state, a per-frame snapshot, or any context the painter
-needs. Zero on `width` / `height` means "fill the parent's assigned
-extent"; non-zero forces a fixed size. `min_w` / `min_h` give the
-canvas an intrinsic floor so it doesn't collapse inside a
-content-sized stack.
+needs. It's held as a raw pointer, not copied, and `draw` runs during
+render, so everything reachable through it must outlive the frame and
+be owned: a borrowed `[]T{...}` literal or `arr[:]` of a local dangles
+once its proc returns, and a shallow snapshot copies only the top
+struct — not the slices and strings it points to. Zero on `width` /
+`height` means "fill the parent's assigned extent"; non-zero forces a
+fixed size. `min_w` / `min_h` give the canvas an intrinsic floor so it
+doesn't collapse inside a content-sized stack.
 
 `cursor` sets the OS pointer shape while the mouse is over the
 canvas. `.Default` (the zero value) leaves the cursor unchanged.
