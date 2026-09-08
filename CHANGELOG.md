@@ -6,6 +6,8 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+## 1.0.0-rc15 — 2026-09-08
+
 ### Added
 
 - **Vector draw primitives for `canvas` widgets.** `draw_line`, `draw_polyline`,
