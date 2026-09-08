@@ -5,17 +5,23 @@ line-breaking, rasterization. Built first to replace fontstash +
 stb_truetype in [Skald](https://github.com/BuLEEto/Skald), designed
 to be useful for any Odin project that needs production-quality text.
 
-**Status:** v1.2.0 — bounded shape cache (LRU) on top of v1.1's
-Latin autohinter and v1.0's complex-script punch list. UAX #9 bidi
-at **100 %**, UAX #29 graphemes at 100 %, CFF2 variable instances,
+**Status:** v1.2.3 — Arabic cursive joining across combining marks, on
+top of v1.2.2's Indic reph fix, v1.2's bounded shape cache (LRU),
+v1.1's Latin autohinter, and v1.0's complex-script punch list. UAX #9
+bidi at **100 %**, UAX #29 graphemes at 100 %, CFF2 variable instances,
 COLRv1 emoji with the full 28 W3C composite blend modes + linear /
 radial / sweep gradients, GPOS mark-to-ligature, frozen API
 ([`API.md`](API.md)), per-script shaping for **Devanagari, Bengali,
 Gujarati, Kannada, Odia, Tamil, Telugu, Malayalam, Gurmukhi, Thai,
-Lao, Khmer, Myanmar** verified against HarfBuzz byte-for-byte, and
-a Thai word-break dictionary so Thai paragraphs reflow at word
-boundaries rather than as one giant unbreakable word. Full
-scoreboard in [`CHANGELOG.md`](CHANGELOG.md).
+Lao, Khmer, Myanmar**, and a Thai word-break dictionary so Thai
+paragraphs reflow at word boundaries rather than as one giant
+unbreakable word. Full scoreboard in [`CHANGELOG.md`](CHANGELOG.md).
+
+Shaping accuracy varies by script — see
+[Script status](#script-status) before picking runa for a specific
+language. Latin, Cyrillic, Greek and unpointed Hebrew are solid; Malayalam,
+some Devanagari conjuncts, Arabic ligatures-with-marks and Hebrew
+nikud have known divergences from HarfBuzz.
 
 <p align="center">
   <img src="screenshots/multiscript.png" alt="runa rendering Latin, Cyrillic, Greek, Arabic (joined RTL), Hebrew (RTL), CJK, colour emoji, and ligatures" width="80%"/>
@@ -57,6 +63,33 @@ All four items closed:
 
 Per-feature deliverables, conformance numbers, and tracked
 patch-level work in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Script status
+
+Honest scoreboard. "Matches HarfBuzz" means shaped glyph IDs were
+compared against HarfBuzz on that script's test corpus — not that
+every possible string is guaranteed identical.
+
+| Script | Status |
+|---|---|
+| Latin / Cyrillic / Greek | Matches HarfBuzz. Production. |
+| Hebrew | Unpointed text matches HarfBuzz, including RTL through the bidi pipeline. Pointed text (nikud) orders combining marks differently — see normalization gap below. |
+| Arabic | Joining, marks and mark positioning match HarfBuzz. **Ligatures do not skip marks** — `لَا` fails to form lam-alef. |
+| Devanagari | Common words match (`नमस्ते`, `हिन्दी`). NGA conjuncts (`कङ्क`) diverge. |
+| Bengali / Gujarati / Kannada / Odia / Gurmukhi / Tamil / Telugu | Spot-checked against HarfBuzz and matching on those samples. Not swept. |
+| **Malayalam** | **Known divergence on common words** — `കാര്യം` shapes differently from HarfBuzz. |
+| Thai / Lao | Standard GSUB plus the Thai word-break dictionary. |
+| Khmer / Myanmar | Indic pipeline; canonical syllables checked, long tail unverified. |
+| CJK | Via cmap; no script-specific reordering needed. |
+| Colour emoji | COLRv0 + COLRv1 + CBDT + sbix, all 28 blend modes. |
+
+The non-shaping layers — bidi, line break, grapheme / word / sentence
+segmentation, normalization — are held to Unicode's own conformance
+suites and sit at 100 % (line break 99.94 %). Those numbers are in
+[`CHANGELOG.md`](CHANGELOG.md) and re-checked in CI.
+
+Known gaps are tracked per release in [`CHANGELOG.md`](CHANGELOG.md)
+rather than hidden.
 
 ## Building
 
@@ -108,12 +141,13 @@ sources and licences.
 ## Contributing
 
 API is frozen ([`API.md`](API.md)) — bidi at 100 %, line break at
-99.91 %, graphemes at 100 %, UAX #29 word boundaries at 100 %,
+99.94 %, graphemes at 100 %, UAX #29 word boundaries at 100 %,
 UAX #15 normalization (NFC / NFD / NFKC / NFKD) at 100 %, all 28
-COLR composite blend modes, CFF2 variations, and the full
-complex-script set (9 Brahmic — Devanagari, Bengali, Tamil,
-Telugu, Kannada, Malayalam, Gurmukhi, Gujarati, Odia — plus 4
-SEA — Thai, Lao, Myanmar, Khmer) all real. See
+COLR composite blend modes, CFF2 variations, and shapers for the
+9 Brahmic scripts (Devanagari, Bengali, Tamil, Telugu, Kannada,
+Malayalam, Gurmukhi, Gujarati, Odia) plus 4 SEA (Thai, Lao,
+Myanmar, Khmer) — see [Script status](#script-status) for
+per-script accuracy. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for build / test instructions
 and the open-work pointer list (long-tail Khmer cluster polish,
 performance hardening, COLRv1 sweep gradients).

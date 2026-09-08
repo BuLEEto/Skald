@@ -303,14 +303,35 @@ identify_base :: proc(runes: []rune, syl: ^Indic_Syllable, uses_reph: bool) {
 	// No base consonant found — independent vowel cluster, etc. Leave
 	// base_idx at -1 and let reordering skip this syllable.
 	if syl.base_idx < 0 && syl.hi > syl.lo {
-		// Fall back to the first consonant or first codepoint.
+		// Fall back to the first consonant — or independent vowel. The
+		// OpenType Devanagari grammar's vowel-based syllable is
+		// `[Ra H] V [N] ... [{M}] [SM] [(H|VD)]`, so a reph may legally
+		// lead a syllable whose base is an independent vowel rather than
+		// a consonant ("र्अ"). Treating the vowel as a base candidate is
+		// what keeps `reorder_reph` running for those clusters.
 		for j in scan_from..<syl.hi {
-			if is_consonant_class(isc_class(runes[j])) {
+			c := isc_class(runes[j])
+			if is_consonant_class(c) || c == .Vowel_Independent {
 				syl.base_idx = j
 				return
 			}
 		}
-		syl.base_idx = scan_from
+		// Nothing base-like in range. `scan_from` is still a sane
+		// fallback for a baseless cluster that does not lead with a reph
+		// — there `scan_from == syl.lo`, so it points inside the
+		// syllable.
+		//
+		// It is NOT sane for a reph-led syllable: `scan_from == syl.lo+2`
+		// and the loop above just proved there is no base after the reph,
+		// so the index would land on a non-base (a digit, punctuation)
+		// or, when the reph is the whole syllable, on `syl.hi` — the
+		// *next* syllable's first glyph, which `reorder_reph` would then
+		// rotate into this cluster. Leave base_idx at -1 so both reorder
+		// passes skip the syllable and GSUB `rphf` handles the reph in
+		// place.
+		if !syl.has_reph {
+			syl.base_idx = scan_from
+		}
 	}
 }
 
@@ -376,12 +397,7 @@ reorder_reph :: proc(gids: ^[dynamic]parse.Glyph_ID, clusters: ^[dynamic]u32, ru
 	lo := syl.lo
 	base := syl.base_idx
 	if base <= lo + 1 { return }                        // base is the reph itself somehow
-	// SKALD PATCH (security/DoS): a reph with no base consonant after it
-	// (e.g. a cluster ending in RA+Virama, "र्") leaves base_idx == len, so
-	// gids[base] / the shift loop below read out of bounds → panic. Nothing
-	// to reorder around in that case — bail. Report upstream; drop on
-	// re-vendor. Repro: runa_fuzz cp 0930 094D
-	if base >= len(gids) { return }
+	if base >= len(gids) { return }                     // reph with no base consonant after it (e.g. a cluster ending RA+Virama) — nothing to reorder, and gids[base] would be out of bounds
 
 	ra_g  := gids[lo]
 	hal_g := gids[lo + 1]

@@ -61,6 +61,13 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Text shaping: refreshed the vendored `runa` to 1.2.3.** Picks up upstream
+  fixes for Indic reph reordering (glyph order before punctuation) and Arabic
+  cursive joining being severed by combining marks, plus hiding default-ignorable
+  code points (ZWJ and friends no longer risk a stray box in emoji sequences).
+  Our local reph-OOB stopgap is dropped — that fix is now upstream. Latin / CJK
+  rendering is unchanged.
+
 - **`gauge` no longer clips its own anti-aliased rim.** The radial gauge drew its
   AA fringe 1px past its canvas rect; the ring is now inset by the feather to stay
   inside. Thanks @Ashe-Sterling (#9).

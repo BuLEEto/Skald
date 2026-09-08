@@ -66,6 +66,27 @@ axis_values_non_default :: proc(values: []f32) -> bool {
 	return false
 }
 
+// is_default_ignorable reports Unicode Default_Ignorable_Code_Point —
+// LRM / RLM / ALM, ZWJ / ZWNJ, variation selectors, and friends. These
+// carry meaning for bidi and joining but must not paint: HarfBuzz emits
+// them as a zero-advance space, and without that U+061C ARABIC LETTER
+// MARK rendered as a visible 0.6 em glyph in the middle of Arabic text.
+//
+// 17 ranges from Unicode 17.0 `tools/ucd/DerivedCoreProperties.txt`
+// (property `Default_Ignorable_Code_Point`).
+@(private)
+is_default_ignorable :: proc(r: rune) -> bool {
+	switch r {
+	case 0x00AD, 0x034F, 0x061C, 0x115F..=0x1160,
+	     0x17B4..=0x17B5, 0x180B..=0x180F, 0x200B..=0x200F, 0x202A..=0x202E,
+	     0x2060..=0x206F, 0x3164, 0xFE00..=0xFE0F, 0xFEFF,
+	     0xFFA0, 0xFFF0..=0xFFF8, 0x1BCA0..=0x1BCA3, 0x1D173..=0x1D17A,
+	     0xE0000..=0xE0FFF:
+		return true
+	}
+	return false
+}
+
 // shape_run shapes `text` for one font at `size` pixels, appending to
 // `out`. Existing entries in `out` are kept — the caller can reuse the
 // dynamic array across calls. Allocations made during shaping land in
@@ -80,12 +101,19 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 	clusters := make([dynamic]u32,            0, len(text), context.temp_allocator)
 	runes    := make([dynamic]rune,           0, len(text), context.temp_allocator)
 
+	// Parallel to `gids`: marks the positions that came from a
+	// Default_Ignorable codepoint, so stage 5 can blank them. Tracked
+	// here because this is the only point where the rune → glyph mapping
+	// is exactly 1:1; it follows `clusters` through the GSUB resizes.
+	ignorable := make([dynamic]bool, 0, len(text), context.temp_allocator)
+
 	byte_idx: u32 = 0
 	for r in text {
 		gid := parse.cmap_lookup(in_.cmap, r)
 		append(&gids, gid)
 		append(&clusters, byte_idx)
 		append(&runes, r)
+		append(&ignorable, is_default_ignorable(r))
 
 		// Advance byte index by the UTF-8 length of the codepoint we
 		// just consumed.
@@ -123,6 +151,7 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 	// stage below then composes any remaining ligatures on top.
 	if in_.gsub != nil && is_indic_script(opts.script) {
 		indic_shape(in_.gsub, &gids, &clusters, runes[:], opts.script, opts.language)
+		resize(&ignorable, len(gids))
 	}
 
 	// Stage 2: GSUB. Apply v0.1 features in the canonical order. The
@@ -155,6 +184,7 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 			// for left-to-right Latin text where ligation always
 			// preserves the leftmost cluster.
 			resize(&clusters, after)
+			resize(&ignorable, after)
 		}
 	}
 
@@ -185,8 +215,20 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 		cluster: u32 = 0
 		if i < len(clusters) { cluster = clusters[i] }
 
+		// Default-ignorables (LRM / RLM / ALM, ZWJ / ZWNJ, variation
+		// selectors) have already done their job in the joining and bidi
+		// passes. They must not paint: emit the space glyph at zero
+		// advance, which is what HarfBuzz does.
+		gid := gids[i]
+		if i < len(ignorable) && ignorable[i] {
+			gid = parse.cmap_lookup(in_.cmap, ' ')
+			advance_units = 0
+			x_off_units   = 0
+			y_off_units   = 0
+		}
+
 		append(out, Shaped_Glyph{
-			glyph_id  = gids[i],
+			glyph_id  = gid,
 			cluster   = cluster,
 			x_advance = advance_units * scale,
 			y_advance = f32(adjusts[i].y_advance) * scale,

@@ -9,6 +9,118 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.2.3 — 2026-07-25
+
+### Fixed
+
+- **A single combining mark severed Arabic cursive joining.** Any harakat
+  broke the chain, so all vocalised Arabic rendered as disconnected
+  isolated forms — `بَب` shaped to three isolated BEHs.
+
+  `ArabicShaping.txt` omits `Joining_Type=T` characters by design,
+  defining them as the unlisted Mn/Me/Cf codepoints. runa returned its
+  non-joining sentinel for everything unlisted, which the state machine
+  treats as chain-breaking. `joining_type` now derives the Transparent
+  set from General_Category, still consulting the explicit listing first
+  — ZWJ and ZWNJ are both `Cf` but listed `C` / `U`.
+
+  `بب`, `بَب`, `بَبَب` and `مُحَمَّد` now match HarfBuzz glyph-for-glyph.
+  `test_transparent_table_matches_ucd` sweeps the whole codepoint space
+  against the vendored UCD so a bad table regeneration cannot pass
+  silently.
+
+- **Default-ignorables no longer paint.** U+061C ARABIC LETTER MARK
+  rendered as a visible 0.6 em glyph mid-word; LRM / RLM / soft hyphen /
+  variation selectors were likewise drawn. They now emit a zero-advance
+  space, matching HarfBuzz, while still doing their job in the joining
+  and bidi passes — ZWNJ continues to break the cursive chain.
+  Regression: `test_default_ignorables_do_not_paint`.
+
+### Known gaps
+
+- **Ligatures do not skip marks.** `لَا` still fails to form the lam-alef
+  ligature: HarfBuzz `[291, 704]`, runa `[47, 291, 667]`. GSUB matching is
+  adjacency-only and never consults `Lookup_Info.flag`, so
+  `LOOKUP_FLAG_IGNORE_MARKS` is ignored and the fatha blocks the match.
+  Needs a GDEF parser. The joining fix is a prerequisite for this, not a
+  substitute.
+- **`shape_run` does not normalize.** Quranic Arabic depends on it
+  (ALEF + MADDAH), and it also shows up in Hebrew nikud: `שָׁלוֹם` shapes
+  with two combining marks in the opposite order to HarfBuzz
+  (`… 100 79 96` vs `… 79 100 96`) because the canonical reordering
+  pass is missing. The `normalize` package implements NFC/NFD/NFKC/NFKD
+  at 100 % conformance; the shaper just does not call it.
+- **Malayalam diverges from HarfBuzz on common words** — `കാര്യം`
+  (*kāryaṃ*) shapes to `[23 64 148 49 6]` against HarfBuzz's
+  `[23 64 50 160 6]`. Devanagari NGA conjuncts (`कङ्क`) likewise. Common
+  Devanagari is unaffected (`नमस्ते`, `हिन्दी` match). README's script
+  table now states this rather than claiming byte-for-byte parity across
+  all 13 scripts.
+
+## 1.2.2 — 2026-07-25
+
+### Fixed
+
+- **Indic reph reordering corrupted glyph order before punctuation.** A
+  Devanagari word ending in RA + VIRAMA followed by any non-Indic
+  character — space, comma, digit, Latin letter, or the danda `।` —
+  emitted that character *ahead of* the syllable: `कर् क` shaped to
+  `[ka, space, reph, ka]`. Bengali, Kannada, Gujarati and Odia share the
+  code path.
+
+  When a reph leads a syllable with no base after it, `identify_base`
+  fell back to an index pointing past the syllable, at the next
+  syllable's first glyph, which `reorder_reph` then rotated into the
+  cluster. Same defect as the 1.2.1 crash — that fix guarded the crash
+  site, which only fires when the index runs off the whole buffer, so
+  with a following character it corrupted silently instead of panicking.
+
+  1.2.2 fixes the root, and recognises an independent vowel as a base
+  candidate: the OpenType vowel-based syllable `[Ra H] V …` is
+  spec-sanctioned, so `र्अ` must keep emitting the reph after its vowel.
+
+### Known gaps surfaced while fixing the above
+
+Pre-existing, none introduced by this release:
+
+- ~~Arabic combining marks resolve to `Joining_Type=X`, so a single fatha
+  severs cursive joining: vocalised Arabic renders disconnected.~~
+  **Fixed in 1.2.3.**
+- `rphf` is applied buffer-wide with no positional gate, so runa forms a
+  reph where HarfBuzz declines to (no base present). The 1.2.2 tests pin
+  the *ordering*, which HarfBuzz agrees with, not this composition.
+- Cluster indices desync after ligation (`resize` truncates from the
+  right; GSUB removes from the middle), so glyphs after a ligature report
+  an earlier byte offset.
+- The Indic v1-script-tag retry fires whenever a v2 feature matched
+  nothing, applying v1-only lookups to fonts that ship v2.
+- GPOS mark attachment omits the base's `hmtx` advance; `abvm` / `blwm` /
+  `dist` are never applied; `Lookup_Info.flag` is ignored.
+- Cursive joining is gated on `script == "arab"`, so Syriac never gets
+  init / medi / fina.
+
+## 1.2.1 — 2026-05-26
+
+### Fixed
+
+- **Indic shaper out-of-bounds crash on a lone reph.** A Devanagari
+  cluster ending in RA + Virama with no following base consonant (e.g.
+  `र्`) made `reorder_reph` compute `base_idx == len` and index past the
+  glyph buffer — a panic, and a denial-of-service vector for anything
+  shaping untrusted text. The reorder now bails when the reph has no
+  base consonant. Regression: `test_devanagari_lone_reph`.
+
+- **Glyph-bitmap allocation is now bounded.** `raster_glyph` accepted any
+  positive size, and the bitmap dimensions (`bbox × size`) were unbounded —
+  so a pathological size, or a malicious font with an absurd glyph bbox,
+  could drive an enormous allocation (OOM). `raster_glyph` now rejects
+  non-finite / non-positive / absurd sizes, and bitmap allocation refuses
+  dimensions past `RASTER_MAX_DIM` (4096) for both alpha and COLR paths.
+  Regression: `test_bitmap_make_dimension_cap`.
+
+Both found by fuzzing the engine (font parse + shape + raster) under
+AddressSanitizer / MemorySanitizer.
+
 ## 1.2.0 — 2026-05-22
 
 Headline: **`runa.Cache` is now bounded.** v1.x shipped an unbounded

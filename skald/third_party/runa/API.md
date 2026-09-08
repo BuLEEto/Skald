@@ -1,4 +1,4 @@
-# runa API reference (v1.2.0)
+# runa API reference (v1.2.3)
 
 Pure-Odin text engine — parse, shape, line-break, raster, atlas.
 Public API lives in three layers: the **facade** in `runa.odin`,
