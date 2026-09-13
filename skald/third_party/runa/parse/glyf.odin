@@ -1,5 +1,7 @@
 package parse
 
+import "core:math"
+
 // glyf — Glyph Data.
 //
 // Holds the outline definition for every TrueType-flavoured glyph as a
@@ -232,69 +234,146 @@ parse_simple_glyph :: proc(r: ^Reader, num_contours: int, out: ^Outline) -> Erro
 
 // ---- Composite glyphs -----------------------------------------------
 
+// Component is one record of a composite glyph: the referenced glyph, its
+// offset (font units), and its 2×2 transform.
+Component :: struct {
+	gid:            Glyph_ID,
+	dx, dy:         i32,
+	xx, xy, yx, yy: f32,
+	flags:          u16,
+}
+
+// read_component parses one composite record; `more` says another follows.
+@(private)
+read_component :: proc(r: ^Reader) -> (c: Component, more: bool, err: Error) {
+	flags := read_u16(r) or_return
+	gid   := read_u16(r) or_return
+	c.flags = flags
+	c.gid = Glyph_ID(gid)
+	args_words := (flags & COMP_ARG_1_AND_2_ARE_WORDS) != 0
+	args_xy    := (flags & COMP_ARGS_ARE_XY_VALUES) != 0
+	if !args_xy { return c, false, .Unsupported_Format }         // point-match attaches
+	if args_words {
+		a := read_i16(r) or_return
+		b := read_i16(r) or_return
+		c.dx, c.dy = i32(a), i32(b)
+	} else {
+		a := read_u8(r) or_return
+		b := read_u8(r) or_return
+		c.dx, c.dy = i32(i8(a)), i32(i8(b))
+	}
+	c.xx, c.yy = 1, 1
+	if flags & COMP_WE_HAVE_A_SCALE != 0 {
+		sc := read_i16(r) or_return
+		c.xx = f2dot14(sc)
+		c.yy = c.xx
+	} else if flags & COMP_WE_HAVE_AN_X_AND_Y_SCALE != 0 {
+		a := read_i16(r) or_return
+		b := read_i16(r) or_return
+		c.xx = f2dot14(a)
+		c.yy = f2dot14(b)
+	} else if flags & COMP_WE_HAVE_A_TWO_BY_TWO != 0 {
+		a := read_i16(r) or_return
+		b := read_i16(r) or_return
+		cc := read_i16(r) or_return
+		d := read_i16(r) or_return
+		c.xx = f2dot14(a)
+		c.xy = f2dot14(b)
+		c.yx = f2dot14(cc)
+		c.yy = f2dot14(d)
+	}
+	more = flags & COMP_MORE_COMPONENTS != 0
+	return
+}
+
+// transform_points applies a component's 2×2 matrix and offset to the points
+// appended since `first`.
+@(private)
+transform_points :: proc(out: ^Outline, first: int, c: Component) {
+	for idx in first..<len(out.points) {
+		pt := out.points[idx]
+		tx := c.xx*f32(pt.x) + c.yx*f32(pt.y)
+		ty := c.xy*f32(pt.x) + c.yy*f32(pt.y)
+		out.points[idx].x = i32(tx) + c.dx
+		out.points[idx].y = i32(ty) + c.dy
+	}
+}
+
 @(private)
 parse_composite_glyph :: proc(g: ^Glyf, loca: ^Loca, r: ^Reader, out: ^Outline, depth: int) -> Error {
 	for {
-		flags := read_u16(r) or_return
-		gid   := read_u16(r) or_return
-
-		// argument 1 / 2: byte or word, signed (XY values) or unsigned
-		// (point matches). Point matching is rare and not v0.1 — reject.
-		args_words := (flags & COMP_ARG_1_AND_2_ARE_WORDS) != 0
-		args_xy    := (flags & COMP_ARGS_ARE_XY_VALUES) != 0
-		if !args_xy { return .Unsupported_Format }              // point-match attaches
-
-		dx, dy: i32
-		if args_words {
-			a := read_i16(r) or_return
-			b := read_i16(r) or_return
-			dx, dy = i32(a), i32(b)
-		} else {
-			a := read_u8(r) or_return
-			b := read_u8(r) or_return
-			dx, dy = i32(i8(a)), i32(i8(b))
-		}
-
-		// Optional 2.14 fixed-point transform matrix.
-		xx, yy: f32 = 1, 1
-		xy, yx: f32 = 0, 0
-		if flags & COMP_WE_HAVE_A_SCALE != 0 {
-			s := read_i16(r) or_return
-			xx = f2dot14(s)
-			yy = xx
-		} else if flags & COMP_WE_HAVE_AN_X_AND_Y_SCALE != 0 {
-			a := read_i16(r) or_return
-			b := read_i16(r) or_return
-			xx = f2dot14(a)
-			yy = f2dot14(b)
-		} else if flags & COMP_WE_HAVE_A_TWO_BY_TWO != 0 {
-			a := read_i16(r) or_return
-			b := read_i16(r) or_return
-			c := read_i16(r) or_return
-			d := read_i16(r) or_return
-			xx = f2dot14(a)
-			xy = f2dot14(b)
-			yx = f2dot14(c)
-			yy = f2dot14(d)
-		}
-
-		// Recurse into the component glyph, then transform every point
-		// it appended.
+		c, more := read_component(r) or_return
 		first_added := len(out.points)
-		first_contour := len(out.contour_ends)
-		glyf_outline_impl(g, loca, Glyph_ID(gid), out, depth + 1) or_return
-		_ = first_contour                                       // already biased by base_point in parse_simple_glyph
+		glyf_outline_impl(g, loca, c.gid, out, depth + 1) or_return
+		transform_points(out, first_added, c)
+		if !more { break }
+	}
+	return .None
+}
 
-		// Apply the 2x2 transform + translate.
-		for idx in first_added..<len(out.points) {
-			pt := out.points[idx]
-			tx := xx*f32(pt.x) + yx*f32(pt.y)
-			ty := xy*f32(pt.x) + yy*f32(pt.y)
-			out.points[idx].x = i32(tx) + dx
-			out.points[idx].y = i32(ty) + dy
+// ---- Variable glyphs --------------------------------------------------
+
+// glyf_outline_var is glyf_outline with gvar deltas applied at
+// `axis_values` (normalised, one per axis). Simple glyphs get their own
+// point deltas (with interpolation of untouched points); a composite glyph's
+// deltas move its component offsets, and each component is varied on its
+// own before being placed — the spec's model, and the reason a flattened
+// composite cannot be varied after the fact.
+glyf_outline_var :: proc(g: ^Glyf, loca: ^Loca, gv: ^Gvar, axis_values: []f32, gid: Glyph_ID, out: ^Outline) -> Error {
+	clear(&out.points)
+	clear(&out.contour_ends)
+	out.x_min, out.y_min, out.x_max, out.y_max = 0, 0, 0, 0
+	return glyf_outline_var_impl(g, loca, gv, axis_values, gid, out, 0)
+}
+
+@(private)
+glyf_outline_var_impl :: proc(g: ^Glyf, loca: ^Loca, gv: ^Gvar, axis_values: []f32, gid: Glyph_ID, out: ^Outline, depth: int) -> Error {
+	if depth > COMPOSITE_MAX_DEPTH { return .Invalid_Table }
+	start, length, ok := loca_glyph_range(loca, gid)
+	if !ok { return .Glyph_Not_Found }
+	if length == 0 { return .None }
+	if u64(start) + u64(length) > u64(len(g.data)) { return .Invalid_Table }
+	r := Reader{data = g.data[start:start + length]}
+	num_contours := read_i16(&r) or_return
+	x_min := read_i16(&r) or_return
+	y_min := read_i16(&r) or_return
+	x_max := read_i16(&r) or_return
+	y_max := read_i16(&r) or_return
+	if depth == 0 {
+		out.x_min, out.y_min, out.x_max, out.y_max = x_min, y_min, x_max, y_max
+	}
+
+	if num_contours > 0 {
+		base  := len(out.points)
+		cbase := len(out.contour_ends)
+		parse_simple_glyph(&r, int(num_contours), out) or_return
+		pts := out.points[base:]
+		ends := make([]u16, len(out.contour_ends) - cbase, context.temp_allocator)
+		for i in 0..<len(ends) { ends[i] = out.contour_ends[cbase + i] - u16(base) }
+		dx, dy := gvar_point_deltas(gv, gid, axis_values, pts, ends, len(pts)) or_return
+		for i in 0..<len(pts) {
+			pts[i].x += i32(math.round(dx[i]))
+			pts[i].y += i32(math.round(dy[i]))
 		}
-
-		if flags & COMP_MORE_COMPONENTS == 0 { break }
+		return .None
+	}
+	if num_contours == -1 {
+		comps := make([dynamic]Component, 0, 4, context.temp_allocator)
+		for {
+			c, more := read_component(&r) or_return
+			append(&comps, c)
+			if !more { break }
+		}
+		dx, dy := gvar_point_deltas(gv, gid, axis_values, nil, nil, len(comps)) or_return
+		for &c, i in comps {
+			c.dx += i32(math.round(dx[i]))
+			c.dy += i32(math.round(dy[i]))
+		}
+		for c in comps {
+			first_added := len(out.points)
+			glyf_outline_var_impl(g, loca, gv, axis_values, c.gid, out, depth + 1) or_return
+			transform_points(out, first_added, c)
+		}
 	}
 	return .None
 }

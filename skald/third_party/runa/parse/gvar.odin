@@ -1,5 +1,7 @@
 package parse
 
+import "core:math"
+
 // gvar — Glyph Variations Table.
 //
 // For each glyph that varies along one or more axes, gvar carries a
@@ -87,151 +89,205 @@ gvar_destroy :: proc(g: ^Gvar, allocator := context.allocator) {
 	g^ = {}
 }
 
-// apply_glyph_variations mutates `outline.points` in-place, applying
-// gvar deltas for `gid` at the normalised axis tuple `axis_values`.
-// `axis_values` must have length `g.axis_count`.
-//
-// A glyph with no variation data (offset[gid] == offset[gid+1])
-// passes through unmodified — returns `.None`. Malformed tuple
-// headers or out-of-range tuple indices return `.Invalid_Table`;
-// the outline ends up unchanged on error.
+// apply_glyph_variations adds this glyph's gvar deltas to a SIMPLE glyph's
+// outline points (all of `outline.points` belong to `gid`). Composite glyphs
+// must go through glyf_outline_var, whose deltas move component offsets.
+// Kept for callers that already flattened a simple glyph.
 apply_glyph_variations :: proc(g: ^Gvar, gid: Glyph_ID, axis_values: []f32, outline: ^Outline) -> Error {
-	if int(gid) + 1 >= len(g.glyph_offsets) { return .None }
-	if len(axis_values) != int(g.axis_count) { return .Invalid_Table }
+	dx, dy := gvar_point_deltas(g, gid, axis_values, outline.points[:], outline.contour_ends[:], len(outline.points)) or_return
+	for i in 0..<len(outline.points) {
+		outline.points[i].x += i32(math.round(dx[i]))
+		outline.points[i].y += i32(math.round(dy[i]))
+	}
+	return .None
+}
+
+// gvar_point_deltas accumulates the weighted variation deltas of every
+// tuple of `gid` at `axis_values`, per point, in font units. The result has
+// `n_points + 4` entries: the glyph's own points (a simple glyph's outline
+// points, or a composite's component offsets) followed by the four phantom
+// points. `ref` / `contour_ends` are the unvaried points and contour ends of
+// a simple glyph, used to interpolate untouched points (IUP) for tuples that
+// carry sparse point lists; pass nil for a composite (no interpolation).
+// Slices are allocated with `allocator` (temp by default). Malformed data
+// returns `.Invalid_Table`.
+gvar_point_deltas :: proc(g: ^Gvar, gid: Glyph_ID, axis_values: []f32, ref: []Outline_Point, contour_ends: []u16, n_points: int, allocator := context.temp_allocator) -> (dx, dy: []f32, err: Error) {
+	total := n_points + 4
+	dx = make([]f32, total, allocator)
+	dy = make([]f32, total, allocator)
+	if int(gid) + 1 >= len(g.glyph_offsets) { return }
+	if len(axis_values) != int(g.axis_count) { return dx, dy, .Invalid_Table }
 
 	start := g.glyph_data_off + g.glyph_offsets[gid]
 	end   := g.glyph_data_off + g.glyph_offsets[gid + 1]
-	if end <= start { return .None }                       // no variation data
-	if u64(end) > u64(len(g.data)) { return .Invalid_Table }
+	if end <= start { return }                       // no variation data
+	if u64(end) > u64(len(g.data)) { return dx, dy, .Invalid_Table }
 
 	glyph_data := g.data[start:end]
 	r := Reader{data = glyph_data}
 
-	tvc_raw := read_u16(&r) or_return
-	data_off := read_u16(&r) or_return
+	tvc_raw, e1 := read_u16(&r); if e1 != .None { return dx, dy, e1 }
+	data_off, e2 := read_u16(&r); if e2 != .None { return dx, dy, e2 }
 	tuple_count    := tvc_raw & TUPLE_INDEX_MASK
 	has_shared_pts := tvc_raw & 0x8000 != 0
 
-	// Serialised data (point numbers + deltas) starts at `data_off`
-	// from the glyph variation data start.
-	if int(data_off) > len(glyph_data) { return .Invalid_Table }
+	if int(data_off) > len(glyph_data) { return dx, dy, .Invalid_Table }
 	serialised := glyph_data[data_off:]
 	serial_cursor := 0
 
-	num_points := len(outline.points) + 4   // +4 phantom points (per spec)
-
-	// Shared point numbers (used by all tuples that don't carry their
-	// own) live at the start of the serialised data.
 	shared_points: []u16
 	if has_shared_pts {
-		pts, consumed, ok := decode_packed_points(serialised, num_points)
-		if !ok { return .Invalid_Table }
+		pts, consumed, ok := decode_packed_points(serialised, total)
+		if !ok { return dx, dy, .Invalid_Table }
 		shared_points = pts
 		serial_cursor += consumed
 	}
-	defer if shared_points != nil { delete(shared_points, context.temp_allocator) }
 
 	axis_count := int(g.axis_count)
+	peak   := make([]f32, axis_count, context.temp_allocator)
+	istart := make([]f32, axis_count, context.temp_allocator)
+	iend   := make([]f32, axis_count, context.temp_allocator)
+	tdx := make([]f32, total, context.temp_allocator)
+	tdy := make([]f32, total, context.temp_allocator)
+	touched := make([]bool, total, context.temp_allocator)
 
-	for t in 0..<int(tuple_count) {
-		var_data_size := read_u16(&r) or_return
-		tuple_idx     := read_u16(&r) or_return
-
-		// Peak: shared table index OR embedded inline.
-		peak := make([]f32, axis_count, context.temp_allocator)
-		defer delete(peak, context.temp_allocator)
+	for _ in 0..<int(tuple_count) {
+		var_data_size, e3 := read_u16(&r); if e3 != .None { return dx, dy, e3 }
+		tuple_idx, e4     := read_u16(&r); if e4 != .None { return dx, dy, e4 }
 
 		if tuple_idx & TUPLE_EMBEDDED_PEAK != 0 {
 			for k in 0..<axis_count {
-				v, e := read_i16(&r); if e != .None { return e }
+				v, e := read_i16(&r); if e != .None { return dx, dy, e }
 				peak[k] = f32(v) / 16384.0
 			}
 		} else {
 			si := int(tuple_idx & TUPLE_INDEX_MASK)
-			if si >= int(g.shared_tuple_count) { return .Invalid_Table }
+			if si >= int(g.shared_tuple_count) { return dx, dy, .Invalid_Table }
 			base := g.shared_tuples_off + u32(si * axis_count * 2)
-			if u64(base) + u64(axis_count * 2) > u64(len(g.data)) { return .Invalid_Table }
+			if u64(base) + u64(axis_count * 2) > u64(len(g.data)) { return dx, dy, .Invalid_Table }
 			for k in 0..<axis_count {
-				p := base + u32(k * 2)
-				v := i16(u16(g.data[p])<<8 | u16(g.data[p + 1]))
+				pp := base + u32(k * 2)
+				v := i16(u16(g.data[pp])<<8 | u16(g.data[pp + 1]))
 				peak[k] = f32(v) / 16384.0
 			}
 		}
 
-		// Optional intermediate start/end tuples for asymmetric ramps.
 		has_intermediate := tuple_idx & TUPLE_INTERMEDIATE != 0
-		istart := make([]f32, axis_count, context.temp_allocator)
-		iend   := make([]f32, axis_count, context.temp_allocator)
-		defer delete(istart, context.temp_allocator)
-		defer delete(iend,   context.temp_allocator)
 		if has_intermediate {
 			for k in 0..<axis_count {
-				v, e := read_i16(&r); if e != .None { return e }
+				v, e := read_i16(&r); if e != .None { return dx, dy, e }
 				istart[k] = f32(v) / 16384.0
 			}
 			for k in 0..<axis_count {
-				v, e := read_i16(&r); if e != .None { return e }
+				v, e := read_i16(&r); if e != .None { return dx, dy, e }
 				iend[k] = f32(v) / 16384.0
 			}
 		}
-
-		// Compute scalar weight for this tuple at axis_values.
 		weight := compute_tuple_weight(peak, istart, iend, axis_values, has_intermediate)
 
-		// Per-tuple data lives in `serialised`. Decode points (private
-		// or shared), then x deltas, then y deltas.
 		tuple_payload_end := serial_cursor + int(var_data_size)
-		if tuple_payload_end > len(serialised) { return .Invalid_Table }
+		if tuple_payload_end > len(serialised) { return dx, dy, .Invalid_Table }
 		payload := serialised[serial_cursor:tuple_payload_end]
 		serial_cursor = tuple_payload_end
 
 		pcursor := 0
 		points: []u16
 		if tuple_idx & TUPLE_PRIVATE_POINTS != 0 {
-			pts, consumed, ok := decode_packed_points(payload, num_points)
-			if !ok { return .Invalid_Table }
+			pts, consumed, ok := decode_packed_points(payload, total)
+			if !ok { return dx, dy, .Invalid_Table }
 			points = pts
 			pcursor = consumed
 		} else {
 			points = shared_points
 		}
-		defer if tuple_idx & TUPLE_PRIVATE_POINTS != 0 && points != nil { delete(points, context.temp_allocator) }
-
-		// "All points" sentinel — `decode_packed_points` returns nil
-		// for the 0-count case, which means deltas are dense over all
-		// points 0..num_points - 1.
 		applies_all := points == nil
-		delta_count := applies_all ? num_points : len(points)
+		delta_count := applies_all ? total : len(points)
 
 		dxs, dyc1, ok1 := decode_packed_deltas(payload[pcursor:], delta_count)
-		if !ok1 { return .Invalid_Table }
-		defer delete(dxs, context.temp_allocator)
+		if !ok1 { return dx, dy, .Invalid_Table }
 		dys, _, ok2 := decode_packed_deltas(payload[pcursor + dyc1:], delta_count)
-		if !ok2 { return .Invalid_Table }
-		defer delete(dys, context.temp_allocator)
-
-		// Tuple deltas only meaningfully change the outline when
-		// weight is non-zero. Saves a fair bit of loop overhead for
-		// glyphs whose tuple peaks don't match the requested axis.
+		if !ok2 { return dx, dy, .Invalid_Table }
 		if weight == 0 { continue }
 
 		if applies_all {
-			n := min(len(dxs), len(outline.points))
+			n := min(len(dxs), total)
 			for i in 0..<n {
-				outline.points[i].x += i32(f32(dxs[i]) * weight)
-				outline.points[i].y += i32(f32(dys[i]) * weight)
+				dx[i] += f32(dxs[i]) * weight
+				dy[i] += f32(dys[i]) * weight
 			}
-		} else {
-			for i in 0..<len(points) {
-				pi := int(points[i])
-				if pi >= len(outline.points) { continue }
-				if i >= len(dxs) || i >= len(dys) { break }
-				outline.points[pi].x += i32(f32(dxs[i]) * weight)
-				outline.points[pi].y += i32(f32(dys[i]) * weight)
-			}
+			continue
+		}
+		// Sparse tuple: place the explicit deltas, interpolate the rest of
+		// each contour (IUP), then accumulate.
+		for i in 0..<total { tdx[i], tdy[i], touched[i] = 0, 0, false }
+		for i in 0..<len(points) {
+			pi := int(points[i])
+			if pi >= total || i >= len(dxs) || i >= len(dys) { continue }
+			tdx[pi], tdy[pi], touched[pi] = f32(dxs[i]), f32(dys[i]), true
+		}
+		if ref != nil { iup_contours(ref, contour_ends, tdx, tdy, touched) }
+		for i in 0..<total {
+			dx[i] += tdx[i] * weight
+			dy[i] += tdy[i] * weight
 		}
 	}
-	return .None
+	return
+}
+
+// iup_contours fills deltas for untouched points from their nearest touched
+// neighbours along each contour, per the spec's "inferred deltas" rule.
+@(private)
+iup_contours :: proc(ref: []Outline_Point, contour_ends: []u16, tdx, tdy: []f32, touched: []bool) {
+	start := 0
+	for ce in contour_ends {
+		end := min(int(ce), len(ref) - 1)
+		if end < start { break }
+		n_touched := 0
+		first := -1
+		for i in start..=end {
+			if touched[i] {
+				n_touched += 1
+				if first < 0 { first = i }
+			}
+		}
+		if n_touched == 0 || n_touched == end - start + 1 {
+			start = end + 1
+			continue
+		}
+		if n_touched == 1 {
+			for i in start..=end { tdx[i], tdy[i] = tdx[first], tdy[first] }
+			start = end + 1
+			continue
+		}
+		for i in start..=end {
+			if touched[i] { continue }
+			p := i
+			for {
+				p -= 1
+				if p < start { p = end }
+				if touched[p] { break }
+			}
+			q := i
+			for {
+				q += 1
+				if q > end { q = start }
+				if touched[q] { break }
+			}
+			tdx[i] = iup_axis(f32(ref[p].x), f32(ref[q].x), f32(ref[i].x), tdx[p], tdx[q])
+			tdy[i] = iup_axis(f32(ref[p].y), f32(ref[q].y), f32(ref[i].y), tdy[p], tdy[q])
+		}
+		start = end + 1
+	}
+}
+
+@(private)
+iup_axis :: proc(ra, rb, r, da, db: f32) -> f32 {
+	if ra == rb { return da if da == db else 0 }
+	lo_r, hi_r, lo_d, hi_d := ra, rb, da, db
+	if lo_r > hi_r { lo_r, hi_r, lo_d, hi_d = rb, ra, db, da }
+	if r <= lo_r { return lo_d }
+	if r >= hi_r { return hi_d }
+	return lo_d + (r - lo_r) * (hi_d - lo_d) / (hi_r - lo_r)
 }
 
 // compute_tuple_weight is the per-axis product from the OpenType spec

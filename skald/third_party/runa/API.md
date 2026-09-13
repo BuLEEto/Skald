@@ -55,6 +55,10 @@ automatically inside `raster_glyph`.
 ### Layout
 
 ```odin
+// Discretionary GSUB features a caller may switch off per call. Mandatory
+// features (ccmp, locl, rlig) are always applied and not representable here.
+Feature :: enum u8 { Ligatures, Contextual_Ligatures, Contextual_Alternates }
+
 Paragraph_Opts :: struct {
     fonts:     Font_Stack,
     size:      f32,
@@ -62,6 +66,8 @@ Paragraph_Opts :: struct {
     max_width: f32,
     align:     Align,
     language:  parse.Tag,
+    disable_features: bit_set[Feature],   // {} = all applied; feeds layout AND
+                                          // measurement so widths stay consistent
 }
 
 layout_paragraph :: proc(text: string, opts: Paragraph_Opts,
@@ -76,10 +82,9 @@ line_destroy     :: proc(l: ^Line, allocator := context.allocator)
 2. UAX #9 bidi resolve when the text contains any RTL codepoints
 3. shape each run via `shape_text` (GSUB + GPOS, with the Indic /
    Arabic / SEA shaper paths dispatched by script tag)
-4. UAX #14 line-break + width fit; Thai runs are word-broken via
-   the embedded PyThaiNLP dictionary so paragraphs reflow at
-   word boundaries rather than the whole-sentence-as-one-word
-   default
+4. UAX #14 line-break + width fit; Thai runs word-break via the opt-in
+   PyThaiNLP dictionary (`-define:RUNA_THAI_DICT=true`, CC-BY-SA) or, by
+   default, fall back to grapheme-cluster breaks
 5. UAX #9 L2 visual reorder per line
 
 `cache: ^Cache` is optional — pass one to amortize shape work

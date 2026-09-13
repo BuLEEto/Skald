@@ -6,6 +6,13 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Fixed
+
+- **Refreshed the vendored `runa` to 1.3.1** — variable composite-glyph fix +
+  IUP (1.2.4), per-call OpenType feature control (1.3.0), and the Thai
+  dictionary now opt-in / off by default (1.3.1). Vendored byte-identical to
+  upstream, no local patches; still no CC-BY-SA corpus in Skald binaries.
+
 ## 1.0.0-rc15 — 2026-09-08
 
 ### Added

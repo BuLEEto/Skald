@@ -50,8 +50,9 @@ Odin with zero C dependencies at v1.0.
 
 All four items closed:
 
-- **Thai word-break dictionary** — embedded PyThaiNLP corpus,
-  longest-match trie, ~62 k entries. ✓
+- **Thai word-break dictionary** — opt-in PyThaiNLP corpus (~62 k
+  entries), longest-match trie. Off by default (grapheme fallback);
+  enable with `-define:RUNA_THAI_DICT=true` and honour its CC-BY-SA. ✓
 - **Complex Khmer multi-consonant clusters** — pre-base reorder
   fixed to move to syllable start, not just before base. ✓
 - **Full Myanmar shaping** — joined the Indic pipeline; medial

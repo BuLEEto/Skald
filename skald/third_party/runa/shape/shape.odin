@@ -53,11 +53,22 @@ Shape_Inputs :: struct {
 	units_per_em: u16,
 }
 
+// Feature is a discretionary GSUB feature a caller may switch off per call.
+// The mandatory features (ccmp, locl, rlig) are always applied and are not
+// representable here — they are correctness, not preference.
+Feature :: enum u8 {
+	Ligatures,             // liga
+	Contextual_Ligatures,  // clig
+	Contextual_Alternates, // calt (code-font -> == != … ligatures fire here)
+}
+
 // Shape_Run_Opts is the per-call options.
 Shape_Run_Opts :: struct {
 	script:   parse.Tag,                       // e.g. parse.LATN_SCRIPT
 	language: parse.Tag,                       // e.g. parse.DFLT_LANG
-	// Add per-call feature overrides if/when the API matures.
+	// Discretionary features to switch off this call; {} = all applied.
+	// Changes glyph advances, so shape and measure with the same set.
+	disable_features: bit_set[Feature],
 }
 
 @(private)
@@ -158,17 +169,21 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 	// cluster array is rewritten in parallel as ligatures collapse
 	// glyphs.
 	if in_.gsub != nil {
-		gsub_features := [?]parse.Tag{
-			parse.tag("ccmp"),
-			parse.tag("locl"),
-			parse.tag("rlig"),
-			parse.tag("liga"),
-			parse.tag("clig"),
-			parse.tag("calt"),
+		// ccmp / locl / rlig are mandatory (correctness); liga / clig /
+		// calt are discretionary and honour `opts.disable_features`.
+		Stage :: struct { tag: parse.Tag, opt: Maybe(Feature) }
+		gsub_features := [?]Stage{
+			{parse.tag("ccmp"), nil},
+			{parse.tag("locl"), nil},
+			{parse.tag("rlig"), nil},
+			{parse.tag("liga"), .Ligatures},
+			{parse.tag("clig"), .Contextual_Ligatures},
+			{parse.tag("calt"), .Contextual_Alternates},
 		}
-		for ft in gsub_features {
+		for st in gsub_features {
+			if f, ok := st.opt.?; ok && f in opts.disable_features { continue }
 			before := len(gids)
-			parse.gsub_apply_feature(in_.gsub, &gids, opts.script, opts.language, ft)
+			parse.gsub_apply_feature(in_.gsub, &gids, opts.script, opts.language, st.tag)
 			after := len(gids)
 			if before == after { continue }
 			// Walk in parallel and drop cluster entries whose gid index

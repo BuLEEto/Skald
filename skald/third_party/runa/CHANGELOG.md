@@ -9,6 +9,66 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.1 — 2026-09-13
+
+### Changed
+
+- **The Thai word-break dictionary is now opt-in — behaviour change.** It used
+  to compile into every binary and build its trie (~60 MB transient) on the
+  first wrapped paragraph of *any* app, Thai or not, and it embedded the
+  CC-BY-SA PyThaiNLP corpus into every consumer's binary. It's now **off by
+  default**: build `-define:RUNA_THAI_DICT=true` for dictionary word-breaking
+  (and then honour the corpus's CC-BY-SA attribution + share-alike). Without
+  it, Thai falls back to grapheme-cluster breaks — no corpus in the binary, no
+  startup cost. When enabled, the trie now also builds lazily, only once Thai
+  text actually appears.
+
+## 1.3.0 — 2026-09-12
+
+### Added
+
+- **Per-call OpenType feature control.** `Paragraph_Opts` / `Shape_Run_Opts`
+  gain `disable_features: bit_set[Feature]`, and `shape_text` /
+  `shape_text_cached` a defaulted `disable_features` param. `Feature` covers
+  the discretionary features — `Ligatures` (liga), `Contextual_Ligatures`
+  (clig), `Contextual_Alternates` (calt); the mandatory ccmp/locl/rlig are
+  always applied and can't be switched off. `{}` = unchanged behaviour. Main
+  use is turning ligatures off in a code editor. The set feeds layout and
+  measurement, and the shape cache keys on it, so widths match what's drawn.
+
+## 1.2.4 — 2026-09-08
+
+### Fixed
+
+- **Variable composite glyphs no longer vanish off the default instance.**
+  `font_glyph_outline` flattened a composite (e.g. Inter's `i`, `j`, `,`)
+  and then applied its gvar deltas to the flattened points — but a
+  composite's deltas move its *component offsets* (+4 phantoms), not the
+  points, so the counts mismatched and every composite returned
+  `.Invalid_Table` at any non-default axis. Outlines are now varied while
+  parsing: a simple glyph gets its own point deltas, a composite varies
+  each component's placement and recurses. Regression:
+  `test_variable_composite_glyph_outline`.
+
+- **Implemented IUP (interpolation of untouched points).** Tuples carrying
+  a sparse point list previously moved only their explicit points, subtly
+  distorting glyphs that rely on the spec's inferred-delta interpolation
+  for the rest of each contour. Untouched points now interpolate from
+  their nearest touched neighbours along the contour.
+
+### Known gaps surfaced while fixing the above
+
+- **CFF2 outlines fail for some glyphs even at the default instance.**
+  ~20 glyphs in Source Code VF return `.Invalid_Table` from
+  `font_glyph_outline` with no axis set — a CFF2 charstring parse gap, not
+  a variation bug (the gvar fix above is glyf-only). Repro: sweep
+  `font_glyph_outline` over `tests/fonts/SourceCodeVF.otf`; the failures
+  are identical at the default instance and at wght=600.
+- **COLR layers are not varied.** `raster/color.odin` / `color_brush.odin`
+  render COLR base-glyph layers through the static `glyf_outline`, so a
+  variable COLR font's layers stay at their default instance. (COLRv1
+  varies its paints via an ItemVariationStore — a separate path from gvar.)
+
 ## 1.2.3 — 2026-07-25
 
 ### Fixed
