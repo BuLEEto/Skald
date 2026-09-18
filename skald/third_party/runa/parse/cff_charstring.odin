@@ -159,11 +159,19 @@ cff2_charstring_bytes_err :: proc(c: ^Cff2, gid: Glyph_ID) -> ([]u8, Error) {
 	return cff_index_get(&c.charstrings_index, int(gid))
 }
 
+// CS_STACK_MAX is the operand stack a charstring may use. Type 2 allows 48,
+// CFF2 allows 513 (OpenType CFF2 §3): one `blend` can carry a whole glyph's
+// coordinates *and* their per-region deltas, so a variable font with a
+// couple of regions goes well past 48 on ordinary letters. One size serves
+// both — 2 KB of stack, against silently losing an "i".
+CS_STACK_MAX :: 513
+
 @(private)
 Cs_State :: struct {
 	x, y:           f32,                              // current pen
-	stack:          [48]f32,
+	stack:          [CS_STACK_MAX]f32,
 	sp:             int,
+	overflow:       bool,                             // a push past the end: the glyph is refused, never quietly wrong
 	stem_count:     int,                              // pending hstem/vstem operands counted
 	out:            ^Outline,
 	contour_open:   bool,
@@ -180,6 +188,7 @@ run_cs :: proc(c: ^Cs_Context, s: ^Cs_State, code: []u8, depth: int) -> bool {
 	if depth > CFF_MAX_SUBR_DEPTH { return false }
 	i := 0
 	for i < len(code) {
+		if s.overflow { return false } // an operand went past the stack: refuse the glyph rather than draw it short
 		b := code[i]
 		switch {
 		case b == 28:
@@ -207,10 +216,11 @@ run_cs :: proc(c: ^Cs_Context, s: ^Cs_State, code: []u8, depth: int) -> bool {
 			push(s, f32(raw) / 65536.0)
 			i += 5
 		case b == 12:
-			// Two-byte operator. We don't implement any Type-2
-			// flex / arithmetic operators in v0.5; consume the
-			// second byte and clear stack so the run continues.
+			// Two-byte operator: the flex family draws curves, so it
+			// is followed; the arithmetic ones (rare in real fonts)
+			// are consumed and the stack cleared, as before.
 			if i + 1 >= len(code) { return false }
+			apply_escape(s, code[i + 1])
 			i += 2
 			s.sp = 0
 		case b == 10:
@@ -321,9 +331,88 @@ run_cs :: proc(c: ^Cs_Context, s: ^Cs_State, code: []u8, depth: int) -> bool {
 	return true
 }
 
+// push puts an operand on the stack. Past the end it sets `overflow` and the
+// run is refused: dropping the value instead would draw a glyph missing
+// whatever the dropped operands were.
 @(private)
 push :: proc(s: ^Cs_State, v: f32) {
-	if s.sp < len(s.stack) { s.stack[s.sp] = v; s.sp += 1 }
+	if s.sp < len(s.stack) {
+		s.stack[s.sp] = v
+		s.sp += 1
+		return
+	}
+	s.overflow = true
+}
+
+// apply_escape runs a two-byte (12 x) operator. The flex operators are four
+// spellings of the same thing: two curves that together stand in for one
+// nearly-flat curve, which fonts use for shallow bows on stems. Skipping
+// them, as this did before, dropped those curves and left the glyph subtly
+// wrong — the same silent wrongness as an operand stack that drops values.
+@(private)
+apply_escape :: proc(s: ^Cs_State, op: u8) {
+	x0, y0 := s.x, s.y
+	switch op {
+	case 35: // flex: two curves, then a flex depth we do not need
+		if s.sp < 13 { return }
+		a := s.stack[:]
+		c1x := s.x + a[0];   c1y := s.y + a[1]
+		c2x := c1x + a[2];   c2y := c1y + a[3]
+		ex  := c2x + a[4];   ey  := c2y + a[5]
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+		c1x = s.x + a[6];    c1y = s.y + a[7]
+		c2x = c1x + a[8];    c2y = c1y + a[9]
+		ex  = c2x + a[10];   ey  = c2y + a[11]
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+	case 34: // hflex: horizontal, and it comes back to the y it started at
+		if s.sp < 7 { return }
+		a := s.stack[:]
+		c1x := s.x + a[0];   c1y := y0
+		c2x := c1x + a[1];   c2y := c1y + a[2]
+		ex  := c2x + a[3];   ey  := c2y
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+		c1x = s.x + a[4];    c1y = c2y
+		c2x = c1x + a[5];    c2y = y0
+		ex  = c2x + a[6];    ey  = y0
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+	case 36: // hflex1: as hflex, with its own y deltas on the way out
+		if s.sp < 9 { return }
+		a := s.stack[:]
+		c1x := s.x + a[0];   c1y := s.y + a[1]
+		c2x := c1x + a[2];   c2y := c1y + a[3]
+		ex  := c2x + a[4];   ey  := c2y
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+		c1x = s.x + a[5];    c1y = c2y
+		c2x = c1x + a[6];    c2y = c1y + a[7]
+		ex  = c2x + a[8];    ey  = y0
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+	case 37: // flex1: the last point returns to the start in whichever
+		 // direction moved least, so only one delta is given for it
+		if s.sp < 11 { return }
+		a := s.stack[:]
+		dx := a[0] + a[2] + a[4] + a[6] + a[8]
+		dy := a[1] + a[3] + a[5] + a[7] + a[9]
+		c1x := s.x + a[0];   c1y := s.y + a[1]
+		c2x := c1x + a[2];   c2y := c1y + a[3]
+		ex  := c2x + a[4];   ey  := c2y + a[5]
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+		c1x = s.x + a[6];    c1y = s.y + a[7]
+		c2x = c1x + a[8];    c2y = c1y + a[9]
+		if abs(dx) > abs(dy) {
+			ex = c2x + a[10]; ey = y0
+		} else {
+			ex = x0;          ey = c2y + a[10]
+		}
+		emit_cubic(s, c1x, c1y, c2x, c2y, ex, ey)
+		s.x, s.y = ex, ey
+	}
 }
 
 @(private)

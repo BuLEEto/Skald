@@ -9,6 +9,23 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.2 — 2026-09-18
+
+### Fixed
+
+- **Variable CFF2 fonts no longer drop whole glyphs.** The charstring operand
+  stack was 48 (Type 2's limit); CFF2 allows 513, because one `blend` carries a
+  glyph's coordinates *and* their per-region deltas at once, so a font with a
+  couple of regions exceeds 48 on ordinary letters. Past 48 the stack silently
+  dropped operands and the glyph came back `.Invalid_Table` — missing, no error
+  (Cantarell's `i j o O Q 0 6 9`; ~20 glyphs in Source Code VF). The stack is now
+  513 and an overflow refuses the glyph rather than drawing it short. Resolves
+  the CFF2 gap noted under 1.2.4. Regression:
+  `test_cff2_no_missing_glyphs_from_operand_stack`.
+- **CFF flex operators are drawn.** `flex` / `hflex` / `hflex1` / `flex1`
+  (two-byte `12 34`–`37`) were skipped, silently dropping the shallow stem
+  curves; they now emit their cubics.
+
 ## 1.3.1 — 2026-09-13
 
 ### Changed
