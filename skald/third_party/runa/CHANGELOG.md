@@ -9,6 +9,18 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.3 — 2026-09-22
+
+### Fixed
+
+- **Varied glyphs no longer keep the default instance's bounding box.**
+  `glyf_outline_var` copied the glyph header's box (the default instance) and
+  never recomputed it after applying gvar deltas — so a heavier variable-weight
+  glyph (Inter grows rightward with weight) was clipped on the right at raster
+  time, and fed stale x-height / cap-height to the hinter. The box is now
+  recomputed from the varied points. Regression:
+  `test_varied_glyph_bbox_tracks_points`.
+
 ## 1.3.2 — 2026-09-18
 
 ### Fixed

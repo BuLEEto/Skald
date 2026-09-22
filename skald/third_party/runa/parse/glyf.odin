@@ -323,7 +323,25 @@ glyf_outline_var :: proc(g: ^Glyf, loca: ^Loca, gv: ^Gvar, axis_values: []f32, g
 	clear(&out.points)
 	clear(&out.contour_ends)
 	out.x_min, out.y_min, out.x_max, out.y_max = 0, 0, 0, 0
-	return glyf_outline_var_impl(g, loca, gv, axis_values, gid, out, 0)
+	glyf_outline_var_impl(g, loca, gv, axis_values, gid, out, 0) or_return
+
+	// The header box is the default instance's; once the points are varied
+	// it is stale (Inter grows rightward with weight, so a heavier glyph gets
+	// clipped by a box that never moved). Recompute it from the varied points
+	// — off-curve included, so it can only come out slightly big, never small.
+	if len(out.points) > 0 {
+		lo_x, lo_y := out.points[0].x, out.points[0].y
+		hi_x, hi_y := lo_x, lo_y
+		for p in out.points[1:] {
+			lo_x = min(lo_x, p.x); hi_x = max(hi_x, p.x)
+			lo_y = min(lo_y, p.y); hi_y = max(hi_y, p.y)
+		}
+		out.x_min = i16(clamp(lo_x, -32768, 32767))
+		out.y_min = i16(clamp(lo_y, -32768, 32767))
+		out.x_max = i16(clamp(hi_x, -32768, 32767))
+		out.y_max = i16(clamp(hi_y, -32768, 32767))
+	}
+	return .None
 }
 
 @(private)

@@ -8,11 +8,11 @@ bug fixes bump the patch.
 
 ### Fixed
 
-- **Refreshed the vendored `runa` to 1.3.2** — variable composite-glyph fix +
+- **Refreshed the vendored `runa` to 1.3.3** — variable composite-glyph fix +
   IUP (1.2.4), per-call OpenType feature control (1.3.0), Thai dictionary now
-  opt-in / off by default (1.3.1), and a CFF2 charstring fix so variable CFF2
-  fonts (e.g. Cantarell) stop silently dropping glyphs (1.3.2). Vendored
-  byte-identical to upstream, no local patches; no CC-BY-SA corpus in binaries.
+  opt-in (1.3.1), a CFF2 fix so variable CFF2 fonts (e.g. Cantarell) stop
+  dropping glyphs (1.3.2), and varied glyphs no longer clip on the right at
+  heavier weights (1.3.3). Vendored byte-identical to upstream, no local patches.
 
 ## 1.0.0-rc15 — 2026-09-08
 
