@@ -180,26 +180,19 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 			{parse.tag("clig"), .Contextual_Ligatures},
 			{parse.tag("calt"), .Contextual_Alternates},
 		}
+		removed := make([dynamic]int, 0, 8, context.temp_allocator)
 		for st in gsub_features {
 			if f, ok := st.opt.?; ok && f in opts.disable_features { continue }
-			before := len(gids)
-			parse.gsub_apply_feature(in_.gsub, &gids, opts.script, opts.language, st.tag)
-			after := len(gids)
-			if before == after { continue }
-			// Walk in parallel and drop cluster entries whose gid index
-			// no longer exists. Since GSUB rewrites gids in place with
-			// `ordered_remove(gids, j)` for the trailing inputs of a
-			// ligation, the simplest re-sync is to truncate `clusters`
-			// to `after` from the right — but that loses correctness if
-			// non-leading positions collapsed. Walk and pull the leftmost
-			// surviving cluster for each gid.
-			//
-			// For v0.1, the imprecision: if a ligation happened we keep
-			// the cluster of the first surviving codepoint. Good enough
-			// for left-to-right Latin text where ligation always
-			// preserves the leftmost cluster.
-			resize(&clusters, after)
-			resize(&ignorable, after)
+			clear(&removed)
+			parse.gsub_apply_feature(in_.gsub, &gids, opts.script, opts.language, st.tag, &removed)
+			// Replay the exact glyph deletions gsub made onto the parallel
+			// arrays, in the same order, so a ligature keeps every later
+			// glyph's cluster correct. (Truncating from the right instead
+			// slid every cluster past the ligature by one.)
+			for idx in removed {
+				if idx < len(clusters)  { ordered_remove(&clusters, idx) }
+				if idx < len(ignorable) { ordered_remove(&ignorable, idx) }
+			}
 		}
 	}
 

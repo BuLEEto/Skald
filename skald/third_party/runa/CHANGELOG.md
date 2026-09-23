@@ -9,6 +9,20 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.4 — 2026-09-23
+
+### Fixed
+
+- **A ligature no longer shifts every later glyph's cluster by one.** After a
+  ligature substitution the parallel cluster / ignorable arrays were re-synced
+  by truncating from the right, but the deletion happens in the *middle* of the
+  buffer — so every glyph past a ligature named the previous codepoint. Line
+  breaking landed mid-word, and control-byte detection mislabelled (a `\n` drawn
+  as a box, the next character dropped). GSUB now records each deletion and the
+  shaper replays it, keeping clusters exact — nested (type-6 → type-4) routes
+  included. Also realigns the `ignorable` array (default-ignorable zero-advance).
+  Regression: `test_ligature_keeps_later_clusters`.
+
 ## 1.3.3 — 2026-09-22
 
 ### Fixed

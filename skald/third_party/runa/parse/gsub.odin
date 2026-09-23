@@ -95,12 +95,18 @@ gsub_apply_single_at :: proc(g: ^Gsub, gids: []Glyph_ID, pos: int, script_tag, l
 // the buffer top-down again. This matches HarfBuzz's "apply each
 // lookup as a separate pass" model — slower than a single fused walk
 // but trivially correct for the v0.1 feature set.
-gsub_apply_feature :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, script_tag, lang_tag, feature_tag: Tag) -> (subs: int) {
+// `removed`, if non-nil, is appended the absolute buffer index of every glyph
+// this feature deletes (ligature components), in order, so the caller can
+// replay the same deletions onto its parallel cluster/ignorable arrays.
+// Records deletions only — the only size change v0.1 makes (type-4 ligatures).
+// A size-growing lookup (type-2 multiple substitution, not executed yet) would
+// also need its insertions recorded here, or parallel arrays desync again.
+gsub_apply_feature :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, script_tag, lang_tag, feature_tag: Tag, removed: ^[dynamic]int = nil) -> (subs: int) {
 	indices, _ := gsub_resolve_feature_lookups(g, script_tag, lang_tag, feature_tag, context.temp_allocator)
 	for li in indices {
 		info, err := gsub_get_lookup(g, li, context.temp_allocator)
 		if err != .None { continue }
-		subs += gsub_apply_lookup_pass(g, &info, glyphs, 0)
+		subs += gsub_apply_lookup_pass(g, &info, glyphs, 0, removed)
 	}
 	return
 }
@@ -110,10 +116,10 @@ gsub_apply_feature :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, script_tag, lan
 // buffer; the scan advances by the number of glyphs the lookup
 // consumed at each position.
 @(private)
-gsub_apply_lookup_pass :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Glyph_ID, start: int) -> (subs: int) {
+gsub_apply_lookup_pass :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Glyph_ID, start: int, removed: ^[dynamic]int = nil) -> (subs: int) {
 	i := start
 	for i < len(glyphs) {
-		consumed := gsub_dispatch_lookup(g, info, glyphs, i, 0)
+		consumed := gsub_dispatch_lookup(g, info, glyphs, i, 0, removed)
 		if consumed > 0 {
 			subs += 1
 			i += consumed
@@ -131,7 +137,7 @@ gsub_apply_lookup_pass :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]G
 //
 // `depth` is the recursion depth for nested lookups invoked by type 6.
 @(private)
-gsub_dispatch_lookup :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+gsub_dispatch_lookup :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	if depth > GSUB_MAX_NEST_DEPTH { return 0 }
 	if pos < 0 || pos >= len(glyphs) { return 0 }
 
@@ -148,19 +154,20 @@ gsub_dispatch_lookup :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Gly
 				glyphs[pos] = lig
 				for _ in 1..<consumed {
 					ordered_remove(glyphs, pos + 1)
+					if removed != nil { append(removed, pos + 1) }
 				}
 				return 1
 			}
 		}
 	case 5:
 		for sub in info.subtable_offsets {
-			if consumed := apply_context(g, sub, glyphs, pos, depth); consumed > 0 {
+			if consumed := apply_context(g, sub, glyphs, pos, depth, removed); consumed > 0 {
 				return consumed
 			}
 		}
 	case 6:
 		for sub in info.subtable_offsets {
-			if consumed := apply_chained_context(g, sub, glyphs, pos, depth); consumed > 0 {
+			if consumed := apply_chained_context(g, sub, glyphs, pos, depth, removed); consumed > 0 {
 				return consumed
 			}
 		}
@@ -175,18 +182,18 @@ gsub_dispatch_lookup :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Gly
 // glyph sequence and triggers nested substitution lookups at
 // specific positions within that match.
 @(private)
-apply_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 2 > u64(len(d)) { return 0 }
 	format := u16(d[sub_off])<<8 | u16(d[sub_off + 1])
 
 	switch format {
 	case 1:
-		return apply_context_format_1(g, sub_off, glyphs, pos, depth)
+		return apply_context_format_1(g, sub_off, glyphs, pos, depth, removed)
 	case 2:
-		return apply_context_format_2(g, sub_off, glyphs, pos, depth)
+		return apply_context_format_2(g, sub_off, glyphs, pos, depth, removed)
 	case 3:
-		return apply_context_format_3(g, sub_off, glyphs, pos, depth)
+		return apply_context_format_3(g, sub_off, glyphs, pos, depth, removed)
 	}
 	return 0
 }
@@ -208,7 +215,7 @@ apply_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, d
 //   2*(glyphCount - 1)  inputSequence
 //   4*seqLookupCount    seqLookupRecords (seqIdx u16, lookupIdx u16)
 @(private)
-apply_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 6 > u64(len(d)) { return 0 }
 	cov_off := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
@@ -244,14 +251,14 @@ apply_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_I
 		}
 		if !matched { continue }
 		seq_recs := seq_off + u32(glyph_count - 1) * 2
-		return apply_seq_lookups(g, glyphs, pos, glyph_count, seq_recs, seq_count, depth)
+		return apply_seq_lookups(g, glyphs, pos, glyph_count, seq_recs, seq_count, depth, removed)
 	}
 	return 0
 }
 
 // Type 5 format 2 — class-based context.
 @(private)
-apply_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 8 > u64(len(d)) { return 0 }
 	cov_off    := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
@@ -288,7 +295,7 @@ apply_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_I
 		}
 		if !matched { continue }
 		seq_recs := seq_off + u32(glyph_count - 1) * 2
-		return apply_seq_lookups(g, glyphs, pos, glyph_count, seq_recs, seq_count, depth)
+		return apply_seq_lookups(g, glyphs, pos, glyph_count, seq_recs, seq_count, depth, removed)
 	}
 	return 0
 }
@@ -296,7 +303,7 @@ apply_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_I
 // Type 5 format 3 — coverage-array-based context. Same shape as type
 // 6 format 3 without the backtrack / lookahead arrays.
 @(private)
-apply_context_format_3 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_context_format_3 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 6 > u64(len(d)) { return 0 }
 	in_count := int(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
@@ -322,13 +329,13 @@ apply_context_format_3 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_I
 		if coverage_index(d, sub_off + off, glyphs[pos + i]) < 0 { return 0 }
 	}
 	seq_recs := in_offs_base + u32(in_count) * 2
-	return apply_seq_lookups(g, glyphs, pos, in_count, seq_recs, seq_count, depth)
+	return apply_seq_lookups(g, glyphs, pos, in_count, seq_recs, seq_count, depth, removed)
 }
 
 // apply_seq_lookups runs the SubstLookupRecord array shared by type
 // 5 and type 6 contextual subtables.
 @(private)
-apply_seq_lookups :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, pos, window_size: int, seq_recs_base: u32, seq_count, depth: int) -> int {
+apply_seq_lookups :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, pos, window_size: int, seq_recs_base: u32, seq_count, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	consumed := window_size
 	for s in 0..<seq_count {
@@ -342,7 +349,7 @@ apply_seq_lookups :: proc(g: ^Gsub, glyphs: ^[dynamic]Glyph_ID, pos, window_size
 		if err != .None { continue }
 
 		before := len(glyphs)
-		_ = gsub_dispatch_lookup(g, &nested, glyphs, pos + seq_idx, depth + 1)
+		_ = gsub_dispatch_lookup(g, &nested, glyphs, pos + seq_idx, depth + 1, removed)
 		after := len(glyphs)
 		if before > after {
 			consumed -= (before - after)
@@ -481,15 +488,15 @@ apply_ligature :: proc(data: []u8, sub_off: u32, glyphs: []Glyph_ID, cursor: int
 // allocating any scratch by reading just the first input coverage
 // offset from the on-disk layout.
 @(private)
-apply_chained_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_chained_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 2 > u64(len(d)) { return 0 }
 	format := u16(d[sub_off])<<8 | u16(d[sub_off + 1])
 	if format == 2 {
-		return apply_chained_context_format_2(g, sub_off, glyphs, pos, depth)
+		return apply_chained_context_format_2(g, sub_off, glyphs, pos, depth, removed)
 	}
 	if format == 1 {
-		return apply_chained_context_format_1(g, sub_off, glyphs, pos, depth)
+		return apply_chained_context_format_1(g, sub_off, glyphs, pos, depth, removed)
 	}
 	if format != 3 { return 0 }
 
@@ -573,7 +580,7 @@ apply_chained_context :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID
 		if err != .None { continue }
 
 		before := len(glyphs)
-		_ = gsub_dispatch_lookup(g, &nested, glyphs, pos + int(seq_idx), depth + 1)
+		_ = gsub_dispatch_lookup(g, &nested, glyphs, pos + int(seq_idx), depth + 1, removed)
 		after := len(glyphs)
 		if before > after {
 			consumed_window -= (before - after)
@@ -614,7 +621,7 @@ gsub_apply_ligature :: proc(g: ^Gsub, lookup: ^Lookup_Info, glyphs: ^[dynamic]Gl
 //   2  substLookupCount
 //   4*substLookupCount      substLookupRecords
 @(private)
-apply_chained_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_chained_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 6 > u64(len(d)) { return 0 }
 	cov_off := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
@@ -677,7 +684,7 @@ apply_chained_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic
 		cur += u32(la_count) * 2
 		if u64(cur) + 2 > u64(len(d)) { continue }
 		seq_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
-		return apply_seq_lookups(g, glyphs, pos, in_count, cur + 2, seq_count, depth)
+		return apply_seq_lookups(g, glyphs, pos, in_count, cur + 2, seq_count, depth, removed)
 	}
 	return 0
 }
@@ -698,7 +705,7 @@ apply_chained_context_format_1 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic
 // backtrack / input / lookahead arrays hold *class values* instead of
 // glyph IDs.
 @(private)
-apply_chained_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int) -> int {
+apply_chained_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic]Glyph_ID, pos, depth: int, removed: ^[dynamic]int = nil) -> int {
 	d := g.data
 	if u64(sub_off) + 12 > u64(len(d)) { return 0 }
 	cov_off    := u32(u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3]))
@@ -762,7 +769,7 @@ apply_chained_context_format_2 :: proc(g: ^Gsub, sub_off: u32, glyphs: ^[dynamic
 		cur += u32(la_count) * 2
 		if u64(cur) + 2 > u64(len(d)) { continue }
 		seq_count := int(u16(d[cur])<<8 | u16(d[cur + 1]))
-		return apply_seq_lookups(g, glyphs, pos, in_count, cur + 2, seq_count, depth)
+		return apply_seq_lookups(g, glyphs, pos, in_count, cur + 2, seq_count, depth, removed)
 	}
 	return 0
 }
