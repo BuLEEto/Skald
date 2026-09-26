@@ -9,6 +9,20 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.5 — 2026-09-26
+
+### Fixed
+
+- **A default-ignorable no longer becomes a `.notdef` box on a font with no
+  space glyph.** Ignorables (variation selectors, ZWJ, soft hyphen, …) were
+  blanked by substituting the font's space glyph at zero advance — but an emoji
+  font typically ships no space glyph, so `❤️` (U+2764 U+FE0F) drew the emoji
+  followed by a box (the VS16 routes to the emoji fallback). When the run's font
+  has no space glyph the ignorable is now dropped outright (HarfBuzz's
+  `REMOVE_DEFAULT_IGNORABLES`); fonts that have one are unchanged. Regressions:
+  `test_default_ignorable_dropped_when_no_space_glyph`,
+  `test_emoji_variation_selector_no_notdef_box`.
+
 ## 1.3.4 — 2026-09-23
 
 ### Fixed

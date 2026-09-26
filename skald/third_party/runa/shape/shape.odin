@@ -225,11 +225,21 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 
 		// Default-ignorables (LRM / RLM / ALM, ZWJ / ZWNJ, variation
 		// selectors) have already done their job in the joining and bidi
-		// passes. They must not paint: emit the space glyph at zero
-		// advance, which is what HarfBuzz does.
+		// passes and must not paint. Emit the font's space glyph at zero
+		// advance where it has one (HarfBuzz's default — keeps the glyph
+		// and its cluster in the run). Where the font ships no space glyph
+		// — many emoji fonts don't, and a variation selector routes to the
+		// emoji font — that lookup returns .notdef, which WOULD draw a box,
+		// so drop the glyph entirely instead (HarfBuzz's
+		// REMOVE_DEFAULT_IGNORABLES). Dropping paints nothing, adds no
+		// width (the advance was already zero), and leaves the surviving
+		// glyphs' clusters untouched, so the codepoint's bytes stay
+		// attributed to the preceding grapheme.
 		gid := gids[i]
 		if i < len(ignorable) && ignorable[i] {
-			gid = parse.cmap_lookup(in_.cmap, ' ')
+			space := parse.cmap_lookup(in_.cmap, ' ')
+			if space == 0 { continue }
+			gid = space
 			advance_units = 0
 			x_off_units   = 0
 			y_off_units   = 0
