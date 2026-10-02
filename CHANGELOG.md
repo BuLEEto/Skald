@@ -6,6 +6,8 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+## 1.0.0-rc16 — 2026-10-02
+
 ### Fixed
 
 - **Refreshed the vendored `runa` to 1.3.5** — variable composite-glyph fix +
