@@ -15,6 +15,22 @@ DFLT_SCRIPT :: Tag(0x44464C54)            // 'DFLT'
 DFLT_LANG   :: Tag(0x64666C74)            // 'dflt'
 LATN_SCRIPT :: Tag(0x6C61746E)            // 'latn'
 
+// Registered GSUB/GPOS feature tags the shaper names explicitly. Values
+// are the 4-byte tags, big-endian (same packing as `tag`). A test pins
+// each against `tag(...)` so a typo can't slip through.
+FEAT_CCMP :: Tag(0x63636D70)              // 'ccmp' — mandatory
+FEAT_LOCL :: Tag(0x6C6F636C)              // 'locl' — mandatory
+FEAT_RLIG :: Tag(0x726C6967)              // 'rlig' — mandatory
+FEAT_CASE :: Tag(0x63617365)              // 'case'
+FEAT_SMCP :: Tag(0x736D6370)              // 'smcp' — small capitals
+FEAT_C2SC :: Tag(0x63327363)              // 'c2sc' — capitals to small capitals
+FEAT_ONUM :: Tag(0x6F6E756D)              // 'onum' — oldstyle figures
+FEAT_LIGA :: Tag(0x6C696761)              // 'liga'
+FEAT_CLIG :: Tag(0x636C6967)              // 'clig'
+FEAT_DLIG :: Tag(0x646C6967)              // 'dlig' — discretionary ligatures
+FEAT_CALT :: Tag(0x63616C74)              // 'calt'
+FEAT_KERN :: Tag(0x6B65726E)              // 'kern' (GPOS)
+
 // Lookup_Info describes one GSUB / GPOS Lookup record. `subtable_offsets`
 // are absolute byte offsets into the GSUB / GPOS table.
 Lookup_Info :: struct {
@@ -26,6 +42,24 @@ Lookup_Info :: struct {
 }
 
 LOOKUP_FLAG_USE_MARK_FILTERING_SET :: u16(0x0010)
+
+// resolve_extension reads an Extension subtable (GSUB type 7 / GPOS type 9,
+// format 1) at `sub_off`: a real lookup type and a 32-bit offset to the real
+// subtable, measured from the extension subtable's own start. Returns the
+// real lookup type and the absolute offset of the real subtable. Fonts wrap
+// lookups this way once their layout tables outgrow 16-bit offsets, which is
+// common — so executing these is needed for most real kerning / features.
+resolve_extension :: proc(d: []u8, sub_off: u32) -> (real_type: u16, real_off: u32, ok: bool) {
+	if u64(sub_off) + 8 > u64(len(d)) { return }
+	format := u16(d[sub_off])<<8 | u16(d[sub_off + 1])
+	if format != 1 { return }
+	real_type = u16(d[sub_off + 2])<<8 | u16(d[sub_off + 3])
+	ext_off := u32(d[sub_off + 4])<<24 | u32(d[sub_off + 5])<<16 | u32(d[sub_off + 6])<<8 | u32(d[sub_off + 7])
+	real_off = sub_off + ext_off
+	if u64(real_off) >= u64(len(d)) { return }
+	ok = true
+	return
+}
 
 // lookup_info_destroy frees the subtable_offsets slice if it was
 // allocated (i.e., the lookup has more than zero subtables).

@@ -79,10 +79,12 @@ Pos_Adjust :: struct {
 // the named feature under (script, language). Each glyph's
 // `adjusts[i]` receives the cumulative shift.
 //
-// Supported lookup types at v0.5:
+// Supported lookup types:
 //
 //   Type 2 — Pair positioning (kerning).
 //   Type 4 — Mark-to-base attachment (`mark` feature).
+//   Type 5 — Mark-to-ligature.   Type 6 — Mark-to-mark.
+//   Type 9 — Extension: resolved to the wrapped type, then dispatched.
 //
 // Returns the number of adjustments applied.
 gpos_apply_feature :: proc(g: ^Gpos, gids: []Glyph_ID, adjusts: []Pos_Adjust, script_tag, lang_tag, feature_tag: Tag) -> (n: int) {
@@ -92,6 +94,23 @@ gpos_apply_feature :: proc(g: ^Gpos, gids: []Glyph_ID, adjusts: []Pos_Adjust, sc
 	for li in indices {
 		info, err := gpos_get_lookup(g, li, context.temp_allocator)
 		if err != .None { continue }
+
+		// Extension (type 9): rewrite to the real lookup type + the real
+		// subtable offsets, then dispatch as usual. All subtables of a
+		// lookup share one type, so the last resolved type stands.
+		if info.type == 9 {
+			offs := make([dynamic]u32, 0, len(info.subtable_offsets), context.temp_allocator)
+			rt: u16 = 0
+			for sub in info.subtable_offsets {
+				real_type, real_off, ok := resolve_extension(g.data, sub)
+				if !ok || real_type == 9 { continue }
+				rt = real_type
+				append(&offs, real_off)
+			}
+			info.type = rt
+			info.subtable_offsets = offs[:]
+			info.allocator = false
+		}
 
 		switch info.type {
 		case 2:

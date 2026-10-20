@@ -6,6 +6,15 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Fixed
+
+- **Refreshed the vendored `runa` to 1.5.1.** CID-keyed CFF1 fonts (Noto Sans
+  CJK / Source Han) now render instead of coming out blank (1.4.0), and Inter's
+  kerning now applies — it sat behind a GPOS extension lookup the old runa
+  skipped, so UI text is correctly kerned (1.5.0). Also brings Knuth–Plass line
+  breaking + OpenType features-by-tag (not yet used by Skald). Vendored
+  byte-identical to upstream, no local patches.
+
 ## 1.0.0-rc16 — 2026-10-02
 
 ### Fixed

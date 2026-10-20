@@ -75,7 +75,8 @@ Shape_Key :: struct {
 	size:      f32,
 	axis_hash: u64,
 	text:      string,                // interned by the cache on insert
-	features:  bit_set[Feature],      // ligatures-on/off must not share a slot
+	features:  bit_set[Feature],      // deprecated disable set — own slot
+	feat_hash: u64,                   // hash of the Feature_Setting list — own slot
 }
 
 @(private)
@@ -152,9 +153,10 @@ cache_set_capacity :: proc(c: ^Cache, max_entries: int) {
 // freed under you. In practice this only matters if you hold a slice
 // across many subsequent `shape_text_cached` calls; the same pattern
 // already exists in any LRU cache).
-shape_text_cached :: proc(font: ^Font, text: string, size: f32, c: ^Cache, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG, disable_features: bit_set[Feature] = {}) -> []Shaped_Glyph {
+shape_text_cached :: proc(font: ^Font, text: string, size: f32, c: ^Cache, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG, disable_features: bit_set[Feature] = {}, features: []Feature_Setting = nil) -> []Shaped_Glyph {
 	axis_hash := hash_axis_values(font._axis_values)
-	key := Shape_Key{font_ptr = font, size = size, axis_hash = axis_hash, text = text, features = disable_features}
+	feat_hash := hash_features(features)
+	key := Shape_Key{font_ptr = font, size = size, axis_hash = axis_hash, text = text, features = disable_features, feat_hash = feat_hash}
 
 	if slot_idx, ok := c.index[key]; ok && slot_idx != 0 {
 		lru_move_to_head(c, slot_idx)
@@ -172,10 +174,10 @@ shape_text_cached :: proc(font: ^Font, text: string, size: f32, c: ^Cache, scrip
 
 	// Clone the text so the caller's buffer can vary.
 	owned_text := strings_clone(text, c.allocator)
-	stored_key := Shape_Key{font_ptr = font, size = size, axis_hash = axis_hash, text = owned_text, features = disable_features}
+	stored_key := Shape_Key{font_ptr = font, size = size, axis_hash = axis_hash, text = owned_text, features = disable_features, feat_hash = feat_hash}
 
 	buf := make([dynamic]Shaped_Glyph, 0, max(8, len(text)), c.allocator)
-	shape_into(font, owned_text, size, &buf, script_tag, language_tag, disable_features)
+	shape_into(font, owned_text, size, &buf, script_tag, language_tag, disable_features, features)
 	glyphs := buf[:]
 
 	w: f32 = 0
@@ -208,7 +210,7 @@ measure_text_cached :: proc(text: string, opts: Paragraph_Opts, c: ^Cache) -> (w
 		r, byte_len := utf8.decode_rune_in_string(text[byte_off:])
 		picked := pick_font_for_rune(opts.fonts, r)
 		if picked != cur_font && cur_font != nil {
-			gs := shape_text_cached(cur_font, text[run_start:byte_off], opts.size, c, disable_features = opts.disable_features)
+			gs := shape_text_cached(cur_font, text[run_start:byte_off], opts.size, c, disable_features = opts.disable_features, features = opts.features)
 			for sg in gs { width += sg.x_advance }
 			run_start = byte_off
 		}
@@ -216,7 +218,7 @@ measure_text_cached :: proc(text: string, opts: Paragraph_Opts, c: ^Cache) -> (w
 		byte_off += byte_len
 	}
 	if cur_font != nil {
-		gs := shape_text_cached(cur_font, text[run_start:byte_off], opts.size, c, disable_features = opts.disable_features)
+		gs := shape_text_cached(cur_font, text[run_start:byte_off], opts.size, c, disable_features = opts.disable_features, features = opts.features)
 		for sg in gs { width += sg.x_advance }
 	}
 
@@ -335,7 +337,7 @@ strings_clone :: proc(s: string, allocator: mem.Allocator) -> string {
 // helper for the cache; mirrors `shape_text` but doesn't allocate the
 // output buffer itself.
 @(private)
-shape_into :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_Glyph, script_tag, language_tag: parse.Tag, disable_features: bit_set[Feature] = {}) {
+shape_into :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_Glyph, script_tag, language_tag: parse.Tag, disable_features: bit_set[Feature] = {}, features: []Feature_Setting = nil) {
 	inputs := shape.Shape_Inputs{
 		cmap         = &font._cmap,
 		hmtx         = &font._hmtx,
@@ -345,6 +347,23 @@ shape_into :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_G
 		axis_values  = font._axis_values,
 		units_per_em = font.units_per_em,
 	}
-	opts := shape.Shape_Run_Opts{script = script_tag, language = language_tag, disable_features = disable_features}
+	opts := shape.Shape_Run_Opts{script = script_tag, language = language_tag, disable_features = disable_features, features = features}
 	shape.shape_run(&inputs, opts, text, size, out)
+}
+
+// hash_features folds a Feature_Setting list into the cache key, the same
+// way `hash_axis_values` folds axis coords — two different lists get
+// different slots. Order-sensitive, which is fine: the shaper applies the
+// list in order, so a different order can mean a different result.
+@(private)
+hash_features :: proc(features: []Feature_Setting) -> u64 {
+	h: u64 = 0xCBF29CE484222325
+	for s in features {
+		bits := u64(u32(s.tag)) | (u64(s.value) << 32)
+		for i in 0..<8 {
+			h ~= (bits >> (uint(i) * 8)) & 0xFF
+			h *= 0x100000001B3
+		}
+	}
+	return h
 }

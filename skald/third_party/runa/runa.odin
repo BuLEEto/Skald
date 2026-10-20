@@ -239,14 +239,32 @@ Line :: struct {
 // first font that covers each codepoint wins.
 Font_Stack :: distinct []^Font
 
-// Feature is a discretionary OpenType feature a caller may switch off per call.
+// Feature names the three ligature features for the deprecated
+// `disable_features`. Prefer `Feature_Setting` / `features`, which reach
+// any OpenType tag.
 Feature :: shape.Feature
 
+// Feature_Setting turns one OpenType feature on or off for a call, in the
+// HarfBuzz style: a `tag` and a `value` (0 off, non-zero on). Build them
+// with `feature`, e.g. `feature("smcp")` or `feature("kern", false)`.
+Feature_Setting :: shape.Feature_Setting
+
+// feature builds a Feature_Setting from a 4-character tag name. `on`
+// chooses the value: 1 (on) or 0 (off). A tag the shaper doesn't apply
+// is a silent no-op, exactly as in HarfBuzz.
+feature :: proc(name: string, on := true) -> Feature_Setting {
+	return Feature_Setting{tag = parse.tag(name), value = on ? 1 : 0}
+}
+
+// NO_LIGATURES is the common "turn ligatures off" set (code editors), as
+// `features`. Pass it sliced: `features = runa.NO_LIGATURES[:]`. Read-only
+// data (not a constant) so it has an address to slice.
+@(rodata)
+NO_LIGATURES := [3]Feature_Setting{
+	{parse.FEAT_LIGA, 0}, {parse.FEAT_CLIG, 0}, {parse.FEAT_CALT, 0},
+}
+
 // Paragraph_Opts is the per-call configuration. See API.md.
-//
-// At v0.1 only `fonts` and `size` are load-bearing. `align`, `direction`,
-// `max_width`, and `language` are accepted but their effects are partial
-// (LTR only, no wrapping yet, no bidi).
 Paragraph_Opts :: struct {
 	fonts:     Font_Stack,
 	size:      f32,
@@ -254,9 +272,14 @@ Paragraph_Opts :: struct {
 	align:     Align,
 	max_width: f32,                               // 0 -> no wrapping
 	language:  Language,
-	// Discretionary features to switch off; {} = all applied. Set the three
-	// ligature bits to turn ligatures off (e.g. a code editor). Feeds layout
-	// and measurement alike, so widths match what's drawn.
+	// Per-run OpenType feature overrides, HarfBuzz-style. e.g.
+	// `{feature("smcp"), feature("onum")}` for small caps + oldstyle
+	// figures. Feeds layout and measurement alike, so widths match what's
+	// drawn. Features not named keep their defaults (liga/clig/calt on).
+	features: []Feature_Setting,
+	// Deprecated: discretionary features to switch off, as a bit set.
+	// Folded into the same resolution as `features` (a `features` entry
+	// for the same tag wins). Prefer `features` with `NO_LIGATURES`.
 	disable_features: bit_set[Feature],
 }
 
@@ -369,10 +392,10 @@ layout_paragraph :: proc(text: string, opts: Paragraph_Opts, cache: ^Cache = nil
 		ot_script_tag := opentype_script_tag(run.script)
 		shaped: []Shaped_Glyph
 		if cache != nil {
-			shaped = shape_text_cached(run.font, run_text, opts.size, cache, ot_script_tag, disable_features = opts.disable_features)
+			shaped = shape_text_cached(run.font, run_text, opts.size, cache, ot_script_tag, disable_features = opts.disable_features, features = opts.features)
 		} else {
 			clear(&tmp_shape)
-			shape_text(run.font, run_text, opts.size, &tmp_shape, ot_script_tag, disable_features = opts.disable_features)
+			shape_text(run.font, run_text, opts.size, &tmp_shape, ot_script_tag, disable_features = opts.disable_features, features = opts.features)
 			shaped = tmp_shape[:]
 		}
 		for sg in shaped {
@@ -578,7 +601,7 @@ measure_text :: proc(text: string, opts: Paragraph_Opts) -> (width, height: f32)
 		picked := pick_font_for_rune(opts.fonts, r)
 		if picked != cur_font && cur_font != nil {
 			clear(&tmp)
-			shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp, disable_features = opts.disable_features)
+			shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp, disable_features = opts.disable_features, features = opts.features)
 			for sg in tmp { width += sg.x_advance }
 			run_start = byte_off
 		}
@@ -587,7 +610,7 @@ measure_text :: proc(text: string, opts: Paragraph_Opts) -> (width, height: f32)
 	}
 	if cur_font != nil {
 		clear(&tmp)
-		shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp, disable_features = opts.disable_features)
+		shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp, disable_features = opts.disable_features, features = opts.features)
 		for sg in tmp { width += sg.x_advance }
 	}
 
@@ -700,20 +723,47 @@ utf8_byte_len :: proc(r: rune) -> int {
 	return 4
 }
 
-// font_load parses the SFNT directory and every required table out of
-// `data`. The caller retains ownership of `data` — it must outlive the
-// returned Font. On error, no allocations are leaked.
-//
-// Required tables at v0.1: `head`, `maxp`, `cmap`, `hhea`, `hmtx`,
-// `loca`, `glyf`. A font missing any of these returns
-// `Error.Table_Not_Found`. Fonts shipping only CFF (`OTTO` SFNT) are
-// rejected with `Error.Unsupported_Format` for now — CFF outlines land
-// in a follow-up commit.
+// font_load parses a single-font SFNT. The caller retains ownership of
+// `data` — it must outlive the returned Font. On error, no allocations
+// are leaked. A TTC (TrueType Collection) is rejected with
+// `Error.Unsupported_Format`; use `font_load_face` to choose a face.
 font_load :: proc(data: []u8, allocator := context.allocator) -> (f: Font, err: Error) {
+	if parse.is_ttc(data) {
+		err = .Unsupported_Format
+		return
+	}
+	return font_load_at(data, 0, allocator)
+}
+
+// font_load_face loads face `index` from a TTC (TrueType Collection).
+// For a plain single-font SFNT, `index` must be 0 and it behaves like
+// `font_load`. Faces in a collection share table data, so the returned
+// Font aliases `data` just as `font_load` does — `data` must outlive it.
+// `font_num_faces` reports how many faces a file has.
+font_load_face :: proc(data: []u8, index: int, allocator := context.allocator) -> (f: Font, err: Error) {
+	base, berr := parse.ttc_face_offset(data, index)
+	if berr != .None {
+		err = map_parse_err(berr)
+		return
+	}
+	return font_load_at(data, base, allocator)
+}
+
+// font_num_faces returns the number of faces in `data`: the face count
+// of a TTC, or 1 for a plain single-font SFNT.
+font_num_faces :: proc(data: []u8) -> int {
+	return parse.ttc_num_faces(data)
+}
+
+// font_load_at parses the SFNT directory at byte `dir_offset` within
+// `data` and every required table. `dir_offset` is 0 for a plain font
+// or a TTC face's directory offset. On error, no allocations are leaked.
+@(private)
+font_load_at :: proc(data: []u8, dir_offset: u32, allocator := context.allocator) -> (f: Font, err: Error) {
 	f._data = data
 	f._allocator = allocator
 
-	tables, terr := parse.parse_table_index(data, allocator)
+	tables, terr := parse.parse_table_index_at(data, dir_offset, allocator)
 	if terr != .None {
 		err = map_parse_err(terr)
 		return
@@ -1227,7 +1277,7 @@ any_axis_non_default :: proc(values: []f32) -> bool {
 // At v0.1 the shaper is LTR Latin / Cyrillic / Greek (the script tag
 // passed in defaults to `latn` if zero). Bidi reordering and Arabic
 // shaping land in v0.5.
-shape_text :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_Glyph, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG, disable_features: bit_set[Feature] = {}) {
+shape_text :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_Glyph, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG, disable_features: bit_set[Feature] = {}, features: []Feature_Setting = nil) {
 	inputs := shape.Shape_Inputs{
 		cmap         = &font._cmap,
 		hmtx         = &font._hmtx,
@@ -1237,8 +1287,215 @@ shape_text :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_G
 		axis_values  = font._axis_values,
 		units_per_em = font.units_per_em,
 	}
-	opts := shape.Shape_Run_Opts{script = script_tag, language = language_tag, disable_features = disable_features}
+	opts := shape.Shape_Run_Opts{script = script_tag, language = language_tag, disable_features = disable_features, features = features}
 	shape.shape_run(&inputs, opts, text, size, out)
+}
+
+// font_has_feature reports whether `font` actually carries the GSUB
+// feature `name` (e.g. "smcp") for the given script/language. A caller
+// can use it to fall back — faking small capitals from scaled capitals
+// where a font has no real `smcp`, say.
+font_has_feature :: proc(font: ^Font, name: string, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG) -> bool {
+	if !font._has_gsub { return false }
+	indices, err := parse.gsub_resolve_feature_lookups(&font._gsub, script_tag, language_tag, parse.tag(name), context.temp_allocator)
+	return err == .None && len(indices) > 0
+}
+
+// Knuth–Plass total-fit line breaking, re-exported from `linebreak`. The core
+// works over a box/glue/penalty item stream the caller measures (each word
+// shaped once, its advances summed into a box width) — a multi-style caller
+// builds the items and calls `break_lines` itself; `break_text` below is the
+// single-font convenience.
+Break_Item      :: linebreak.Item
+Break_Params    :: linebreak.Break_Params
+Break_Point     :: linebreak.Break
+break_lines     :: linebreak.break_lines
+break_greedy    :: linebreak.break_greedy
+break_box       :: linebreak.box
+break_glue      :: linebreak.glue
+break_penalty   :: linebreak.penalty
+PENALTY_FORCED  :: linebreak.PENALTY_FORCED
+PENALTY_INHIBIT :: linebreak.PENALTY_INHIBIT
+
+// Text_Line is one laid-out line from `break_text`: the byte range of `text`
+// it covers (spaces at the break discarded), the adjustment ratio its spaces
+// take (0 in ragged mode), and whether it ends at a soft hyphen so the caller
+// draws one.
+Text_Line :: struct {
+	start, end: int,
+	ratio:      f32,
+	hyphenated: bool,
+}
+
+// is_cjk_codepoint reports an ideographic / CJK-and-Hangul codepoint — one
+// whose line-break opportunities carry inter-character space (so lines fill and
+// can justify), unlike a Latin break after a hyphen.
+@(private)
+is_cjk_codepoint :: proc(r: rune) -> bool {
+	switch r {
+	case 0x1100..=0x11FF, 0x2E80..=0x9FFF, 0xA000..=0xA4CF, 0xAC00..=0xD7FF,
+	     0xF900..=0xFAFF, 0xFF00..=0xFFEF, 0x20000..=0x3FFFF:
+		return true
+	}
+	return false
+}
+
+// break_text is the single-font convenience over `break_lines`: it shapes
+// `text` once, makes a box of each word, glue of each space, a forced break at
+// each newline and a flagged penalty at each soft hyphen (U+00AD, drawn as the
+// font's hyphen only where a line breaks there), then breaks to `line_widths`
+// (one per line; the last repeats). `hyphen_penalty` is the cost of breaking
+// at a soft hyphen (0 → 50). Break opportunities come from runa's UAX #14
+// engine, so it wraps every script — CJK between characters, after a hyphen,
+// Thai by dictionary — not just space-separated text. A caller needing several
+// styles per line builds items for the core directly. No feature overrides —
+// measure with the features you'll draw by feeding the core.
+break_text :: proc(font: ^Font, text: string, size: f32, line_widths: []f32, params: Break_Params = {}, hyphen_penalty: f32 = 50, cache: ^Cache = nil, allocator := context.allocator) -> (lines: []Text_Line, ok: bool) {
+	if font == nil || size <= 0 || len(text) == 0 || len(line_widths) == 0 { return nil, false }
+
+	// Shape the whole paragraph once.
+	glyphs: []Shaped_Glyph
+	if cache != nil {
+		glyphs = shape_text_cached(font, text, size, cache)
+	} else {
+		tmp := make([dynamic]Shaped_Glyph, 0, 64, context.temp_allocator)
+		shape_text(font, text, size, &tmp)
+		glyphs = tmp[:]
+	}
+
+	// Per-codepoint advance, by attributing each glyph to its cluster's
+	// codepoint (a ligature's advance lands on its first codepoint).
+	cp_byte := make([dynamic]int,  0, len(text), context.temp_allocator)
+	runes   := make([dynamic]rune, 0, len(text), context.temp_allocator)
+	for i := 0; i < len(text); {
+		r, sz := utf8.decode_rune_in_string(text[i:])
+		append(&cp_byte, i)
+		append(&runes, r)
+		i += sz
+	}
+	ncp := len(cp_byte)
+	adv := make([]f32, ncp, context.temp_allocator)
+	byte_cp := make([]int, len(text) + 1, context.temp_allocator)
+	for ci in 0 ..< ncp {
+		e := ci + 1 < ncp ? cp_byte[ci + 1] : len(text)
+		for b in cp_byte[ci] ..< e { byte_cp[b] = ci }
+	}
+	for g in glyphs {
+		ci := byte_cp[int(g.cluster)]
+		if ci < ncp { adv[ci] += g.x_advance }
+	}
+
+	// Font's hyphen advance, for a soft hyphen that actually breaks.
+	hyph_w: f32
+	{
+		ht := make([dynamic]Shaped_Glyph, 0, 2, context.temp_allocator)
+		shape_text(font, "-", size, &ht)
+		for g in ht { hyph_w += g.x_advance }
+	}
+
+	// UAX #14 break opportunities: allowed[i] = a line may break before
+	// codepoint i. This is runa's conformance-tested engine (the same
+	// layout_paragraph uses), so the convenience breaks every script —
+	// CJK between characters, after a hyphen, Thai by dictionary — not just
+	// space-separated text.
+	allowed := make([]bool, ncp, context.temp_allocator)
+	{
+		i := 0
+		for i < ncp {
+			next_i, _ := linebreak.next_break(runes[:], i)
+			if next_i > 0 && next_i < ncp { allowed[next_i] = true }
+			i = next_i > i ? next_i : i + 1
+		}
+		linebreak.thai_segment_breaks(runes[:], allowed)
+	}
+
+	items := make([dynamic]Break_Item, 0, ncp, context.temp_allocator)
+	le    := make([dynamic]int,        0, ncp, context.temp_allocator)   // line-end byte for item i
+	ns    := make([dynamic]int,        0, ncp, context.temp_allocator)   // next-line-start byte for item i
+
+	box_w: f32
+	box_open := false
+	flush_box :: proc(items: ^[dynamic]Break_Item, le, ns: ^[dynamic]int, w: ^f32, open: ^bool) {
+		if open^ && w^ > 0 {
+			append(items, break_box(w^)); append(le, -1); append(ns, -1)
+		}
+		open^ = false; w^ = 0
+	}
+
+	ci := 0
+	for ci < ncp {
+		b := cp_byte[ci]
+		r, _ := utf8.decode_rune_in_string(text[b:])
+		switch {
+		case r == '\n':
+			flush_box(&items, &le, &ns, &box_w, &box_open)
+			append(&items, break_penalty(PENALTY_FORCED)); append(&le, b); append(&ns, b + 1)
+			ci += 1
+		case r == 0x00AD:   // soft hyphen: split the word, hyphen only if broken here
+			flush_box(&items, &le, &ns, &box_w, &box_open)
+			append(&items, break_penalty(hyphen_penalty == 0 ? 50 : hyphen_penalty, hyph_w, true))
+			append(&le, b); append(&ns, b + 2)
+			ci += 1
+		case r == ' ' || r == '\t':
+			flush_box(&items, &le, &ns, &box_w, &box_open)
+			run_start := b
+			gw: f32
+			for ci < ncp {
+				bb := cp_byte[ci]
+				rr, _ := utf8.decode_rune_in_string(text[bb:])
+				if rr != ' ' && rr != '\t' { break }
+				gw += adv[ci]
+				ci += 1
+			}
+			run_end := ci < ncp ? cp_byte[ci] : len(text)
+			append(&items, break_glue(gw, gw * 0.5, gw * 0.33))
+			append(&le, run_start); append(&ns, run_end)
+		case:
+			// A UAX #14 opportunity mid-run (box open): a CJK/ideographic one
+			// carries inter-character glue, so lines fill and can justify; any
+			// other (after a Latin hyphen, say) is a zero-width free break with
+			// no added space. Neither draws a hyphen; line ends/starts at b.
+			if allowed[ci] && box_open {
+				flush_box(&items, &le, &ns, &box_w, &box_open)
+				if is_cjk_codepoint(runes[ci]) || (ci > 0 && is_cjk_codepoint(runes[ci - 1])) {
+					g := adv[ci]
+					append(&items, break_glue(0, g * 0.18, g * 0.08))
+				} else {
+					append(&items, break_penalty(0))
+				}
+				append(&le, b); append(&ns, b)
+			}
+			box_open = true
+			box_w += adv[ci]
+			ci += 1
+		}
+	}
+	flush_box(&items, &le, &ns, &box_w, &box_open)
+
+	if len(items) == 0 { return nil, false }
+
+	breaks, got := break_lines(items[:], line_widths, params, context.temp_allocator)
+	if !got { return nil, false }
+
+	out := make([dynamic]Text_Line, 0, len(breaks), allocator)
+	cur := 0
+	for brk in breaks {
+		end, nxt: int
+		if brk.item < len(items) && le[brk.item] >= 0 {
+			end = le[brk.item]; nxt = ns[brk.item]
+		} else {
+			end = len(text); nxt = len(text)   // internally-appended terminator
+		}
+		append(&out, Text_Line{start = cur, end = end, ratio = brk.ratio, hyphenated = brk.flagged})
+		cur = nxt
+	}
+	// A stream ending in a forced break (a trailing newline) has no break
+	// after it, so the final — possibly empty — line isn't emitted above.
+	// Add it so the lines always tile to the end of the text.
+	if len(out) == 0 || out[len(out) - 1].end < len(text) {
+		append(&out, Text_Line{start = cur, end = len(text)})
+	}
+	return out[:], true
 }
 
 @(private)

@@ -26,10 +26,10 @@ CFF2_OP_FONT_MATRIX :: u8(7)
 CFF2_OP_FDARRAY     :: u8(36)
 CFF2_OP_FDSELECT    :: u8(37)
 
-// Cff2_Fd is one Font DICT entry from the FDArray. Each FD has its
-// own Private DICT + Local Subrs (charstrings under different FDs
-// can use different subroutine pools).
-Cff2_Fd :: struct {
+// Cff_Fd is one Font DICT entry from an FDArray. Each FD has its own
+// Private DICT + Local Subrs (charstrings under different FDs can use
+// different subroutine pools). Shared by CFF2 and CID-keyed CFF1.
+Cff_Fd :: struct {
 	local_subrs:      Cff_Index,
 	local_subr_bias:  int,
 }
@@ -43,7 +43,7 @@ Cff2 :: struct {
 	global_subrs:        Cff_Index,
 	global_subr_bias:    int,
 
-	fdarray:             []Cff2_Fd,        // one entry per FD (FDArray INDEX)
+	fdarray:             []Cff_Fd,         // one entry per FD (FDArray INDEX)
 	fdselect_off:        u32,              // offset of FDSelect within `data`
 	fdselect_format:     u8,               // 0 / 3 / 4 — looked up on demand
 
@@ -125,12 +125,12 @@ new_cff2 :: proc(data: []u8, allocator := context.allocator) -> (c: Cff2, err: E
 	}
 	defer cff_index_destroy(&fd_idx, allocator)
 
-	c.fdarray = make([]Cff2_Fd, fd_idx.count, allocator)
+	c.fdarray = make([]Cff_Fd, fd_idx.count, allocator)
 	for i in 0..<fd_idx.count {
 		fd_bytes, ferr := cff_index_get(&fd_idx, i)
 		if ferr != .None { continue }
 		priv_size, priv_off: u32 = 0, 0
-		if !parse_cff2_font_dict(fd_bytes, &priv_size, &priv_off) { continue }
+		if !parse_font_dict_private(fd_bytes, &priv_size, &priv_off) { continue }
 		if priv_size == 0 || priv_off == 0 { continue }
 		end := u64(priv_off) + u64(priv_size)
 		if end > u64(len(data)) { continue }
@@ -171,8 +171,16 @@ cff2_charstring_bytes :: proc(c: ^Cff2, gid: Glyph_ID) -> []u8 {
 // Single-FD fonts may omit FDSelect; we return 0 in that case.
 cff2_fd_index :: proc(c: ^Cff2, gid: Glyph_ID) -> int {
 	if c.fdselect_off == 0 || len(c.fdarray) <= 1 { return 0 }
-	d := c.data
-	off := int(c.fdselect_off)
+	return fdselect_lookup(c.data, c.fdselect_off, gid)
+}
+
+// fdselect_lookup reads the FDSelect table at `fdselect_off` within
+// `data` and returns the Font DICT index for `gid`. Shared by CFF2 and
+// CID-keyed CFF1. Formats: 0 (one byte per glyph), 3 (u16 ranges), 4
+// (u32 ranges — CFF2 only). Returns 0 on malformed data.
+fdselect_lookup :: proc(data: []u8, fdselect_off: u32, gid: Glyph_ID) -> int {
+	d := data
+	off := int(fdselect_off)
 	if off + 1 > len(d) { return 0 }
 	format := d[off]
 	g := u16(gid)
@@ -301,10 +309,11 @@ parse_cff2_top_dict :: proc(d: []u8, charstrings_off, fdarray_off, fdselect_off,
 	return true
 }
 
-// parse_cff2_font_dict extracts the Private DICT location operands
-// (size + offset) from a CFF2 Font DICT entry.
+// parse_font_dict_private extracts the Private DICT location operands
+// (size + offset) from a Font DICT entry. Shared by CFF2 and CID-keyed
+// CFF1 FDArray entries — both use the same DICT encoding.
 @(private)
-parse_cff2_font_dict :: proc(d: []u8, priv_size, priv_off: ^u32) -> bool {
+parse_font_dict_private :: proc(d: []u8, priv_size, priv_off: ^u32) -> bool {
 	stack: [48]i64
 	sp := 0
 	i := 0

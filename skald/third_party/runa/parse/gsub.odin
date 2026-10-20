@@ -18,9 +18,9 @@ package parse
 //                                          with a nested type-1 or type-4.
 //   `locl` — usually type 1 (per-script glyph remap).
 //
-// Other lookup types (2 multiple, 3 alternate, 5 contextual, 7
-// extension, 8 reverse-chained) are parsed-but-not-executed at v0.1 —
-// they get bodies when their scripts arrive.
+// Type 7 (extension) is executed by resolving each subtable to its real
+// type and dispatching that. Types 2 (multiple) and 8 (reverse-chained)
+// are parsed-but-not-executed — they get bodies when their scripts arrive.
 //
 // References: OpenType spec, "Glyph Substitution Table".
 
@@ -79,8 +79,20 @@ gsub_apply_single_at :: proc(g: ^Gsub, gids: []Glyph_ID, pos: int, script_tag, l
 	for li in indices {
 		info, err := gsub_get_lookup(g, li, context.temp_allocator)
 		if err != .None { continue }
-		if info.type != 1 { continue }
-		for sub in info.subtable_offsets {
+		// Resolve an extension lookup to its real type + subtable; we only
+		// act on single substitution (type 1) here.
+		typ := info.type
+		subs := info.subtable_offsets
+		if typ == 7 {
+			offs := make([dynamic]u32, 0, len(subs), context.temp_allocator)
+			for sub in subs {
+				rt, ro, ok := resolve_extension(g.data, sub)
+				if ok && rt == 1 { typ = 1; append(&offs, ro) }
+			}
+			subs = offs[:]
+		}
+		if typ != 1 { continue }
+		for sub in subs {
 			if apply_single(g.data, sub, gids, pos) { return true }
 		}
 	}
@@ -168,6 +180,21 @@ gsub_dispatch_lookup :: proc(g: ^Gsub, info: ^Lookup_Info, glyphs: ^[dynamic]Gly
 	case 6:
 		for sub in info.subtable_offsets {
 			if consumed := apply_chained_context(g, sub, glyphs, pos, depth, removed); consumed > 0 {
+				return consumed
+			}
+		}
+	case 7:
+		// Extension: each subtable points at a real subtable of some other
+		// type. Resolve and dispatch it through the same switch.
+		for sub in info.subtable_offsets {
+			rt, ro, ok := resolve_extension(g.data, sub)
+			if !ok || rt == 7 { continue }
+			inner := info^
+			inner.type = rt
+			one := [1]u32{ro}
+			inner.subtable_offsets = one[:]
+			inner.allocator = false
+			if consumed := gsub_dispatch_lookup(g, &inner, glyphs, pos, depth + 1, removed); consumed > 0 {
 				return consumed
 			}
 		}

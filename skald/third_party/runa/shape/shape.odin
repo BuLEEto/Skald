@@ -56,19 +56,58 @@ Shape_Inputs :: struct {
 // Feature is a discretionary GSUB feature a caller may switch off per call.
 // The mandatory features (ccmp, locl, rlig) are always applied and are not
 // representable here — they are correctness, not preference.
+//
+// Deprecated: prefer `Shape_Run_Opts.features`, which can turn any tag on
+// or off. Kept so existing callers keep compiling.
 Feature :: enum u8 {
 	Ligatures,             // liga
 	Contextual_Ligatures,  // clig
 	Contextual_Alternates, // calt (code-font -> == != … ligatures fire here)
 }
 
+// Feature_Setting turns one OpenType feature on or off for a call, in the
+// HarfBuzz style. `value` 0 disables the tag; non-zero enables it. Tags
+// the shaper doesn't apply are a silent no-op.
+Feature_Setting :: struct {
+	tag:   parse.Tag,                          // e.g. parse.FEAT_SMCP
+	value: u32,                                // 0 = off, non-zero = on
+}
+
 // Shape_Run_Opts is the per-call options.
 Shape_Run_Opts :: struct {
 	script:   parse.Tag,                       // e.g. parse.LATN_SCRIPT
 	language: parse.Tag,                       // e.g. parse.DFLT_LANG
-	// Discretionary features to switch off this call; {} = all applied.
-	// Changes glyph advances, so shape and measure with the same set.
+	// Per-call feature overrides. A setting's `value` turns its tag on or
+	// off; features not named keep their default (liga/clig/calt on, the
+	// rest off). Known tags apply in canonical order; any other tag applies
+	// after, in list order. `kern` (GPOS) obeys its setting too. Changes
+	// glyph advances, so shape and measure with the same settings.
+	features: []Feature_Setting,
+	// Deprecated: discretionary features to switch off. Folded into the
+	// same resolution as `features`; a `features` entry for the same tag
+	// wins. Prefer `features`.
 	disable_features: bit_set[Feature],
+}
+
+// feature_value resolves whether `tag` is on, starting from `default_on`
+// and letting the last matching `features` entry decide. Deprecated
+// `disable_features` is applied by the caller before this.
+@(private)
+feature_value :: proc(settings: []Feature_Setting, tag: parse.Tag, default_on: bool) -> bool {
+	on := default_on
+	for s in settings { if s.tag == tag { on = s.value != 0 } }
+	return on
+}
+
+// replay_removals re-applies the glyph deletions a GSUB pass made onto the
+// parallel cluster/ignorable arrays, in the same order, so a ligature
+// keeps every later glyph's cluster correct.
+@(private)
+replay_removals :: proc(removed: []int, clusters: ^[dynamic]u32, ignorable: ^[dynamic]bool) {
+	for idx in removed {
+		if idx < len(clusters^)  { ordered_remove(clusters, idx) }
+		if idx < len(ignorable^) { ordered_remove(ignorable, idx) }
+	}
 }
 
 @(private)
@@ -169,30 +208,47 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 	// cluster array is rewritten in parallel as ligatures collapse
 	// glyphs.
 	if in_.gsub != nil {
-		// ccmp / locl / rlig are mandatory (correctness); liga / clig /
-		// calt are discretionary and honour `opts.disable_features`.
-		Stage :: struct { tag: parse.Tag, opt: Maybe(Feature) }
-		gsub_features := [?]Stage{
-			{parse.tag("ccmp"), nil},
-			{parse.tag("locl"), nil},
-			{parse.tag("rlig"), nil},
-			{parse.tag("liga"), .Ligatures},
-			{parse.tag("clig"), .Contextual_Ligatures},
-			{parse.tag("calt"), .Contextual_Alternates},
+		// ccmp / locl / rlig are mandatory (correctness) and always run.
+		// The rest default on (liga/clig/calt) or off, and each obeys
+		// `opts.features`; liga/clig/calt also honour the deprecated
+		// `disable_features`. Applied in canonical order.
+		Stage :: struct { tag: parse.Tag, opt: Maybe(Feature), default_on, mandatory: bool }
+		stages := [?]Stage{
+			{parse.FEAT_CCMP, nil,                    true,  true},
+			{parse.FEAT_LOCL, nil,                    true,  true},
+			{parse.FEAT_RLIG, nil,                    true,  true},
+			{parse.FEAT_CASE, nil,                    false, false},
+			{parse.FEAT_SMCP, nil,                    false, false},
+			{parse.FEAT_C2SC, nil,                    false, false},
+			{parse.FEAT_ONUM, nil,                    false, false},
+			{parse.FEAT_LIGA, .Ligatures,             true,  false},
+			{parse.FEAT_CLIG, .Contextual_Ligatures,  true,  false},
+			{parse.FEAT_DLIG, nil,                    false, false},
+			{parse.FEAT_CALT, .Contextual_Alternates, true,  false},
 		}
 		removed := make([dynamic]int, 0, 8, context.temp_allocator)
-		for st in gsub_features {
-			if f, ok := st.opt.?; ok && f in opts.disable_features { continue }
+		for st in stages {
+			on := st.default_on
+			if !st.mandatory {
+				if f, ok := st.opt.?; ok && f in opts.disable_features { on = false }
+				on = feature_value(opts.features, st.tag, on)
+			}
+			if !on { continue }
 			clear(&removed)
 			parse.gsub_apply_feature(in_.gsub, &gids, opts.script, opts.language, st.tag, &removed)
-			// Replay the exact glyph deletions gsub made onto the parallel
-			// arrays, in the same order, so a ligature keeps every later
-			// glyph's cluster correct. (Truncating from the right instead
-			// slid every cluster past the ligature by one.)
-			for idx in removed {
-				if idx < len(clusters)  { ordered_remove(&clusters, idx) }
-				if idx < len(ignorable) { ordered_remove(&ignorable, idx) }
-			}
+			replay_removals(removed[:], &clusters, &ignorable)
+		}
+		// Caller features outside the canonical set (ss01, salt, hist,
+		// pnum/tnum/lnum, …): apply any turned on, in list order. `kern`
+		// is GPOS, handled below.
+		for s in opts.features {
+			if s.value == 0 || s.tag == parse.FEAT_KERN { continue }
+			known := false
+			for st in stages { if st.tag == s.tag { known = true; break } }
+			if known { continue }
+			clear(&removed)
+			parse.gsub_apply_feature(in_.gsub, &gids, opts.script, opts.language, s.tag, &removed)
+			replay_removals(removed[:], &clusters, &ignorable)
 		}
 	}
 
@@ -204,7 +260,11 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 	// `mark` snaps mark glyphs to base-glyph anchor points; `mkmk`
 	// stacks marks on previously-placed marks.
 	if in_.gpos != nil {
-		parse.gpos_apply_feature(in_.gpos, gids[:], adjusts, opts.script, opts.language, parse.tag("kern"))
+		// kern is discretionary (a caller spacing text out turns it off);
+		// mark / mkmk are correctness and always run.
+		if feature_value(opts.features, parse.FEAT_KERN, true) {
+			parse.gpos_apply_feature(in_.gpos, gids[:], adjusts, opts.script, opts.language, parse.FEAT_KERN)
+		}
 		parse.gpos_apply_feature(in_.gpos, gids[:], adjusts, opts.script, opts.language, parse.tag("mark"))
 		parse.gpos_apply_feature(in_.gpos, gids[:], adjusts, opts.script, opts.language, parse.tag("mkmk"))
 	}

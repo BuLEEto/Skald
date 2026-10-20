@@ -66,11 +66,22 @@ cff_glyph_outline :: proc(c: ^Cff, gid: Glyph_ID, out: ^Outline) -> Error {
 	if err != .None { return err }
 	if len(bytecode) == 0 { return .None }                // empty glyph (.notdef etc.)
 
+	// CID-keyed fonts pick the local subrs per glyph via FDSelect; a
+	// plain CFF uses its single Private DICT subrs (the FD stays 0).
+	lsubrs     := &c.local_subrs
+	lsubr_bias := c.local_subr_bias
+	if c.is_cid && len(c.fdarray) > 0 {
+		fd := cff_fd_index(c, gid)
+		if fd < 0 || fd >= len(c.fdarray) { fd = 0 }
+		lsubrs     = &c.fdarray[fd].local_subrs
+		lsubr_bias = c.fdarray[fd].local_subr_bias
+	}
+
 	ctx := Cs_Context{
 		global_subrs     = &c.global_subrs,
 		global_subr_bias = c.global_subr_bias,
-		local_subrs      = &c.local_subrs,
-		local_subr_bias  = c.local_subr_bias,
+		local_subrs      = lsubrs,
+		local_subr_bias  = lsubr_bias,
 	}
 	state := Cs_State{
 		x = 0, y = 0,

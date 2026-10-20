@@ -14,8 +14,9 @@ SFNT_VERSION_CFF     :: u32(0x4F54544F)            // 'OTTO' — CFF outlines
 SFNT_VERSION_TRUE    :: u32(0x74727565)            // 'true' — Apple legacy TT
 SFNT_VERSION_TYP1    :: u32(0x74797031)            // 'typ1' — Apple legacy
 
-// TTC (TrueType Collection) header magic — multi-font containers. v0.1
-// loads only single-font files; collections come later if needed.
+// TTC (TrueType Collection) header magic — multi-font containers.
+// `parse_table_index` rejects them; a face is chosen with
+// `ttc_face_offset` + `parse_table_index_at` (runa's `font_load_face`).
 TTC_TAG              :: u32(0x74746366)            // 'ttcf'
 
 // Table_Record points at one table inside the font buffer. Offsets are
@@ -42,18 +43,26 @@ Table_Index :: struct {
 // from `allocator`; the caller frees with `delete(idx.records, allocator)`.
 //
 // Rejects TTC (TrueType Collection) inputs with `Unsupported_Format` —
-// font collections need an explicit index choice that the loader hasn't
-// been built for yet.
+// a collection has no single directory; callers choose a face with
+// `ttc_face_offset` + `parse_table_index_at`.
 parse_table_index :: proc(data: []u8, allocator := context.allocator) -> (idx: Table_Index, err: Error) {
-	r := Reader{data = data}
-
-	version := read_u32(&r) or_return
-
-	if version == TTC_TAG {
+	if is_ttc(data) {
 		err = .Unsupported_Format
 		return
 	}
+	return parse_table_index_at(data, 0, allocator)
+}
 
+// parse_table_index_at reads the offset table at byte `base` within
+// `data`. For a plain font `base` is 0; for a TTC face it's the face's
+// table-directory offset from `ttc_face_offset`. Table record offsets
+// stay absolute from the start of `data` (the TTC spec stores them
+// file-relative, and faces share tables), so `data` remains the whole
+// file and the bounds checks still hold.
+parse_table_index_at :: proc(data: []u8, base: u32, allocator := context.allocator) -> (idx: Table_Index, err: Error) {
+	r := reader_at(data, int(base)) or_return
+
+	version := read_u32(&r) or_return
 	switch version {
 	case SFNT_VERSION_TT, SFNT_VERSION_CFF, SFNT_VERSION_TRUE, SFNT_VERSION_TYP1:
 		// fine
@@ -93,6 +102,45 @@ parse_table_index :: proc(data: []u8, allocator := context.allocator) -> (idx: T
 	}
 
 	idx = Table_Index{sfnt_version = version, records = records}
+	return
+}
+
+// is_ttc reports whether `data` begins with a TTC (TrueType Collection)
+// header.
+is_ttc :: proc(data: []u8) -> bool {
+	return len(data) >= 4 &&
+	       (u32(data[0])<<24 | u32(data[1])<<16 | u32(data[2])<<8 | u32(data[3])) == TTC_TAG
+}
+
+// ttc_num_faces returns the number of faces in a TTC, or 1 for a plain
+// single-font SFNT. 0 means the header couldn't be read.
+ttc_num_faces :: proc(data: []u8) -> int {
+	if !is_ttc(data) { return len(data) >= 4 ? 1 : 0 }
+	r, e0 := reader_at(data, 8)                 // past 'ttcf' + majorVersion/minorVersion
+	if e0 != .None { return 0 }
+	n, e := read_u32(&r)
+	if e != .None { return 0 }
+	return int(n)
+}
+
+// ttc_face_offset returns the byte offset of face `index`'s table
+// directory within a TTC. For a plain SFNT, index 0 returns offset 0.
+ttc_face_offset :: proc(data: []u8, index: int) -> (off: u32, err: Error) {
+	if !is_ttc(data) {
+		if index == 0 { return 0, .None }       // a non-collection has one face
+		err = .Invalid_Table
+		return
+	}
+	r := reader_at(data, 0) or_return
+	skip(&r, 4) or_return                        // 'ttcf' tag
+	skip(&r, 4) or_return                        // majorVersion, minorVersion
+	num_fonts := read_u32(&r) or_return
+	if index < 0 || u32(index) >= num_fonts {
+		err = .Invalid_Table
+		return
+	}
+	skip(&r, index * 4) or_return                // offsetTable[0 ..< index]
+	off = read_u32(&r) or_return
 	return
 }
 

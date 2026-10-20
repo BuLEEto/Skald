@@ -53,6 +53,15 @@ Cff :: struct {
 	// Charstring type — 1 (PostScript Type 1) or 2 (Type 2). We only
 	// support 2; anything else returns Unsupported_Format at load.
 	charstring_type:  int,
+
+	// CID-keyed (Top DICT carries ROS, op 12 30). A CID font has no
+	// top-level Private DICT; each glyph takes its local subrs from one
+	// of many Font DICTs in `fdarray`, chosen by FDSelect. When `is_cid`
+	// the single `local_subrs` above stays empty and is unused — the
+	// same FD machinery CFF2 uses, wired onto the CFF1 path.
+	is_cid:           bool,
+	fdarray:          []Cff_Fd,                             // one Private/Subrs set per FD
+	fdselect_off:     u32,                                  // FDSelect offset within `data`
 }
 
 // Cff_Index is a parsed (count, offsets, data slice) triple — view
@@ -124,8 +133,10 @@ new_cff :: proc(data: []u8, allocator := context.allocator) -> (c: Cff, err: Err
 	charstrings_off: u32 = 0
 	private_size: u32 = 0
 	private_off: u32 = 0
+	fdarray_off: u32 = 0
+	fdselect_off: u32 = 0
 	c.charstring_type = 2
-	if !parse_top_dict(top_entry, &charstrings_off, &private_size, &private_off, &c.charstring_type) {
+	if !parse_top_dict(top_entry, &charstrings_off, &private_size, &private_off, &c.charstring_type, &c.is_cid, &fdarray_off, &fdselect_off) {
 		err = .Invalid_Table
 		return
 	}
@@ -153,6 +164,37 @@ new_cff :: proc(data: []u8, allocator := context.allocator) -> (c: Cff, err: Err
 		}
 	}
 
+	// CID-keyed font: read the FDArray (an INDEX of Font DICTs) and each
+	// FD's Private DICT → Local Subrs, so a glyph can take its subrs from
+	// the FD that FDSelect maps it to. Same shape as the CFF2 path, but
+	// the FDArray / Local Subr INDEXes use the CFF1 (narrow-count) reader.
+	if c.is_cid && fdarray_off != 0 {
+		c.fdselect_off = fdselect_off
+		fd_index, _, fe := read_cff_index(data, int(fdarray_off), allocator)
+		if fe == .None {
+			defer cff_index_destroy(&fd_index, allocator)
+			c.fdarray = make([]Cff_Fd, fd_index.count, allocator)
+			for i in 0..<fd_index.count {
+				fd_bytes, ferr := cff_index_get(&fd_index, i)
+				if ferr != .None { continue }
+				fd_priv_size, fd_priv_off: u32 = 0, 0
+				if !parse_font_dict_private(fd_bytes, &fd_priv_size, &fd_priv_off) { continue }
+				if fd_priv_size == 0 || fd_priv_off == 0 { continue }
+				fd_end := u64(fd_priv_off) + u64(fd_priv_size)
+				if fd_end > u64(len(data)) { continue }
+				fd_subr_rel: u32 = 0
+				if parse_private_dict(data[fd_priv_off:fd_end], &fd_subr_rel) && fd_subr_rel != 0 {
+					abs_off := int(fd_priv_off) + int(fd_subr_rel)
+					lsubrs, _, le := read_cff_index(data, abs_off, allocator)
+					if le == .None {
+						c.fdarray[i].local_subrs     = lsubrs
+						c.fdarray[i].local_subr_bias = subr_bias(lsubrs.count)
+					}
+				}
+			}
+		}
+	}
+
 	return
 }
 
@@ -160,7 +202,18 @@ cff_destroy :: proc(c: ^Cff, allocator := context.allocator) {
 	cff_index_destroy(&c.charstrings_index, allocator)
 	cff_index_destroy(&c.global_subrs, allocator)
 	cff_index_destroy(&c.local_subrs, allocator)
+	for i in 0..<len(c.fdarray) {
+		cff_index_destroy(&c.fdarray[i].local_subrs, allocator)
+	}
+	delete(c.fdarray, allocator)
 	c^ = {}
+}
+
+// cff_fd_index resolves the Font DICT index for `gid` via FDSelect in a
+// CID-keyed font. Non-CID (or single-FD) fonts always return 0.
+cff_fd_index :: proc(c: ^Cff, gid: Glyph_ID) -> int {
+	if !c.is_cid || c.fdselect_off == 0 || len(c.fdarray) <= 1 { return 0 }
+	return fdselect_lookup(c.data, c.fdselect_off, gid)
 }
 
 // cff_charstring_bytes returns the Type 2 charstring bytes for `gid`,
@@ -256,7 +309,7 @@ subr_bias :: proc(count: int) -> int {
 // parse_top_dict pulls just the operators we care about. Returns
 // false on malformed input.
 @(private)
-parse_top_dict :: proc(d: []u8, charstrings_off: ^u32, private_size, private_off: ^u32, charstring_type: ^int) -> bool {
+parse_top_dict :: proc(d: []u8, charstrings_off: ^u32, private_size, private_off: ^u32, charstring_type: ^int, is_cid: ^bool, fdarray_off, fdselect_off: ^u32) -> bool {
 	stack: [48]i64
 	sp := 0
 
@@ -303,7 +356,12 @@ parse_top_dict :: proc(d: []u8, charstrings_off: ^u32, private_size, private_off
 			if i + 1 >= len(d) { return false }
 			b2 := d[i + 1]
 			i += 2
-			if b2 == 6 && sp >= 1 { charstring_type^ = int(stack[sp - 1]) }
+			switch b2 {
+			case 6:  if sp >= 1 { charstring_type^ = int(stack[sp - 1]) } // CharstringType
+			case 30: is_cid^ = true                                       // ROS — CID-keyed
+			case 36: if sp >= 1 { fdarray_off^  = u32(stack[sp - 1]) }    // FDArray
+			case 37: if sp >= 1 { fdselect_off^ = u32(stack[sp - 1]) }    // FDSelect
+			}
 			sp = 0
 		case:
 			// One-byte operator.
