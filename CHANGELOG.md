@@ -8,6 +8,11 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`dialog` now sizes its card to content that wraps.** The card height was
+  taken from the content's intrinsic (one-line) size, but content is drawn at
+  the card's clamped width — so a `wrap_row` that wrapped to several lines (or a
+  wrapping paragraph) pushed the next sibling, e.g. a Close row, below the card
+  edge. Height is now measured at the clamped inner width.
 - **Refreshed the vendored `runa` to 1.5.1.** CID-keyed CFF1 fonts (Noto Sans
   CJK / Source Han) now render instead of coming out blank (1.4.0), and Inter's
   kerning now applies — it sat behind a GPOS extension lookup the old runa

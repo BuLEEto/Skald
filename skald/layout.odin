@@ -1626,13 +1626,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// Card size: intrinsic child + padding, capped by max_width
 		// and the framebuffer. `width` forces a fixed width when
 		// non-zero.
-		cs := view_size(r, vv.child^)
-		card_w := cs.x + 2 * vv.padding
-		if vv.width > 0 { card_w = vv.width }
-		if vv.max_width > 0 && card_w > vv.max_width { card_w = vv.max_width }
-		if card_w > fb_w - 16 { card_w = fb_w - 16 }
-		card_h := cs.y + 2 * vv.padding
-		if card_h > fb_h - 16 { card_h = fb_h - 16 }
+		card_w, card_h := dialog_card_size(r, vv.child^, vv.width, vv.max_width, vv.padding, fb_w, fb_h)
 
 		// Center the card in the framebuffer. The content child gets
 		// the inner rect (after padding) as its assigned size — which
@@ -1961,6 +1955,27 @@ draw_focus_ring :: proc(r: ^Renderer, rr: Rect, radius: f32, ring: Color, fill: 
 // stack_render is the one place that implements flex distribution and
 // main/cross alignment. It runs in one linear pass over the children:
 // measure → distribute remainder to flex → place each child.
+// dialog_card_size computes a dialog card's outer width and height. Width is
+// the content's intrinsic width (or the forced `width`), capped by `max_width`
+// and the framebuffer. Height is measured at the *clamped* inner width via
+// `view_height_for_width`, not the intrinsic one-line size — content clamped to
+// the card (a wrap_row, a wrapping paragraph) grows taller there, and sizing
+// from the intrinsic height spills the last child below the card edge.
+@(private)
+dialog_card_size :: proc(r: ^Renderer, child: View, width, max_width, padding, fb_w, fb_h: f32) -> (card_w, card_h: f32) {
+	cs := view_size(r, child)
+	card_w = cs.x + 2 * padding
+	if width > 0 { card_w = width }
+	if max_width > 0 && card_w > max_width { card_w = max_width }
+	if card_w > fb_w - 16 { card_w = fb_w - 16 }
+
+	inner_w := card_w - 2 * padding
+	if inner_w < 0 { inner_w = 0 }
+	card_h = view_height_for_width(r, child, inner_w) + 2 * padding
+	if card_h > fb_h - 16 { card_h = fb_h - 16 }
+	return
+}
+
 // wrap_row_measure_height walks `w.children` at the assigned `width` and
 // reports the total height the wrap would occupy. Pure measurement — no
 // rendering, no allocation. Used by view_size when an explicit width is
