@@ -1625,8 +1625,12 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 		// Card size: intrinsic child + padding, capped by max_width
 		// and the framebuffer. `width` forces a fixed width when
-		// non-zero.
-		card_w, card_h := dialog_card_size(r, vv.child^, vv.width, vv.max_width, vv.padding, fb_w, fb_h)
+		// non-zero. With a pinned footer, `child` is a fill-mode scroll
+		// tree that reports a fill size, so size from `measure` (the
+		// unwrapped body+footer) instead.
+		size_src := vv.child^
+		if vv.measure != nil { size_src = vv.measure^ }
+		card_w, card_h := dialog_card_size(r, size_src, vv.width, vv.max_width, vv.padding, fb_w, fb_h)
 
 		// Center the card in the framebuffer. The content child gets
 		// the inner rect (after padding) as its assigned size — which

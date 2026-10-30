@@ -776,6 +776,11 @@ View_Dialog :: struct {
 	id:           Widget_ID,
 	open:         bool,
 	child:        ^View,
+	// When a `footer` is supplied, `child` is a scroll-wrapped body +
+	// pinned footer tree whose fill-mode scroll reports a fill size, not
+	// the content's intrinsic. `measure` (nil otherwise) carries the
+	// unwrapped body+footer so the card still sizes to its natural height.
+	measure:      ^View,
 	color_scrim:  Color,
 	color_bg:     Color,
 	color_border: Color,
@@ -10242,6 +10247,10 @@ drop_target :: proc(
 	return View_Zone{id = id, child = c}
 }
 
+// Sub-id key for the dialog body's scroll region in the pinned-footer
+// layout. Scoped under the dialog's own id, so one fixed key is unique.
+@(private) DIALOG_BODY_SCROLL_KEY :: u64(0xD1A1B0D5)
+
 // dialog presents `content` as a modal: a full-frame scrim dims the app,
 // a centered card hosts the child, and keyboard/mouse outside the card
 // is trapped so nothing behind it fires. When `open` is false the return
@@ -10279,11 +10288,20 @@ drop_target :: proc(
 // card rect onto Widget_Store. Clicks outside the card are consumed by
 // the run-loop preprocessor the frame after open so the widgets under
 // the scrim never see them.
+//
+// `footer` is an optional action bar (buttons, a select) pinned to the
+// bottom edge of the card. When supplied, `content` scrolls in the space
+// above it and the footer stays visible no matter how short the window —
+// so a Close button or an in-dialog dropdown is never clipped off the
+// bottom on a small screen. Put the controls the user must always reach
+// (Cancel/Save, a template picker) in `footer`; leave it nil for a
+// plain dialog that sizes to its content.
 dialog :: proc(
 	ctx:           ^Ctx($Msg),
 	open:          bool,
 	content:       View,
 	on_dismiss:    proc() -> Msg,
+	footer:        View = nil,
 	id:            Widget_ID = 0,
 	initial_focus: Widget_ID = 0,
 	width:         f32 = 0,
@@ -10374,12 +10392,45 @@ dialog :: proc(
 	br_c := border; if br_c[3]     == 0 { br_c     = th.color.primary  }
 	sc_c := scrim;  if sc_c[3]     == 0 { sc_c     = Color{0, 0, 0, 0.55} }
 
+	// Compose the card body. With a footer, the content scrolls in the
+	// space above a bottom-pinned action bar so its controls never clip
+	// off a short window; without one, the card sizes to the content as
+	// before (byte-identical path).
+	dialog_child := content
+	measure_ptr:  ^View = nil
+	if footer != nil {
+		gap := th.spacing.md
+
+		// Body fills the card minus the footer and scrolls when too tall.
+		body := scroll(ctx, {0, 0}, content,
+			id = widget_make_sub_id(id, DIALOG_BODY_SCROLL_KEY))
+
+		// flex(body) + footer in a column; the outer flex(1) makes the
+		// card Stack hand this column the *full* inner height (a bare
+		// child would get only its natural height and the inner flex
+		// would collapse), so the body/footer split resolves.
+		composed := col(
+			flex(1, body),
+			footer,
+			spacing     = gap,
+			cross_align = .Stretch,
+		)
+		dialog_child = flex(1, composed)
+
+		// Size the card from the UNWRAPPED body+footer: the fill-mode
+		// scroll above reports a fill size, not the content's intrinsic.
+		m := new(View, context.temp_allocator)
+		m^ = col(content, footer, spacing = gap, cross_align = .Stretch)
+		measure_ptr = m
+	}
+
 	c := new(View, context.temp_allocator)
-	c^ = content
+	c^ = dialog_child
 	return View_Dialog{
 		id           = id,
 		open         = true,
 		child        = c,
+		measure      = measure_ptr,
 		color_scrim  = sc_c,
 		color_bg     = bg_c,
 		color_border = br_c,

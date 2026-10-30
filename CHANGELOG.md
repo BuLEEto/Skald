@@ -6,6 +6,15 @@ bug fixes bump the patch.
 
 ## Unreleased
 
+### Added
+
+- **`dialog` gained an optional `footer` slot.** Pass an action bar (buttons, a
+  select) and it pins to the card's bottom edge while `content` scrolls above
+  it — so on a window too short for the dialog, the footer's controls stay on
+  screen instead of spilling off the bottom. Without a `footer` the dialog is
+  unchanged. Fixes a select inside a short dialog opening then vanishing when
+  its row had been pushed past the card edge.
+
 ### Fixed
 
 - **`dialog` now sizes its card to content that wraps.** The card height was
