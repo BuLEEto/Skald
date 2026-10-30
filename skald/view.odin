@@ -6622,7 +6622,20 @@ _select_impl :: proc(
 	// only row separator needed); the overlay sits 4 px under the
 	// trigger. Add a 1-px hairline border layer + 4 px inner pad so
 	// the menu reads as a raised card, not a color-matched panel.
-	opt_h        := th.font.size_md + 2 * th.spacing.sm + 6
+	// Per-option row height. It MUST equal the real row the renderer draws —
+	// a button of `view_size` height `lh + 2*padding.y` (see layout.odin
+	// View_Button) — so the overlay rect this builder predicts and stamps
+	// matches the rect the renderer places from `view_size`. An arithmetic
+	// estimate drifts a few px/row; with enough rows that drift flips the
+	// menu's placement in the prediction but not the render, and the stamped
+	// rect (which the modal input gate hit-tests) then points away from the
+	// drawn menu — clicks on the real menu get swallowed. Fall back to the
+	// arithmetic estimate only when there's no renderer to measure with.
+	opt_h := th.font.size_md + 2 * th.spacing.sm + 6
+	if ctx.renderer != nil {
+		_, lh := measure_text(ctx.renderer, "", th.font.size_md)
+		opt_h = lh + 2 * th.spacing.sm
+	}
 	option_gap   := f32(0)
 	overlay_pad  := f32(4)
 	BORDER_W     := f32(1)
