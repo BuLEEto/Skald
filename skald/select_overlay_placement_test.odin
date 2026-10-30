@@ -76,3 +76,57 @@ select_overlay_stamp_matches_render :: proc(t: ^testing.T) {
 	testing.expect(t, rect_contains_point(pred, mid),
 		"a click on the drawn menu must fall inside the stamped rect")
 }
+
+// Combobox is immune to the same drift because it builds each dropdown row
+// with an explicit `height = opt_h`, so `view_size` returns exactly the
+// predicted height. This guards that invariant: if the explicit height were
+// ever dropped (rows measuring their own font height like select's buttons),
+// the stamp would drift from the render and this would fail.
+@(test)
+combobox_overlay_stamp_matches_render :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	r.cur = new(Window_Target)
+	r.scale = 1
+	r.fb_size = {900, 620}
+	r.text.atlas_w = ATLAS_SIZE
+	r.text.atlas_h = ATLAS_SIZE
+	text_init_runa(&r.text, r)
+	defer {
+		if r.text.runa_state != nil { text_runa_free(r.text.runa_state) }
+		batch_destroy(&r.batch)
+		free(r.cur)
+		free(r)
+	}
+
+	ws: Widget_Store
+	widget_store_init(&ws)
+	defer widget_store_destroy(&ws)
+	th := theme_dark()
+	lb := labels_en()
+	input: Input
+	msgs: [dynamic]SOP_Msg
+	defer delete(msgs)
+
+	id      := hash_id("sop-combobox")
+	options := []string{"Blank", "Bosses", "Items", "NPCs", "Regions", "Weapons", "Spells"}
+	trigger := Rect{270, 347, 220, 34}
+
+	widget_store_begin_frame(&ws, input)
+	ws.states[id] = Widget_State{kind = .Combobox, last_rect = trigger, last_frame = ws.frame, open = true}
+	ctx := Ctx(SOP_Msg){theme = &th, labels = &lb, widgets = &ws, input = &input, msgs = &msgs, renderer = r}
+
+	v, _, _ := _combobox_impl(&ctx, "", options, id = id, width = 220, filter = false)
+
+	testing.expect(t, len(ws.overlay_rects) > 0, "combobox stamped an overlay rect")
+	pred := ws.overlay_rects[len(ws.overlay_rects) - 1]
+
+	stack  := v.(View_Stack)
+	ov     := stack.children[1].(View_Overlay)
+	cs     := view_size(r, ov.child^)
+	actual := overlay_placement_rect(&ctx, trigger, {pred.w, cs.y}, .Below, {0, 4})
+
+	testing.expectf(t, abs(pred.h - cs.y) < 0.5,
+		"combobox predicted menu height %.1f must match rendered %.1f", pred.h, cs.y)
+	testing.expectf(t, abs(pred.y - actual.y) < 0.5,
+		"combobox stamped rect y %.1f must match rendered y %.1f", pred.y, actual.y)
+}
