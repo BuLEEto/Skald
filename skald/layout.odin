@@ -2113,9 +2113,15 @@ stack_render :: proc(r: ^Renderer, s: View_Stack, origin: [2]f32, size: [2]f32) 
 	}
 
 	// Background (if any) renders at the stack's full assigned size, so it
-	// covers the padded gutter as well as the content area.
+	// covers the padded gutter as well as the content area. Per-corner radii
+	// when `corners` is set (any entry non-zero); otherwise the single
+	// `radius` rounds all four equally.
 	if s.bg[3] > 0 {
-		draw_rect(r, {origin.x, origin.y, size.x, size.y}, s.bg, s.radius)
+		if s.corners[0] > 0 || s.corners[1] > 0 || s.corners[2] > 0 || s.corners[3] > 0 {
+			draw_round_rect(r, {origin.x, origin.y, size.x, size.y}, s.bg, s.corners)
+		} else {
+			draw_rect(r, {origin.x, origin.y, size.x, size.y}, s.bg, s.radius)
+		}
 	}
 
 	n := len(s.children)

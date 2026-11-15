@@ -47,3 +47,21 @@ rect_per_corner_radius_reaches_vertices :: proc(t: ^testing.T) {
 	render_view(r, rect({100, 40}, {1, 0, 0, 1}, corners = {99, 0, 0, 0}), {0, 0}, {100, 40})
 	testing.expect_value(t, r.batch.vertices[0].radius, [4]f32{20, 0, 0, 0})
 }
+
+@(test)
+col_row_per_corner_bg_reaches_vertices :: proc(t: ^testing.T) {
+	r := rc_renderer()
+	defer rc_free(r)
+
+	// A col's background (first quad emitted by stack_render) carries the
+	// per-corner radii — e.g. a card rounded only on top.
+	render_view(r, col(bg = {0, 0, 1, 1}, corners = {12, 12, 0, 0}), {0, 0}, {120, 60})
+	testing.expect(t, len(r.batch.vertices) >= 4, "col bg emitted a quad")
+	testing.expect_value(t, r.batch.vertices[0].radius, [4]f32{12, 12, 0, 0})
+
+	// A row broadcasts its uniform `radius` when `corners` is unset.
+	clear(&r.batch.vertices)
+	clear(&r.batch.indices)
+	render_view(r, row(bg = {0, 0, 1, 1}, radius = 8), {0, 0}, {120, 60})
+	testing.expect_value(t, r.batch.vertices[0].radius, [4]f32{8, 8, 8, 8})
+}

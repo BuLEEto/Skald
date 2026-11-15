@@ -91,7 +91,8 @@ column with `cross_align = .Stretch`.
 
 ```odin
 col(..children, spacing = 0, padding = 0, width = 0, height = 0,
-    main_align = .Start, cross_align = .Start, bg = {}, radius = 0)
+    main_align = .Start, cross_align = .Start, bg = {}, radius = 0,
+    corners = {})
 ```
 
 Stack children along an axis. `col` is vertical, `row` is horizontal.
@@ -99,6 +100,12 @@ Stack children along an axis. `col` is vertical, `row` is horizontal.
 the container. Zero on `width` / `height` means "size to fit content"
 unless the parent is a flex layout, in which case you'll be stretched
 to the assigned slot.
+
+With a `bg`, `radius` rounds all four corners of the background;
+`corners = {top_left, top_right, bottom_right, bottom_left}` rounds
+them independently (a card with a rounded header, a panel rounded only
+on top) and overrides `radius` when any entry is non-zero. The drop
+shadow, if any, still follows `radius`.
 
 `main_align` controls how leftover main-axis space is distributed
 (only relevant when there's no `flex` child eating it). `cross_align`

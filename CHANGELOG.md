@@ -8,12 +8,12 @@ bug fixes bump the patch.
 
 ### Added
 
-- **`rect` gained per-corner radii.** Pass `corners = {top_left, top_right,
-  bottom_right, bottom_left}` for independent corners — tabs rounded only on
-  top, sheets only on the bottom, chat bubbles, etc. The plain `radius` still
-  rounds all four equally; `corners` overrides it when any entry is non-zero.
-  Each is clamped to the shorter half-extent. New `draw_round_rect` exposes the
-  same per-corner path to `canvas` authors.
+- **Per-corner radii on `rect`, `col` and `row`.** Pass `corners = {top_left,
+  top_right, bottom_right, bottom_left}` for independent corners — tabs rounded
+  only on top, sheets only on the bottom, chat bubbles, a card with a rounded
+  header. The plain `radius` still rounds all four equally; `corners` overrides
+  it when any entry is non-zero. Each is clamped to the shorter half-extent.
+  New `draw_round_rect` exposes the same path to `canvas` authors.
 - **`dialog` gained an optional `footer` slot.** Pass an action bar (buttons, a
   select) and it pins to the card's bottom edge while `content` scrolls above
   it — so on a window too short for the dialog, the footer's controls stay on

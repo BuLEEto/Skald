@@ -395,6 +395,10 @@ View_Stack :: struct {
 	cross_align: Cross_Align,
 	bg:          Color,
 	radius:      f32,
+	// Per-corner background radius (TL, TR, BR, BL); {} = use `radius` for
+	// all four. Any non-zero entry overrides `radius` — e.g. a card rounded
+	// only on top. The drop shadow (if any) still follows `radius`.
+	corners:     [4]f32,
 	// shadow is a soft drop-shadow blur radius behind the stack's rounded
 	// rect (0 = none). shadow_color {} defaults to a soft translucent black;
 	// shadow_y offsets it vertically. Drawn before the bg fill and extends
@@ -1986,6 +1990,7 @@ col :: proc(
 	cross_align: Cross_Align = .Start,
 	bg:          Color       = {},
 	radius:      f32         = 0,
+	corners:     [4]f32      = {}, // per-corner bg radius: TL, TR, BR, BL (overrides radius)
 	// soft drop shadow behind the box; shadow = blur radius (0 = none),
 	// shadow_color {} = soft translucent black, shadow_y = vertical offset.
 	shadow:       f32   = 0,
@@ -2004,6 +2009,7 @@ col :: proc(
 		cross_align  = cross_align,
 		bg           = bg,
 		radius       = radius,
+		corners      = corners,
 		shadow       = shadow,
 		shadow_color = shadow_color,
 		shadow_y     = shadow_y,
@@ -2023,6 +2029,7 @@ row :: proc(
 	cross_align: Cross_Align = .Start,
 	bg:          Color       = {},
 	radius:      f32         = 0,
+	corners:     [4]f32      = {}, // per-corner bg radius: TL, TR, BR, BL (overrides radius)
 	shadow:       f32   = 0,
 	shadow_color: Color = {},
 	shadow_y:     f32   = 0,
@@ -2039,6 +2046,7 @@ row :: proc(
 		cross_align  = cross_align,
 		bg           = bg,
 		radius       = radius,
+		corners      = corners,
 		shadow       = shadow,
 		shadow_color = shadow_color,
 		shadow_y     = shadow_y,
