@@ -23,6 +23,10 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **A `text_input` no longer collapses to zero width when it shows an error.**
+  The error message wraps the field in a column; that column now stretches its
+  cross axis, so a field filling a `flex` slot keeps its width instead of
+  shrinking to intrinsic 0 the moment `invalid` + `error` appear. Reported in #14.
 - **`dialog` now sizes its card to content that wraps.** The card height was
   taken from the content's intrinsic (one-line) size, but content is drawn at
   the card's clamped width — so a `wrap_row` that wrapped to several lines (or a

@@ -4894,10 +4894,14 @@ _text_input_impl :: proc(
 	// are set. Width-less col keeps it content-sized so long messages
 	// wrap via max_width against the field's declared width.
 	if invalid && len(error) > 0 {
+		// Stretch so the field keeps the width its parent assigned — without
+		// it a width=0 field (one filling a `flex` slot) collapses to its
+		// intrinsic 0 the moment the error row wraps it. Reported as #14.
 		view = col(
 			field,
 			text(error, th.color.danger, th.font.size_sm, 0, width - 4),
-			spacing = 4,
+			spacing     = 4,
+			cross_align = .Stretch,
 		)
 		return
 	}
