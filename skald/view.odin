@@ -397,7 +397,7 @@ View_Stack :: struct {
 	radius:      f32,
 	// Per-corner background radius (TL, TR, BR, BL); {} = use `radius` for
 	// all four. Any non-zero entry overrides `radius` — e.g. a card rounded
-	// only on top. The drop shadow (if any) still follows `radius`.
+	// only on top. The drop shadow (if any) follows these corners too.
 	corners:     [4]f32,
 	// shadow is a soft drop-shadow blur radius behind the stack's rounded
 	// rect (0 = none). shadow_color {} defaults to a soft translucent black;

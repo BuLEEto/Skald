@@ -135,12 +135,13 @@ draw_round_rect :: proc(r: ^Renderer, rect: Rect, color: Color, corners: [4]f32)
 // page. Callers can also invoke it directly for bespoke depth effects;
 // it's cheap (one quad) and batches with the rest of the frame.
 draw_shadow :: proc(
-	r:      ^Renderer,
-	rect:   Rect,
-	radius: f32,
-	blur:   f32,
-	color:  Color,
-	offset: [2]f32 = {0, 4},
+	r:       ^Renderer,
+	rect:    Rect,
+	radius:  f32,
+	blur:    f32,
+	color:   Color,
+	offset:  [2]f32 = {0, 4},
+	corners: [4]f32 = {}, // per-corner (TL,TR,BR,BL) so the shadow hugs a per-corner silhouette; {} = use radius
 ) {
 	if blur <= 0 { return }
 	// Offset the shadow source rect — positive y pushes the shadow down,
@@ -149,7 +150,11 @@ draw_shadow :: proc(
 	sy := rect.y + offset.y
 	center    := [2]f32{sx + rect.w * 0.5, sy + rect.h * 0.5}
 	half_size := [2]f32{rect.w * 0.5,       rect.h * 0.5}
-	rr        := min(radius, min(half_size.x, half_size.y))
+	lim       := min(half_size.x, half_size.y)
+	rads      := [4]f32{min(radius, lim), min(radius, lim), min(radius, lim), min(radius, lim)}
+	if corners[0] > 0 || corners[1] > 0 || corners[2] > 0 || corners[3] > 0 {
+		rads = {min(corners[0], lim), min(corners[1], lim), min(corners[2], lim), min(corners[3], lim)}
+	}
 
 	// The quad itself must extend by `blur` in each direction so the
 	// fragment shader has room to fade from opaque (inside the source
@@ -166,7 +171,7 @@ draw_shadow :: proc(
 		color     = col,
 		center    = center,
 		half_size = half_size,
-		radius    = {rr, rr, rr, rr},
+		radius    = rads,
 		kind      = 4,
 		uv        = {blur, 0},
 	}

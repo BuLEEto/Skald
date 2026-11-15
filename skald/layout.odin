@@ -2109,7 +2109,7 @@ stack_render :: proc(r: ^Renderer, s: View_Stack, origin: [2]f32, size: [2]f32) 
 	if s.shadow > 0 {
 		col := s.shadow_color
 		if col[3] == 0 { col = Color{0, 0, 0, 0.28} }
-		draw_shadow(r, {origin.x, origin.y, size.x, size.y}, s.radius, s.shadow, col, {0, s.shadow_y})
+		draw_shadow(r, {origin.x, origin.y, size.x, size.y}, s.radius, s.shadow, col, {0, s.shadow_y}, s.corners)
 	}
 
 	// Background (if any) renders at the stack's full assigned size, so it

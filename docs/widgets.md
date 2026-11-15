@@ -105,7 +105,7 @@ With a `bg`, `radius` rounds all four corners of the background;
 `corners = {top_left, top_right, bottom_right, bottom_left}` rounds
 them independently (a card with a rounded header, a panel rounded only
 on top) and overrides `radius` when any entry is non-zero. The drop
-shadow, if any, still follows `radius`.
+shadow, if any, follows these corners too.
 
 `main_align` controls how leftover main-axis space is distributed
 (only relevant when there's no `flex` child eating it). `cross_align`
