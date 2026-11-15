@@ -452,7 +452,13 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// column give a rect its full width.
 		w := vv.size.x == 0 ? size.x : vv.size.x
 		h := vv.size.y == 0 ? size.y : vv.size.y
-		draw_rect(r, {origin.x, origin.y, w, h}, vv.color, vv.radius)
+		// Per-corner radius when `corners` is set (any entry non-zero);
+		// otherwise the single `radius` rounds all four equally.
+		if vv.corners[0] > 0 || vv.corners[1] > 0 || vv.corners[2] > 0 || vv.corners[3] > 0 {
+			draw_round_rect(r, {origin.x, origin.y, w, h}, vv.color, vv.corners)
+		} else {
+			draw_rect(r, {origin.x, origin.y, w, h}, vv.color, vv.radius)
+		}
 
 	case View_Gradient_Rect:
 		w := vv.size.x == 0 ? size.x : vv.size.x

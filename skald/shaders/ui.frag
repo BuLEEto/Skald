@@ -12,7 +12,7 @@ layout(location = 0) in vec4  v_color;
 layout(location = 1) in vec2  v_frag_pos;
 layout(location = 2) in vec2  v_center;
 layout(location = 3) in vec2  v_half_size;
-layout(location = 4) in float v_radius;
+layout(location = 4) in vec4  v_radius;
 layout(location = 5) in float v_kind;
 layout(location = 6) in vec2  v_uv;
 
@@ -23,9 +23,15 @@ layout(location = 0) out vec4 out_color;
 // texture via Batch_Range.bind_group.
 layout(set = 0, binding = 0) uniform sampler2D atlas;
 
-float sd_rounded_box(vec2 p, vec2 hs, float r) {
-    vec2 q = abs(p) - hs + vec2(r);
-    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
+// r holds the four corner radii in the order top-left, top-right,
+// bottom-right, bottom-left. p is relative to the box centre with +x right
+// and +y down (framebuffer space), so the active corner is chosen by the
+// sign of p.
+float sd_rounded_box(vec2 p, vec2 hs, vec4 r) {
+    float rr = (p.x > 0.0) ? (p.y > 0.0 ? r.z : r.y)   // right: bottom-right / top-right
+                           : (p.y > 0.0 ? r.w : r.x);  // left:  bottom-left  / top-left
+    vec2 q = abs(p) - hs + vec2(rr);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - rr;
 }
 
 void main() {
@@ -55,7 +61,7 @@ void main() {
         vec4 c   = tex * v_color;
         // Optional rounded corners: v_radius=0 skips (plain image), else the
         // same SDF that rounds rects masks the quad's corners.
-        if (v_radius > 0.0) {
+        if (v_radius.x + v_radius.y + v_radius.z + v_radius.w > 0.0) {
             vec2  local = v_frag_pos - v_center;
             float d     = sd_rounded_box(local, v_half_size, v_radius);
             float aa    = fwidth(d) * 0.5;

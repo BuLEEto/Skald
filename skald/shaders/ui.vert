@@ -9,7 +9,7 @@ layout(location = 0) in vec2  in_pos;        // pixel, top-left origin
 layout(location = 1) in vec4  in_color;      // linear, straight alpha
 layout(location = 2) in vec2  in_center;     // rect center
 layout(location = 3) in vec2  in_half_size;  // half-extents
-layout(location = 4) in float in_radius;     // corner radius
+layout(location = 4) in vec4  in_radius;     // per-corner radius: TL, TR, BR, BL
 layout(location = 5) in float in_kind;       // 0=rect 1=glyph 2=image 3=solid
 layout(location = 6) in vec2  in_uv;         // atlas UV
 
@@ -17,7 +17,7 @@ layout(location = 0) out vec4  v_color;
 layout(location = 1) out vec2  v_frag_pos;
 layout(location = 2) out vec2  v_center;
 layout(location = 3) out vec2  v_half_size;
-layout(location = 4) out float v_radius;
+layout(location = 4) out vec4  v_radius;
 layout(location = 5) out float v_kind;
 layout(location = 6) out vec2  v_uv;
 

@@ -261,7 +261,7 @@ pipeline_create_pipeline :: proc(p: ^Pipeline, r: ^Renderer) -> bool {
 		{location = 1, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Vertex, color))},
 		{location = 2, binding = 0, format = .R32G32_SFLOAT,       offset = u32(offset_of(Vertex, center))},
 		{location = 3, binding = 0, format = .R32G32_SFLOAT,       offset = u32(offset_of(Vertex, half_size))},
-		{location = 4, binding = 0, format = .R32_SFLOAT,          offset = u32(offset_of(Vertex, radius))},
+		{location = 4, binding = 0, format = .R32G32B32A32_SFLOAT, offset = u32(offset_of(Vertex, radius))},
 		{location = 5, binding = 0, format = .R32_SFLOAT,          offset = u32(offset_of(Vertex, kind))},
 		{location = 6, binding = 0, format = .R32G32_SFLOAT,       offset = u32(offset_of(Vertex, uv))},
 	}

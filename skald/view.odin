@@ -152,9 +152,14 @@ Cross_Align :: enum {
 
 // View_Rect is a filled rounded rectangle with an explicit pixel size.
 View_Rect :: struct {
-	size:   [2]f32,
-	color:  Color,
-	radius: f32,
+	size:    [2]f32,
+	color:   Color,
+	radius:  f32,
+	// Per-corner radius, ordered top-left, top-right, bottom-right,
+	// bottom-left. Left zero ({}), the single `radius` applies to all
+	// four; set any corner to override with independent radii (tabs,
+	// sheets, bubbles). Each is clamped to the shorter half-extent.
+	corners: [4]f32,
 }
 
 // View_Gradient_Rect is a rectangle whose four corners hold independent
@@ -1060,8 +1065,14 @@ View_Button :: struct {
 
 // rect returns a View_Rect wrapped as a View. `radius` defaults to 0 (sharp
 // corners); the renderer anti-aliases the outer edge either way.
-rect :: proc(size: [2]f32, color: Color, radius: f32 = 0) -> View {
-	return View_Rect{size = size, color = color, radius = radius}
+// rect draws a filled, optionally-rounded rectangle. `radius` rounds all
+// four corners equally; for independent corners (a tab rounded only on top,
+// a sheet only on the bottom) pass `corners` as {top-left, top-right,
+// bottom-right, bottom-left} instead — any non-zero entry switches to
+// per-corner mode and `radius` is ignored. A zero on either `size` axis
+// fills the assigned extent on that axis.
+rect :: proc(size: [2]f32, color: Color, radius: f32 = 0, corners: [4]f32 = {}) -> View {
+	return View_Rect{size = size, color = color, radius = radius, corners = corners}
 }
 
 // text returns a View_Text. Default behavior is single-line; pass

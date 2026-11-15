@@ -450,10 +450,15 @@ message bubble layouts.
 ### rect
 
 ```odin
-rect(size: [2]f32, color: Color, radius: f32 = 0)
+rect(size: [2]f32, color: Color, radius: f32 = 0, corners: [4]f32 = {})
 ```
 
-Flat coloured rectangle with optional corner radius.
+Flat coloured rectangle with optional corner radius. `radius` rounds all
+four corners equally; for independent corners pass `corners = {top_left,
+top_right, bottom_right, bottom_left}` (a tab rounded only on top, a sheet
+only on the bottom, a chat bubble) — any non-zero entry overrides `radius`.
+Each corner is clamped to the shorter half-extent. A zero on either `size`
+axis fills the assigned extent on that axis.
 
 ### divider
 

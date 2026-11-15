@@ -25,7 +25,7 @@ Vertex :: struct {
 	color:     [4]f32,
 	center:    [2]f32,
 	half_size: [2]f32,
-	radius:    f32,
+	radius:    [4]f32, // per-corner: top-left, top-right, bottom-right, bottom-left
 	kind:      f32, // 0 = SDF, 1 = glyph (R8 alpha), 2 = image (RGBA modulate)
 	uv:        [2]f32,
 }
@@ -77,6 +77,36 @@ draw_rect :: proc(r: ^Renderer, rect: Rect, color: Color, radius: f32 = 0) {
 	// Clamp radius so it never exceeds the shorter half-extent — otherwise
 	// the SDF degenerates into a pill or worse.
 	rr := min(radius, min(half_size.x, half_size.y))
+
+	col := color
+	col[3] *= r.alpha_multiplier
+	base := u32(len(r.batch.vertices))
+	v := Vertex{color = col, center = center, half_size = half_size, radius = {rr, rr, rr, rr}}
+
+	v.pos = {rect.x,          rect.y         }; append(&r.batch.vertices, v)
+	v.pos = {rect.x + rect.w, rect.y         }; append(&r.batch.vertices, v)
+	v.pos = {rect.x + rect.w, rect.y + rect.h}; append(&r.batch.vertices, v)
+	v.pos = {rect.x,          rect.y + rect.h}; append(&r.batch.vertices, v)
+
+	append(&r.batch.indices,
+		base + 0, base + 1, base + 2,
+		base + 0, base + 2, base + 3,
+	)
+}
+
+// draw_round_rect is `draw_rect` with an independent radius per corner, in
+// pixels, ordered top-left, top-right, bottom-right, bottom-left. Each is
+// clamped to the shorter half-extent. Use it for tabs (top two only),
+// sheets (bottom two), chat bubbles, and the like; `draw_rect` remains the
+// uniform-radius shorthand.
+draw_round_rect :: proc(r: ^Renderer, rect: Rect, color: Color, corners: [4]f32) {
+	center    := [2]f32{rect.x + rect.w * 0.5, rect.y + rect.h * 0.5}
+	half_size := [2]f32{rect.w * 0.5,          rect.h * 0.5}
+	lim       := min(half_size.x, half_size.y)
+	rr        := [4]f32{
+		min(corners[0], lim), min(corners[1], lim),
+		min(corners[2], lim), min(corners[3], lim),
+	}
 
 	col := color
 	col[3] *= r.alpha_multiplier
@@ -136,7 +166,7 @@ draw_shadow :: proc(
 		color     = col,
 		center    = center,
 		half_size = half_size,
-		radius    = rr,
+		radius    = {rr, rr, rr, rr},
 		kind      = 4,
 		uv        = {blur, 0},
 	}
@@ -173,7 +203,7 @@ draw_gradient_rect :: proc(
 	br := c_br; br[3] *= r.alpha_multiplier
 	bl := c_bl; bl[3] *= r.alpha_multiplier
 	base := u32(len(r.batch.vertices))
-	v := Vertex{center = center, half_size = half_size, radius = rr}
+	v := Vertex{center = center, half_size = half_size, radius = {rr, rr, rr, rr}}
 
 	v.pos = {rect.x,          rect.y         }; v.color = tl; append(&r.batch.vertices, v)
 	v.pos = {rect.x + rect.w, rect.y         }; v.color = tr; append(&r.batch.vertices, v)
@@ -313,7 +343,8 @@ batch_push_image :: proc(
 	if radius > 0 {
 		v.center    = {pos.x + pos.w * 0.5, pos.y + pos.h * 0.5}
 		v.half_size = {pos.w * 0.5,         pos.h * 0.5}
-		v.radius    = min(radius, min(v.half_size.x, v.half_size.y))
+		ir         := min(radius, min(v.half_size.x, v.half_size.y))
+		v.radius    = {ir, ir, ir, ir}
 	}
 	v.pos = {pos.x,         pos.y        }; v.uv = {uv[0], uv[1]}; append(&r.batch.vertices, v)
 	v.pos = {pos.x + pos.w, pos.y        }; v.uv = {uv[2], uv[1]}; append(&r.batch.vertices, v)
