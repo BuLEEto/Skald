@@ -90,8 +90,14 @@ view_size :: proc(r: ^Renderer, v: View) -> [2]f32 {
 
 	case View_Text:
 		if vv.max_width > 0 {
-			lines := wrap_text(r, vv.str, vv.max_width, vv.size, vv.font)
 			_, lh := measure_text(r, "", vv.size, vv.font)
+			// Clip / Ellipsis cap the width but stay on one line (truncate,
+			// not wrap), so they reserve a single line's height. Only
+			// .Visible wraps to multiple lines.
+			if vv.overflow != .Visible {
+				return {vv.max_width, lh}
+			}
+			lines := wrap_text(r, vv.str, vv.max_width, vv.size, vv.font)
 			return {vv.max_width, lh * f32(len(lines))}
 		}
 		// No-wrap path. Embedded line breaks (\n, \r\n, \r) still
@@ -482,7 +488,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// line if the line's byte range overlaps [sel_lo, sel_hi).
 		// Inlined per branch below because Odin closures aren't a thing.
 
-		if vv.max_width > 0 {
+		if vv.max_width > 0 && vv.overflow == .Visible {
 			lines := wrap_text(r, vv.str, vv.max_width, vv.size, vv.font)
 			_, lh := measure_text(r, "", vv.size, vv.font)
 			y := origin.y

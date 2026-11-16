@@ -181,14 +181,16 @@ View_Gradient_Rect :: struct {
 // line sized to its content; when >0, the renderer breaks the string at
 // word boundaries so no line exceeds that width, and `view_size` reports
 // the wrapped height. Embedded `\n` also forces line breaks regardless.
-// Text_Overflow controls what a single-line `text` does when layout
-// assigns it less width than its content needs. Only consulted in the
-// no-wrap case (`max_width == 0`); when `max_width > 0` the text wraps
-// as before. Elision is against the *assigned* width, so the text must
-// sit in a width-constraining parent (a `.Stretch` column, a fixed-width
-// box) to be narrowed below its natural size — a `.Start`/`.End`/
-// `.Center` parent hands the child its intrinsic width and just offsets
-// it, so nothing is clipped there.
+// Text_Overflow controls what `text` does when its content is wider than
+// the space it's given.
+//   - `max_width == 0`: elision is against the *assigned* width, so the
+//     text must sit in a width-constraining parent (a `.Stretch` column,
+//     a fixed-width box) to narrow below its natural size — a `.Start`/
+//     `.End`/`.Center` parent hands it its intrinsic width and just
+//     offsets it, so nothing is clipped there.
+//   - `max_width > 0`: `.Visible` wraps to multiple lines (as before);
+//     `.Clip` / `.Ellipsis` instead keep the text on one line and
+//     truncate it at `max_width` — what table cells usually want.
 Text_Overflow :: enum u8 {
 	Visible,   // draw the full string even if it spills the slot (default; today's behaviour)
 	Clip,      // hard-clip to the assigned width (may cut a glyph)

@@ -23,6 +23,10 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **`text` with `max_width` now respects `overflow`.** `max_width` combined with
+  `.Clip` / `.Ellipsis` keeps the text on one line and truncates at `max_width`
+  (instead of always wrapping) — what table cells usually want; `max_width` alone
+  (`.Visible`) still wraps. Reported in #15.
 - **A `text_input` no longer collapses to zero width when it shows an error.**
   The error message wraps the field in a column; that column now stretches its
   cross axis, so a field filling a `flex` slot keeps its width instead of
