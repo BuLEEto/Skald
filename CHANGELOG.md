@@ -27,6 +27,12 @@ bug fixes bump the patch.
 
 ### Fixed
 
+- **Vertical scrolls lay content out at the viewport width.** A `wrap_row` in a
+  `scroll` or `virtual_list` now wraps at the visible width, and one over-wide
+  child no longer stretches its siblings past the right edge. Declared widths
+  are kept. Right-aligned buttons that were pushed out of view now show, so give
+  long flex text `overflow = .Ellipsis`; fixed-height list rows must still fit
+  `item_height` (use `variable_height` if they wrap).
 - **`text` with `max_width` now respects `overflow`.** `max_width` combined with
   `.Clip` / `.Ellipsis` keeps the text on one line and truncates at `max_width`
   (instead of always wrapping) — what table cells usually want; `max_width` alone

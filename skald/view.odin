@@ -12510,6 +12510,11 @@ virtual_list_variable :: proc(
 	// stored height in place — next frame's visible-range search will
 	// use the measured values. Scope auto-ids per row so hover/press
 	// state rides the index, not the visible-window slot.
+	// Measure at the width rows render at: the viewport, less the bar's
+	// gutter once the list overflows.
+	row_w := viewport.x
+	if content_h_pre > viewport.y && row_w > SCROLL_BAR_GUTTER { row_w -= SCROLL_BAR_GUTTER }
+
 	built := make([dynamic]View, 0, last - first, context.temp_allocator)
 	when ODIN_DEBUG {
 		seen_keys := make(map[u64]int, (last - first), context.temp_allocator)
@@ -12532,9 +12537,9 @@ virtual_list_variable :: proc(
 		}
 		scope   := u64(widget_make_sub_id(id, k))
 		saved   := widget_scope_push(ctx, scope)
-		v  := row_builder(ctx, state, i)
-		sz := view_size(ctx.renderer, v)
-		if sz.y > 0 { heights[i] = sz.y }
+		v := row_builder(ctx, state, i)
+		h := view_height_for_width(ctx.renderer, v, row_w) if row_w > 0 else view_size(ctx.renderer, v).y
+		if h > 0 { heights[i] = h }
 		append(&built, v)
 		widget_scope_pop(ctx, saved)
 	}

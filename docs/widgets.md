@@ -246,6 +246,8 @@ navigation moves focus past the fold; it acts only on focus change, so
 it never fights a manual wheel/drag. Turn it off for a scroll whose
 offset you drive yourself.
 
+Content is laid out at the viewport width, so a `wrap_row` wraps there and
+stretched rows fit; a width the content declares explicitly is kept.
 `horizontal = true` also scrolls sideways when the content is wider than
 the viewport: a bottom bar appears, and a horizontal wheel/trackpad or
 Shift+wheel pans it. Wrap a wide `table` (give it its full-width

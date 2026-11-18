@@ -50,8 +50,8 @@ view_height_for_width :: proc(r: ^Renderer, v: View, width: f32) -> f32 {
 
 		sum: f32 = 0
 		for child, i in vv.children {
-			ch_w := view_size(r, child).x
-			if vv.cross_align == .Stretch { ch_w = inner_w }
+			// Stretch overrides the child's width, so don't measure it.
+			ch_w := inner_w if vv.cross_align == .Stretch else view_size(r, child).x
 			sum += view_height_for_width(r, child, ch_w)
 			if i < len(vv.children) - 1 { sum += vv.spacing }
 		}
@@ -1313,22 +1313,26 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 			return
 		}
 
-		// Scrollbar gutter reservation. The bar lives in the right 8 px
-		// (6 track + 2 inset, see the render block below); without this
-		// the child would lay out flush to the right viewport edge and
-		// any right-aligned content (list row Spawn buttons, checkboxes)
-		// would be painted underneath the bar.
-		SCROLLBAR_GUTTER :: f32(10) // bar_w (6) + inset (2) + 2 px breathing room
-
-		// Measure the child at the viewport's width. view_size returns
-		// the intrinsic height the content wants; subtracting the
-		// viewport height gives the usable scroll range.
-		content_size := view_size(r, vv.content^)
-		// If the child is narrower than the viewport, keep it at its
-		// intrinsic width; if wider, let it lay out at its own width
-		// (clipped by the scroll rect). No horizontal scrolling yet.
-		child_w := max(content_size.x, vp_w)
-		child_h := content_size.y
+		// Fit the viewport width (less the bar's gutter when it overflows) and
+		// measure there, so wrapping content gets its wrapped height; a declared
+		// width is honoured instead. Last frame's overflow picks the start width.
+		G :: SCROLL_BAR_GUTTER
+		child_w := vp_w
+		fit     := true
+		if d := view_declared_width(vv.content^); d > vp_w { child_w, fit = d, false }
+		if fit && vp_w > G && r.widgets != nil && r.widgets.states[vv.id].content_h > vp_h {
+			child_w = vp_w - G
+		}
+		child_h := view_height_for_width(r, vv.content^, child_w)
+		if fit && vp_w > G {
+			if child_w < vp_w && child_h <= vp_h {        // no longer overflows: drop the gutter
+				child_w = vp_w
+				child_h = view_height_for_width(r, vv.content^, child_w)
+			} else if child_w == vp_w && child_h > vp_h { // now overflows: make room for the bar
+				child_w = vp_w - G
+				child_h = view_height_for_width(r, vv.content^, child_w)
+			}
+		}
 
 		max_off := child_h - vp_h
 		if max_off < 0 { max_off = 0 }
@@ -1347,12 +1351,6 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		// logical) keeps the snap correct on HiDPI too.
 		scale := r.scale if r.scale > 0 else 1
 		off = math.floor(off * scale) / scale
-
-		// When the bar will render, shrink the child layout width so
-		// right-aligned content clears the gutter.
-		if max_off > 0 && child_w > SCROLLBAR_GUTTER {
-			child_w -= SCROLLBAR_GUTTER
-		}
 
 		// Write the clamped offset and content height back to widget
 		// state. `scroll_y` needs writing because a rapid wheel tick
@@ -2345,4 +2343,20 @@ stack_render :: proc(r: ^Renderer, s: View_Stack, origin: [2]f32, size: [2]f32) 
 			if s.direction == .Column { cursor.y += gap } else { cursor.x += gap }
 		}
 	}
+}
+
+// view_declared_width is the width a view explicitly asks for (0 if it sizes
+// to its content), so a scroll honours it instead of fitting it.
+@(private)
+view_declared_width :: proc(v: View) -> f32 {
+	#partial switch vv in v {
+	case View_Stack:    return vv.width
+	case View_Wrap_Row: return vv.width
+	case View_Rect:     return vv.size.x
+	case View_Clip:     return vv.size.x
+	case View_Canvas:   return vv.size.x
+	case View_Scroll:   return vv.size.x
+	case View_Flex:     return view_declared_width(vv.child^)
+	}
+	return 0
 }
