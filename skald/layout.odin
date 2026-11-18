@@ -1308,6 +1308,10 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		if r.widgets != nil {
 			widget_record_rect(r, vv.id, vp)
 		}
+		if vv.horizontal {
+			render_scroll_xy(r, vv, origin, vp_w, vp_h)
+			return
+		}
 
 		// Scrollbar gutter reservation. The bar lives in the right 8 px
 		// (6 track + 2 inset, see the render block below); without this
@@ -1887,6 +1891,75 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 		push_clip(r, bounds)
 		vv.draw(vv.user, Canvas_Painter{r = r, bounds = bounds})
 		pop_clip(r)
+	}
+}
+
+// render_scroll_xy: View_Scroll's two-axis path (`horizontal = true`).
+@(private)
+render_scroll_xy :: proc(r: ^Renderer, vv: View_Scroll, origin: [2]f32, vp_w, vp_h: f32) {
+	G :: SCROLL_BAR_GUTTER
+	cs := view_size(r, vv.content^)
+
+	// A bar's gutter steals room from the other axis, so settle both together.
+	need_h := cs.x > vp_w
+	need_v := cs.y > vp_h
+	if need_h && !need_v { need_v = cs.y > vp_h - G }
+	if need_v && !need_h { need_h = cs.x > vp_w - G }
+	gut_x: f32 = G if need_v else 0
+	gut_y: f32 = G if need_h else 0
+
+	child_w := max(cs.x, vp_w - gut_x)
+	child_h := cs.y
+	// Include the other bar's gutter so `content - viewport` is the scroll range.
+	content_w := child_w + gut_x
+	content_h := child_h + gut_y
+	max_x := max(content_w - vp_w, 0)
+	max_y := max(content_h - vp_h, 0)
+
+	scale := r.scale if r.scale > 0 else 1
+	off_x := math.floor(clamp(vv.offset_x, 0, max_x) * scale) / scale
+	off_y := math.floor(clamp(vv.offset_y, 0, max_y) * scale) / scale
+
+	if r.widgets != nil {
+		st := r.widgets.states[vv.id]
+		st.scroll_x, st.scroll_y   = off_x, off_y
+		st.content_w, st.content_h = content_w, content_h
+		r.widgets.states[vv.id] = st
+	}
+
+	push_clip(r, {origin.x, origin.y, vp_w, vp_h})
+	render_view(r, vv.content^, {origin.x - off_x, origin.y - off_y}, {child_w, child_h})
+	pop_clip(r)
+
+	if need_v {
+		bw: f32 = 12 if (vv.hover_thumb || vv.dragging) else 8
+		bx := origin.x + vp_w - bw - 2
+		by := origin.y + 2
+		bl := vp_h - 4 - gut_y
+		draw_rect(r, {bx, by, bw, bl}, vv.track_color, bw / 2)
+		tl := bl * vp_h / content_h
+		if tl < 16 { tl = 16 }
+		if tl > bl { tl = bl }
+		t: f32 = (off_y / max_y) if max_y > 0 else 0
+		col := vv.thumb_color
+		if vv.dragging         { col = color_tint(col, 0.25) }
+		else if vv.hover_thumb { col = color_tint(col, 0.12) }
+		draw_rect(r, {bx, by + (bl - tl) * t, bw, tl}, col, bw / 2)
+	}
+	if need_h {
+		bh: f32 = 12 if (vv.hover_thumb_x || vv.dragging_x) else 8
+		bx := origin.x + 2
+		by := origin.y + vp_h - bh - 2
+		bl := vp_w - 4 - gut_x
+		draw_rect(r, {bx, by, bl, bh}, vv.track_color, bh / 2)
+		tl := bl * vp_w / content_w
+		if tl < 16 { tl = 16 }
+		if tl > bl { tl = bl }
+		t: f32 = (off_x / max_x) if max_x > 0 else 0
+		col := vv.thumb_color
+		if vv.dragging_x         { col = color_tint(col, 0.25) }
+		else if vv.hover_thumb_x { col = color_tint(col, 0.12) }
+		draw_rect(r, {bx + (bl - tl) * t, by, tl, bh}, col, bh / 2)
 	}
 }
 

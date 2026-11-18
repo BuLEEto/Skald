@@ -149,6 +149,11 @@ Widget_State :: struct {
 	scroll_y:    f32,
 	content_h:   f32,
 	drag_anchor: f32,
+	// Horizontal counterparts, used by `scroll(..., horizontal = true)`.
+	scroll_x:      f32,
+	content_w:     f32,
+	drag_anchor_x: f32,
+	pressed_x:     bool,
 	// drag_donor is the column index a table resize handle donates
 	// width to/from for the active drag. Picked at latch (next fixed
 	// column, else any flex column, else -1) and held here on the
@@ -414,6 +419,7 @@ link_rect_at :: proc(ctx: ^Ctx($Msg), id: Widget_ID, pos: [2]f32) -> string {
 Scroll_Rect :: struct {
 	id:   Widget_ID,
 	rect: Rect,
+	h:    bool, // horizontal-axis stamp; vertical routing ignores these
 }
 
 // Focusable_Entry pairs a focusable widget's id with its caller-assigned

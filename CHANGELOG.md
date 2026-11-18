@@ -8,6 +8,10 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Horizontal scrolling.** `scroll(..., horizontal = true)` pans sideways when
+  the content is wider than the viewport — a bottom bar, horizontal
+  wheel/trackpad, and Shift+wheel. Wrapping a wide `table` scrolls its columns
+  with the header in step. Opt-in; existing scrolls are unchanged.
 - **Per-corner radii on `rect`, `col` and `row`.** Pass `corners = {top_left,
   top_right, bottom_right, bottom_left}` for independent corners — tabs rounded
   only on top, sheets only on the bottom, chat bubbles, a card with a rounded

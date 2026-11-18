@@ -233,7 +233,7 @@ outside gets scissored away.
 
 ```odin
 scroll(ctx, size: [2]f32, content: View, wheel_step = 40,
-       focusable = false, reveal_focus = true)
+       focusable = false, reveal_focus = true, horizontal = false)
 ```
 
 Clipped viewport with an autohiding scrollbar. Zero on an axis means
@@ -245,6 +245,11 @@ scrolls the keyboard-focused descendant back into view when Tab/arrow
 navigation moves focus past the fold; it acts only on focus change, so
 it never fights a manual wheel/drag. Turn it off for a scroll whose
 offset you drive yourself.
+
+`horizontal = true` also scrolls sideways when the content is wider than
+the viewport: a bottom bar appears, and a horizontal wheel/trackpad or
+Shift+wheel pans it. Wrap a wide `table` (give it its full-width
+`viewport`) to scroll its columns; the header moves with the body.
 
 ### split
 

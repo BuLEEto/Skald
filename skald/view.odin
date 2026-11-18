@@ -672,9 +672,7 @@ View_Slider :: struct {
 
 // View_Scroll is a fixed-size viewport that displays a potentially
 // taller child, with a vertical offset the user controls via the mouse
-// wheel. Horizontal scrolling is deliberately omitted until a consuming
-// widget needs it — vertical-only scroll is what 95% of desktop UIs
-// actually do, and wiring both axes doubles the state surface.
+// wheel. `horizontal` (opt-in) adds a second axis for wider content.
 //
 // The child lays out at its intrinsic height against the viewport's
 // width, so flex / cross-stretch rules behave the same as they would in
@@ -689,6 +687,10 @@ View_Scroll :: struct {
 	thumb_color: Color,
 	hover_thumb: bool, // cursor is over the thumb (pre-drag tint)
 	dragging:    bool, // thumb is grabbed (active-state tint)
+	horizontal:    bool,
+	offset_x:      f32,
+	hover_thumb_x: bool,
+	dragging_x:    bool,
 }
 
 // Overlay_Placement controls where an overlay positions itself relative
@@ -11545,6 +11547,7 @@ scroll_advance :: proc(
 	id:         Widget_ID,
 	content_h:  f32,
 	wheel_step: f32,
+	bar_end_inset: f32 = 0, // shortens the bar when a horizontal bar holds the corner
 ) -> (Widget_State, bool) {
 	st := widget_get(ctx, id, .Scroll)
 	st.content_h = content_h
@@ -11575,22 +11578,10 @@ scroll_advance :: proc(
 	// would read as outer and its wheel went dead. Area is order-independent:
 	// nested viewports strictly contain one another (inner is smaller), and
 	// siblings don't overlap (at most one contains the point).
-	claim_wheel := false
-	if hovered && scrollable && ctx.input.scroll.y != 0 {
-		best_id: Widget_ID
-		best_area := max(f32)
-		for cand in ctx.widgets.scroll_rects_prev {
-			if !rect_contains_point(cand.rect, ctx.input.mouse_pos) { continue }
-			area := cand.rect.w * cand.rect.h
-			if area < best_area {
-				best_area = area
-				best_id   = cand.id
-			}
-		}
-		// No stamps yet (very first frame): let the hovered scroller claim,
-		// so a plain single-scroll page isn't inert on frame 1.
-		claim_wheel = best_id == 0 || best_id == id
-	}
+	// Leave Shift+wheel for a horizontal scroller under the cursor.
+	shift_to_h  := .Shift in ctx.input.modifiers && scroll_h_under_cursor(ctx)
+	claim_wheel := hovered && scrollable && ctx.input.scroll.y != 0 && !shift_to_h &&
+		scroll_is_innermost(ctx, id, false)
 
 	if claim_wheel {
 		// Wheel-up (positive y) should scroll content DOWN (reveal
@@ -11609,7 +11600,7 @@ scroll_advance :: proc(
 			vp.x + vp.w - bar_w - bar_pad,
 			vp.y + bar_pad,
 			bar_w,
-			vp.h - 2 * bar_pad,
+			vp.h - 2 * bar_pad - bar_end_inset,
 		}
 		max_off := content_h - vp.h
 		ratio   := vp.h / content_h
@@ -11700,6 +11691,107 @@ scroll_advance :: proc(
 	return st, hover_thumb
 }
 
+// scroll_is_innermost: is `id` the smallest scrollable viewport of this axis
+// under the cursor (last frame's stamps)? With no stamps yet, the hovered one claims.
+@(private)
+scroll_is_innermost :: proc(ctx: ^Ctx($Msg), id: Widget_ID, h: bool) -> bool {
+	best_id: Widget_ID
+	best_area := max(f32)
+	for cand in ctx.widgets.scroll_rects_prev {
+		if cand.h != h || !rect_contains_point(cand.rect, ctx.input.mouse_pos) { continue }
+		area := cand.rect.w * cand.rect.h
+		if area < best_area {
+			best_area = area
+			best_id   = cand.id
+		}
+	}
+	return best_id == 0 || best_id == id
+}
+
+@(private)
+scroll_h_under_cursor :: proc(ctx: ^Ctx($Msg)) -> bool {
+	for cand in ctx.widgets.scroll_rects_prev {
+		if cand.h && rect_contains_point(cand.rect, ctx.input.mouse_pos) { return true }
+	}
+	return false
+}
+
+// scroll_advance_x: horizontal twin of scroll_advance (x-wheel, Shift+wheel, bottom bar).
+@(private)
+scroll_advance_x :: proc(
+	ctx:           ^Ctx($Msg),
+	id:            Widget_ID,
+	content_w:     f32,
+	wheel_step:    f32,
+	shift_y:       f32,
+	bar_end_inset: f32,
+) -> (Widget_State, bool) {
+	st := widget_get(ctx, id, .Scroll)
+	st.content_w = content_w
+
+	vp := st.last_rect
+	hovered    := widget_hovered(ctx, id)
+	scrollable := content_w > vp.w
+	if scrollable && vp.w > 0 && vp.h > 0 {
+		append(&ctx.widgets.scroll_rects, Scroll_Rect{id = id, rect = vp, h = true})
+	}
+
+	// SDL x is positive to the right; Shift+wheel-down scrolls right.
+	delta := ctx.input.scroll.x - shift_y
+	if hovered && scrollable && delta != 0 && scroll_is_innermost(ctx, id, true) {
+		st.scroll_x += delta * wheel_step
+		ctx.input.scroll.x = 0
+	}
+
+	hover_thumb := false
+	if vp.w > 0 && vp.h > 0 && scrollable {
+		bar_h:   f32 = 6
+		bar_pad: f32 = 2
+		bar := Rect{vp.x + bar_pad, vp.y + vp.h - bar_h - bar_pad, vp.w - 2 * bar_pad - bar_end_inset, bar_h}
+		max_off := content_w - vp.w
+		thumb_w := bar.w * vp.w / content_w
+		if thumb_w < 16    { thumb_w = 16 }
+		if thumb_w > bar.w { thumb_w = bar.w }
+		thumb_x := bar.x + (bar.w - thumb_w) * (clamp(st.scroll_x, 0, max_off) / max_off)
+
+		// Grab band flush to the bottom edge, mirroring the vertical bar.
+		grab_h: f32 = 20
+		hit_thumb := Rect{thumb_x, vp.y + vp.h - grab_h, thumb_w, grab_h}
+
+		mp := ctx.input.mouse_pos
+		on_thumb := rect_contains_point(hit_thumb, mp)
+		on_track := rect_contains_point(bar, mp) && !on_thumb
+		hover_thumb = on_thumb && hovered
+
+		if hovered && ctx.input.mouse_pressed[.Left] {
+			if on_thumb {
+				st.pressed_x     = true
+				st.drag_anchor_x = mp.x - thumb_x
+			} else if on_track {
+				if mp.x < thumb_x { st.scroll_x -= vp.w } else { st.scroll_x += vp.w }
+			}
+		}
+		if !ctx.input.mouse_buttons[.Left] { st.pressed_x = false }
+
+		if st.pressed_x {
+			if travel := bar.w - thumb_w; travel > 0 {
+				st.scroll_x = clamp((mp.x - st.drag_anchor_x - bar.x) / travel, 0, 1) * max_off
+			}
+		}
+		// Only set: scroll_advance already cleared the capture if unclaimed.
+		if st.pressed_x || (hovered && (on_thumb || on_track)) {
+			ctx.widgets.pointer_capture_id    = id
+			ctx.widgets.pointer_capture_frame = ctx.widgets.frame
+		}
+	} else {
+		st.pressed_x = false
+	}
+
+	st.scroll_x = clamp(st.scroll_x, 0, max(content_w - vp.w, 0))
+	widget_set(ctx, id, st)
+	return st, hover_thumb
+}
+
 // scroll_reveal_focus brings scroll `id`'s keyboard-focused descendant into
 // view, but only when focus *changed* since the last reveal — a steady focus
 // must not fight the user's wheel/drag (the table reveal_row discipline).
@@ -11757,8 +11849,13 @@ Scroll_Params :: struct($Msg: typeid) {
 	thumb_color:  Color,
 	focusable:    bool,
 	reveal_focus: bool,
+	horizontal:   bool,
 	min:          [2]f32,
 }
+
+// Space a scrollbar reserves from the other axis (bar + inset + breathing room).
+@(private)
+SCROLL_BAR_GUTTER :: f32(10)
 
 // scroll wraps `content` in a clipped viewport with an autohiding
 // scrollbar. `size` is the visible viewport extent; passing a zero on
@@ -11778,6 +11875,9 @@ Scroll_Params :: struct($Msg: typeid) {
 // view by the minimum amount. Acts only on focus *change*, so it never
 // fights a manual wheel/drag. Turn off for a scroll you drive yourself.
 //
+// `horizontal = true` also pans sideways when content is wider than the
+// viewport (bottom bar; Shift+wheel or a horizontal wheel/trackpad).
+//
 // Supply `id` only when you have two scrolls at the same call site
 // that the auto-id hash can't tell apart; otherwise leave it zero.
 scroll :: proc(
@@ -11790,6 +11890,7 @@ scroll :: proc(
 	thumb_color:  Color = {},
 	focusable:    bool = false,
 	reveal_focus: bool = true,
+	horizontal:   bool = false,
 ) -> View {
 	th := ctx.theme
 
@@ -11811,6 +11912,7 @@ scroll :: proc(
 			thumb_color  = thumb_color,
 			focusable    = focusable,
 			reveal_focus = reveal_focus,
+			horizontal   = horizontal,
 			min          = size,
 		}
 		fill_builder :: proc(ctx: ^Ctx(Msg), data: ^P, sz: [2]f32) -> View {
@@ -11834,6 +11936,7 @@ scroll :: proc(
 				thumb_color  = data.thumb_color,
 				focusable    = data.focusable,
 				reveal_focus = data.reveal_focus,
+				horizontal   = data.horizontal,
 			)
 		}
 		return sized(ctx, p, fill_builder,
@@ -11857,7 +11960,24 @@ scroll :: proc(
 			scroll_keyboard_nav(ctx, id, size.y, prior.content_h, wheel_step)
 		}
 	}
-	st, hover_thumb := scroll_advance(ctx, id, prior.content_h, wheel_step)
+	// Two-axis: shorten each bar by the other's gutter; divert Shift+wheel to horizontal.
+	inset_v, inset_x, shift_y: f32
+	if horizontal {
+		vp   := prior.last_rect
+		h_on := prior.content_w > vp.w
+		if h_on                   { inset_v = SCROLL_BAR_GUTTER }
+		if prior.content_h > vp.h { inset_x = SCROLL_BAR_GUTTER }
+		if h_on && .Shift in ctx.input.modifiers && ctx.input.scroll.y != 0 &&
+		   widget_hovered(ctx, id) && scroll_is_innermost(ctx, id, true) {
+			shift_y = ctx.input.scroll.y
+			ctx.input.scroll.y = 0
+		}
+	}
+	st, hover_thumb := scroll_advance(ctx, id, prior.content_h, wheel_step, inset_v)
+	hover_thumb_x := false
+	if horizontal {
+		st, hover_thumb_x = scroll_advance_x(ctx, id, prior.content_w, wheel_step, shift_y, inset_x)
+	}
 
 	// Keep the keyboard-focused child in view. After scroll_advance so a
 	// focus change wins over a stale wheel value; fires only on focus change.
@@ -11881,6 +12001,10 @@ scroll :: proc(
 		thumb_color = uc,
 		hover_thumb = hover_thumb,
 		dragging    = st.pressed,
+		horizontal    = horizontal,
+		offset_x      = st.scroll_x,
+		hover_thumb_x = hover_thumb_x,
+		dragging_x    = st.pressed_x,
 	}
 }
 
