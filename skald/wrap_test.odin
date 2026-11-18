@@ -76,6 +76,8 @@ runa_renderer :: proc() -> ^Renderer {
 @(private = "file")
 free_runa_renderer :: proc(r: ^Renderer) {
 	if r.text.runa_state != nil { text_runa_free(r.text.runa_state) }
+	batch_destroy(&r.batch)
+	delete(r.overlays)
 	free(r.cur)
 	free(r)
 }
