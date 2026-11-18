@@ -36,11 +36,11 @@ bug fixes bump the patch.
 - **`text` with `max_width` now respects `overflow`.** `max_width` combined with
   `.Clip` / `.Ellipsis` keeps the text on one line and truncates at `max_width`
   (instead of always wrapping) — what table cells usually want; `max_width` alone
-  (`.Visible`) still wraps. Reported in #15.
-- **A `text_input` no longer collapses to zero width when it shows an error.**
-  The error message wraps the field in a column; that column now stretches its
-  cross axis, so a field filling a `flex` slot keeps its width instead of
-  shrinking to intrinsic 0 the moment `invalid` + `error` appear. Reported in #14.
+  (`.Visible`) still wraps.
+- **A `text_input` with an error keeps its width and wraps long messages.** A
+  field filling a `flex` slot used to collapse to zero width when its error
+  appeared, and a long message never wrapped; the error line now stretches with
+  the field and wraps at its width, re-wrapping when the window resizes.
 - **`dialog` now sizes its card to content that wraps.** The card height was
   taken from the content's intrinsic (one-line) size, but content is drawn at
   the card's clamped width — so a `wrap_row` that wrapped to several lines (or a

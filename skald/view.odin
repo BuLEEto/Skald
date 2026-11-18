@@ -4258,9 +4258,9 @@ _text_input_impl :: proc(
 	if effective_w <= 0 && st.last_rect.w > 0 { effective_w = st.last_rect.w }
 	inner_w := effective_w - 2 * pad.x
 	do_wrap := multiline && wrap
-	if width <= 0 && st.last_rect.w == 0 && do_wrap {
-		widget_request_frame_at(ctx, 1)
-	}
+	wraps_to_rect := width <= 0 && (do_wrap || (invalid && len(error) > 0))
+	if wraps_to_rect && st.last_rect.w == 0 { widget_request_frame_at(ctx, 1) }
+	st.wrap_w = effective_w if wraps_to_rect else 0
 	// Multiline fields cache the wrapped table across frames (memoized on
 	// content + width + font); single-line fields skip the cache — their
 	// table is one entry and the hash isn't worth it.
@@ -4894,16 +4894,12 @@ _text_input_impl :: proc(
 	// identity across frames; without that, `widget_resolve_id` would hand
 	// out a fresh auto-id every render and break the button's press-state
 	// tracking.
-	// Error helper line sits directly under the field when both flags
-	// are set. Width-less col keeps it content-sized so long messages
-	// wrap via max_width against the field's declared width.
+	// Error line under the field. Stretch keeps a width=0 (flex) field at its
+	// assigned width, and the message wraps at the field's effective width.
 	if invalid && len(error) > 0 {
-		// Stretch so the field keeps the width its parent assigned — without
-		// it a width=0 field (one filling a `flex` slot) collapses to its
-		// intrinsic 0 the moment the error row wraps it. Reported as #14.
 		view = col(
 			field,
-			text(error, th.color.danger, th.font.size_sm, 0, width - 4),
+			text(error, th.color.danger, th.font.size_sm, 0, effective_w - 4),
 			spacing     = 4,
 			cross_align = .Stretch,
 		)

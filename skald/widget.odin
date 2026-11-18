@@ -115,6 +115,9 @@ Widget_Kind :: enum u8 {
 Widget_State :: struct {
 	kind:        Widget_Kind,
 	last_rect:   Rect,
+	// wrap_w is the width a widget wrapped at, borrowed from last frame's
+	// rect; if layout assigns a different width, another frame is requested.
+	wrap_w:      f32,
 	// clip_rect is the scissor that was active when the widget rendered —
 	// the running intersection of every enclosing push_clip (a scroll
 	// viewport, a clipped label, …). `widget_hovered` rejects the hover
@@ -1155,6 +1158,9 @@ widget_record_rect :: proc(r: ^Renderer, id: Widget_ID, rect: Rect) {
 	if ws == nil { return }
 	st := ws.states[id]
 	st.last_rect = rect
+	if st.wrap_w > 0 && abs(rect.w - st.wrap_w) > 0.5 {
+		if cur := ws.next_frame_deadline_ns; cur == 0 || cur > 1 { ws.next_frame_deadline_ns = 1 }
+	}
 	// Record the scissor active right now — the top of the clip stack
 	// already holds the running intersection of every enclosing push_clip.
 	// Zero when nothing is pushed, which widget_hovered reads as
