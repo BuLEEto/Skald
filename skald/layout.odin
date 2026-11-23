@@ -664,7 +664,7 @@ render_view :: proc(r: ^Renderer, v: View, origin: [2]f32, size: [2]f32) {
 
 	case View_Clip:
 		push_clip(r, {origin.x, origin.y, vv.size.x, vv.size.y})
-		render_view(r, vv.child^, origin, vv.size)
+		render_view(r, vv.child^, origin - vv.offset, vv.size + vv.offset)
 		pop_clip(r)
 
 	case View_Spacer:
@@ -1925,7 +1925,8 @@ render_scroll_xy :: proc(r: ^Renderer, vv: View_Scroll, origin: [2]f32, vp_w, vp
 		r.widgets.states[vv.id] = st
 	}
 
-	push_clip(r, {origin.x, origin.y, vp_w, vp_h})
+	// Content stays out of the bars' gutters (the scroll range includes them).
+	push_clip(r, {origin.x, origin.y, vp_w - gut_x, vp_h - gut_y})
 	render_view(r, vv.content^, {origin.x - off_x, origin.y - off_y}, {child_w, child_h})
 	pop_clip(r)
 

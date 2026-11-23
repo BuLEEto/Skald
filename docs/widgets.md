@@ -250,8 +250,8 @@ Content is laid out at the viewport width, so a `wrap_row` wraps there and
 stretched rows fit; a width the content declares explicitly is kept.
 `horizontal = true` also scrolls sideways when the content is wider than
 the viewport: a bottom bar appears, and a horizontal wheel/trackpad or
-Shift+wheel pans it. Wrap a wide `table` (give it its full-width
-`viewport`) to scroll its columns; the header moves with the body.
+Shift+wheel pans it. A `table` needs no wrapping: columns wider than it
+scroll sideways on their own.
 
 ### split
 
@@ -1245,6 +1245,10 @@ follows the item when the user re-sorts the table. A typical
 sorted-table pattern is `proc(s: ^State, visible: int) -> u64 {
 return u64(s.sorted[visible]) }` where `s.sorted[visible]` maps the
 visible row position to the underlying source row.
+
+Fixed-width columns that add up to more than the table's width scroll
+sideways (bottom bar, horizontal wheel or Shift+wheel). The header pans
+with them and the vertical bar stays in view.
 
 **Which name to call.** `table` is the form you want almost always.
 `table_simple` is an identical alias kept for back-compat. `table_full`

@@ -437,8 +437,9 @@ View_Wrap_Row :: struct {
 // View_Clip wraps a child in a pixel-bounded scissor rectangle. The child
 // is rendered at the clip's origin; anything outside the clip is discarded.
 View_Clip :: struct {
-	size:  [2]f32,
-	child: ^View,
+	size:   [2]f32,
+	child:  ^View,
+	offset: [2]f32, // scrolls the child: laid out in size + offset, shifted by -offset
 }
 
 // View_Opacity fades its child by multiplying the alpha of every draw it
@@ -12863,6 +12864,7 @@ Table_Params :: struct($Msg: typeid, $T: typeid) {
 // `header_height` defaults to 32 logical pixels; `overscan` is the
 // extra rows rendered outside the viewport for smooth scrolling.
 // `viewport` follows the same zero-axis fill convention as `scroll`.
+// Fixed columns wider than the viewport scroll sideways, header in step.
 //
 // This is `table_full`. Most apps call `table` (below) — the same widget with
 // every callback optional, including `on_row_context` for a right-click menu.
@@ -13046,11 +13048,27 @@ table_full :: proc(
 	// table overflowing or the flex column silently absorbing
 	// every pixel.
 	body_h_est    := viewport.y - header_height
-	will_scroll   := f32(row_count) * item_height > body_h_est
+	content_h     := f32(row_count) * item_height
+	will_scroll   := content_h > body_h_est
 	gutter        := SCROLLBAR_GUTTER if will_scroll else 0
 	usable_w := viewport.x - gutter
 	if usable_w < 0 { usable_w = 0 }
 	widths := compute_column_widths(columns, usable_w)
+
+	// Columns wider than the table scroll sideways: header and rows lay out at
+	// content_w. Both bars are settled together, as render_scroll_xy does.
+	G :: SCROLL_BAR_GUTTER
+	content_w: f32
+	for c, i in columns { if !c.hidden { content_w += widths[i] } }
+	h_on := content_w > viewport.x - (G if will_scroll else 0)
+	if h_on && !will_scroll && content_h > body_h_est - G {
+		will_scroll = true
+		gutter      = SCROLLBAR_GUTTER
+		usable_w    = max(viewport.x - gutter, 0)
+	}
+	gut_x: f32 = G if will_scroll else 0 // vertical bar's gutter, as render sees it
+	gut_y: f32 = G if h_on else 0
+	row_w := content_w if h_on else usable_w
 
 	// --- Header ---
 	// Each column contributes either [label] or [label, resize_handle]
@@ -13223,7 +13241,7 @@ table_full :: proc(
 	// header's elevated bg extended into the gutter as a stray empty
 	// strip past the last column.
 	header := row(..hdr_items[:],
-		width       = usable_w,
+		width       = row_w,
 		height      = header_height,
 		bg          = th.color.elevated,
 		radius      = 0,
@@ -13248,11 +13266,24 @@ table_full :: proc(
 	}
 	table_focused := widget_has_focus(ctx, body_id)
 
-	content_h := f32(row_count) * item_height
-	st, hover_thumb := scroll_advance(ctx, body_id, content_h, 40)
+	// Shift+wheel pans sideways; each bar is shortened by the other's gutter.
+	shift_y: f32
+	if h_on && .Shift in ctx.input.modifiers && ctx.input.scroll.y != 0 &&
+	   widget_hovered(ctx, body_id) && scroll_is_innermost(ctx, body_id, true) {
+		shift_y = ctx.input.scroll.y
+		ctx.input.scroll.y = 0
+	}
+	st, hover_thumb := scroll_advance(ctx, body_id, content_h + gut_y, 40, gut_y)
+	hover_thumb_x := false
+	scroll_x: f32
+	if h_on {
+		st, hover_thumb_x = scroll_advance_x(ctx, body_id, content_w + gut_x, 40, shift_y, gut_x)
+		scroll_x = st.scroll_x
+	}
+	vis_h := body_viewport.y - gut_y // body height above the horizontal bar
 
 	scroll_y := st.scroll_y
-	max_off  := content_h - body_viewport.y
+	max_off  := content_h - vis_h
 	if max_off  < 0         { max_off  = 0         }
 	if scroll_y < 0         { scroll_y = 0         }
 	if scroll_y > max_off   { scroll_y = max_off   }
@@ -13268,7 +13299,7 @@ table_full :: proc(
 		mods := ctx.input.modifiers
 
 		nav := -1
-		visible_rows := int(body_viewport.y / item_height)
+		visible_rows := int(vis_h / item_height)
 		if visible_rows < 1 { visible_rows = 1 }
 
 		if focus_row < 0 {
@@ -13305,7 +13336,7 @@ table_full :: proc(
 			top    := f32(nav) * item_height
 			bottom := top + item_height
 			if top    < scroll_y                   { scroll_y = top                      }
-			if bottom > scroll_y + body_viewport.y { scroll_y = bottom - body_viewport.y }
+			if bottom > scroll_y + vis_h { scroll_y = bottom - vis_h }
 			if scroll_y > max_off                  { scroll_y = max_off                  }
 			if scroll_y < 0                        { scroll_y = 0                        }
 			st.scroll_y = scroll_y
@@ -13328,7 +13359,7 @@ table_full :: proc(
 		top    := f32(reveal_row) * item_height
 		bottom := top + item_height
 		if top    < scroll_y                   { scroll_y = top                      }
-		if bottom > scroll_y + body_viewport.y { scroll_y = bottom - body_viewport.y }
+		if bottom > scroll_y + vis_h { scroll_y = bottom - vis_h }
 		if scroll_y > max_off                  { scroll_y = max_off                  }
 		if scroll_y < 0                        { scroll_y = 0                        }
 		st.scroll_y       = scroll_y
@@ -13470,7 +13501,7 @@ table_full :: proc(
 			inner_h := item_height - 1
 			if inner_h < 0 { inner_h = item_height }
 			inner := row(..wrapped[:],
-				width       = usable_w,
+				width       = row_w,
 				height      = inner_h,
 				spacing     = 0,
 				bg          = row_bg,
@@ -13481,7 +13512,7 @@ table_full :: proc(
 				row_view = col(
 					inner,
 					divider(ctx),
-					width       = usable_w,
+					width       = row_w,
 					height      = item_height,
 					cross_align = .Stretch,
 				)
@@ -13490,7 +13521,7 @@ table_full :: proc(
 			}
 		} else {
 			row_view = row(..wrapped[:],
-				width       = usable_w,
+				width       = row_w,
 				height      = item_height,
 				spacing     = 0,
 				bg          = row_bg,
@@ -13525,7 +13556,7 @@ table_full :: proc(
 						if cg < grab_w { grab_w = cg }
 					}
 				}
-				if ctx.input.mouse_pos.x >= mq_vp.x + grab_w {
+				if ctx.input.mouse_pos.x >= mq_vp.x - scroll_x + grab_w {
 					arm_row         = true
 					mq.marquee_armed = true
 					mq.anchor_pos   = ctx.input.mouse_pos
@@ -13592,6 +13623,16 @@ table_full :: proc(
 		thumb_color = th.color.fg_muted,
 		hover_thumb = hover_thumb,
 		dragging    = st.pressed,
+		horizontal    = h_on,
+		offset_x      = scroll_x,
+		hover_thumb_x = hover_thumb_x,
+		dragging_x    = st.pressed_x,
+	}
+	// The header pans with the body, clipped to the visible width.
+	if h_on {
+		hc := new(View, context.temp_allocator)
+		hc^ = header
+		header = View_Clip{size = {viewport.x - gut_x, header_height}, child = hc, offset = {scroll_x, 0}}
 	}
 
 	// --- Marquee (rubber-band) multi-select. A press on a row's whitespace
@@ -13613,7 +13654,7 @@ table_full :: proc(
 		// popover doesn't arm underneath. marquee_row -1 marks "no row".
 		if !mq.pressed && !mq.marquee_armed && ctx.input.mouse_pressed[.Left] && vp.w > 0 &&
 		   rect_contains_point(vp, mouse) && mouse.x < vp.x + vp.w - gutter &&
-		   widget_hovered(ctx, body_id) {
+		   mouse.y < vp.y + vp.h - gut_y && widget_hovered(ctx, body_id) {
 			if (mouse.y - vp.y) + scroll_y >= content_h {
 				mq.marquee_armed        = true
 				mq.anchor_pos   = mouse
@@ -13657,7 +13698,7 @@ table_full :: proc(
 			bx0 := max(min(mq.anchor_pos.x, mouse.x), vp.x)
 			by0 := max(min(mq.anchor_pos.y, mouse.y), vp.y)
 			bx1 := min(max(mq.anchor_pos.x, mouse.x), vp.x + vp.w)
-			by1 := min(max(mq.anchor_pos.y, mouse.y), vp.y + vp.h)
+			by1 := min(max(mq.anchor_pos.y, mouse.y), vp.y + vp.h - gut_y)
 
 			// Covered rows: vertical overlap of the clipped band with each
 			// uniform-height row, in content space. Contiguous by
