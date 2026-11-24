@@ -221,6 +221,17 @@ draw_gradient_rect :: proc(
 	)
 }
 
+// batch_rotate_since turns every vertex queued since `first` by `angle` about
+// `pivot`. For text output only: glyph and emoji quads carry no shape data.
+@(private)
+batch_rotate_since :: proc(r: ^Renderer, first: int, pivot: [2]f32, angle: f32) {
+	c, s := math.cos(angle), math.sin(angle)
+	for &v in r.batch.vertices[first:] {
+		d := v.pos - pivot
+		v.pos = pivot + {d.x * c - d.y * s, d.x * s + d.y * c}
+	}
+}
+
 // batch_push_glyph appends a textured quad sampling the glyph atlas. Used
 // internally by `draw_text`. The quad carries kind=1 so the fragment shader
 // takes the atlas-sampling branch.

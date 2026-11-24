@@ -678,6 +678,17 @@ Arc angles are radians, `0` at +x, sweeping clockwise. `aa` opts into a
 1px feathered edge (off by default). For lower-level control there's also
 `draw_triangles` / `draw_tris_vc` / `draw_triangle_strip`.
 
+`draw_text` takes an optional `angle` (radians) that turns the text about
+its baseline origin, for chart axis labels and the like: `-math.PI / 2`
+reads bottom-to-top. Layout text (`text()`) doesn't rotate. To make a 45°
+label end at its tick, start it one text-width back along the angle:
+
+```odin
+a    := math.to_radians(f32(-45))
+w, _ := skald.measure_text(r, label, 13)
+skald.draw_text(r, label, tick_x - w * math.cos(a), tick_y - w * math.sin(a), color, 13, angle = a)
+```
+
 **Example: `examples/55_node_graph`** — a pan/zoom node editor built on
 these: rounded outlines for nodes, circles for ports, cubic béziers for
 wires, plus the interaction patterns a canvas widget needs — graph-space

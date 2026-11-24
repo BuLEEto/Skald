@@ -1,6 +1,7 @@
 package skald
 
 import "core:fmt"
+import "core:math"
 import "core:strings"
 import "core:unicode/utf8"
 import fs "vendor:fontstash"
@@ -470,6 +471,10 @@ font_use_default_emoji :: proc(r: ^Renderer) -> Font {
 // pixel in the atlas lines up 1:1 with a physical pixel on screen, keeping
 // text crisp at any OS scaling factor. The emitted quads stay in logical
 // coordinates so the rest of the renderer can stay DPI-oblivious.
+//
+// `angle` (radians) turns the text about its baseline origin for custom
+// drawing such as chart labels; y points down, so positive is clockwise and
+// `-math.PI / 2` reads bottom-to-top. Layout text (`text()`) doesn't rotate.
 draw_text :: proc(
 	r:     ^Renderer,
 	text:  string,
@@ -477,10 +482,20 @@ draw_text :: proc(
 	color: Color,
 	size:  f32 = 14,
 	font:  Font = 0,
+	angle: f32 = 0,
 ) {
 	// Expand tabs so the editable text_input (which shapes its raw buffer)
 	// draws `\t` as whitespace, not missing-glyph tofu. No-ops if tab-free.
 	text := expand_tabs(text)
+	first := len(r.batch.vertices)
+	defer if angle != 0 { batch_rotate_since(r, first, {x, y}, angle) }
+	// Off a right angle the turned glyphs are resampled; rasterize them at 2×
+	// so that stays smooth. Right angles map pixel-for-pixel and stay at 1×.
+	old_scale := r.scale
+	defer r.scale = old_scale
+	if q := math.mod(abs(angle), math.PI / 2); q > 1e-3 && q < math.PI / 2 - 1e-3 {
+		r.scale = max(old_scale, 1) * 2
+	}
 	if r.text.runa_state != nil {
 		draw_text_runa(r, text, x, y, color, size, font)
 		return

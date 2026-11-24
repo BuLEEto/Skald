@@ -8,6 +8,10 @@ bug fixes bump the patch.
 
 ### Added
 
+- **Rotated text in custom drawing.** `draw_text(..., angle = a)` turns text
+  about its baseline origin, for chart axis labels and the like (`-math.PI / 2`
+  reads bottom-to-top). Off right angles the glyphs rasterize at 2× so turned
+  text stays smooth. Layout text (`text()`) doesn't rotate.
 - **Horizontal scrolling.** `scroll(..., horizontal = true)` pans sideways when
   the content is wider than the viewport — a bottom bar, horizontal
   wheel/trackpad, and Shift+wheel. Opt-in; existing scrolls are unchanged. A
